@@ -3,7 +3,6 @@
 import asyncio
 import sys
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
@@ -13,10 +12,12 @@ if str(ROOT) not in sys.path:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    """Configure pytest."""
     config.addinivalue_line("markers", "asyncio: execute test in an event loop")
 
 
-def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> Optional[bool]:
+def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
+    """Pytext function call."""
     if asyncio.iscoroutinefunction(pyfuncitem.obj):
         marker = pyfuncitem.get_closest_marker("asyncio")
         if marker is not None:
