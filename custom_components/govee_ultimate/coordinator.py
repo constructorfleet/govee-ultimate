@@ -73,6 +73,10 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         refresh_interval: timedelta | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
         logger: logging.Logger | None = None,
+        iot_client: Any | None = None,
+        iot_state_enabled: bool = False,
+        iot_command_enabled: bool = False,
+        iot_refresh_enabled: bool = False,
     ) -> None:
         """Initialise the coordinator with integration dependencies."""
 
@@ -94,6 +98,14 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         self._loop = loop or hass_loop or asyncio.get_event_loop()
         self._refresh_task: asyncio.TimerHandle | None = None
         self._pending_tasks: set[asyncio.Task[Any]] = set()
+        self._iot_client = iot_client
+        self._iot_state_enabled = iot_state_enabled
+        self._iot_command_enabled = iot_command_enabled
+        self._iot_refresh_enabled = iot_refresh_enabled
+        if self._iot_client:
+            setter = getattr(self._iot_client, "set_update_callback", None)
+            if callable(setter):
+                setter(self._schedule_iot_update)
 
         self.devices: dict[str, BaseDevice] = {}
         self.device_metadata: dict[str, DeviceMetadata] = {}
@@ -127,6 +139,11 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                 manufacturer="Govee",
             )
             await self._register_entities(metadata, device, device_entry.id)
+
+        if self._iot_client and self._iot_state_enabled:
+            iot_devices = self._iot_device_ids()
+            if iot_devices:
+                await self._iot_client.async_start(iot_devices)
 
     def _resolve_factory(
         self, metadata: DeviceMetadata
@@ -204,15 +221,52 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         """Send ``command`` via the correct transport channel."""
 
         if channel_name == "iot":
-            await self._api_client.async_publish_iot_command(
-                device_id, channel_info, command
-            )
+            if self._iot_client and self._iot_command_enabled:
+                await self._iot_client.async_publish_command(device_id, command)
+            else:
+                await self._api_client.async_publish_iot_command(
+                    device_id, channel_info, command
+                )
         elif channel_name == "ble":
             await self._api_client.async_publish_ble_command(
                 device_id, channel_info, command
             )
         else:
             raise ValueError(f"Unsupported channel {channel_name}")
+
+    def _iot_device_ids(self) -> list[str]:
+        """Return identifiers for devices that expose an IoT channel."""
+
+        return [
+            device_id
+            for device_id, metadata in self.device_metadata.items()
+            if "iot" in metadata.channels
+        ]
+
+    async def async_request_device_refresh(self, device_id: str) -> None:
+        """Request a device refresh via the configured IoT transport."""
+
+        if not (self._iot_client and self._iot_refresh_enabled):
+            raise RuntimeError("IoT refresh channel is not enabled")
+
+        metadata = self.device_metadata.get(device_id)
+        if metadata is None or "iot" not in metadata.channels:
+            raise KeyError(device_id)
+
+        await self._iot_client.async_request_refresh(device_id)
+
+    def _schedule_iot_update(self, update: tuple[str, dict[str, Any]]) -> None:
+        """Schedule processing of an IoT state update from the MQTT client."""
+
+        task = self._loop.create_task(self._handle_iot_update(update))
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
+
+    async def _handle_iot_update(self, update: tuple[str, dict[str, Any]]) -> None:
+        """Apply an IoT update to the device models."""
+
+        device_id, payload = update
+        await self.async_process_state_update(device_id, payload)
 
     async def async_process_state_update(
         self, device_id: str, updates: dict[str, Any]

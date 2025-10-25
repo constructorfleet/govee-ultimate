@@ -167,6 +167,43 @@ class FakeLoop:
         return handle
 
 
+class FakeIoTClient:
+    """Test double for the IoT MQTT client."""
+
+    def __init__(self) -> None:
+        """Initialise storage for commands and subscriptions."""
+
+        self.started: list[list[str]] = []
+        self.commands: list[tuple[str, dict[str, Any]]] = []
+        self.refreshes: list[str] = []
+        self.update_callback: Callable[[tuple[str, dict[str, Any]]], Any] | None = None
+
+    async def async_start(self, device_ids: list[str]) -> None:
+        """Record a start request for ``device_ids``."""
+
+        self.started.append(list(device_ids))
+
+    async def async_publish_command(
+        self, device_id: str, payload: dict[str, Any]
+    ) -> str:
+        """Capture an IoT command publication."""
+
+        self.commands.append((device_id, dict(payload)))
+        return "cmd-1"
+
+    async def async_request_refresh(self, device_id: str) -> None:
+        """Record a refresh request for ``device_id``."""
+
+        self.refreshes.append(device_id)
+
+    def set_update_callback(
+        self, callback: Callable[[tuple[str, dict[str, Any]]], Any]
+    ) -> None:
+        """Register the update callback invoked by state messages."""
+
+        self.update_callback = callback
+
+
 def test_coordinator_inherits_home_assistant_data_update_coordinator() -> None:
     """The integration coordinator must extend Home Assistant's base class."""
 
@@ -325,6 +362,95 @@ async def test_command_dispatch_defaults_to_iot_channel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_iot_state_subscription_is_started_for_iot_devices() -> None:
+    """Discovery should start the IoT client with IoT-capable devices."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-iot",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Humidifier",
+                "channels": {
+                    "iot": {
+                        "state_topic": "state/device-iot",
+                        "command_topic": "command/device-iot",
+                        "refresh_topic": "refresh/device-iot",
+                    }
+                },
+            },
+            {
+                "device_id": "device-ble",
+                "model": "H7126",
+                "sku": "H7126",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Purifier",
+                "channels": {"ble": {"mac": "AA:BB:CC:DD:EE:FF"}},
+            },
+        ]
+    )
+    iot_client = FakeIoTClient()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=iot_client,
+        iot_state_enabled=True,
+    )
+
+    await coordinator.async_discover_devices()
+
+    assert iot_client.started == [["device-iot"]]
+
+
+@pytest.mark.asyncio
+async def test_iot_state_updates_flow_to_devices() -> None:
+    """IoT updates should update device state via the coordinator."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-iot",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Humidifier",
+                "channels": {
+                    "iot": {
+                        "state_topic": "state/device-iot",
+                        "command_topic": "command/device-iot",
+                        "refresh_topic": "refresh/device-iot",
+                    }
+                },
+            }
+        ]
+    )
+    iot_client = FakeIoTClient()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=iot_client,
+        iot_state_enabled=True,
+    )
+
+    await coordinator.async_discover_devices()
+    await coordinator._handle_iot_update(("device-iot", {"power": True}))
+
+    device = coordinator.devices["device-iot"]
+    assert device.states["power"].value is True
+
+
+@pytest.mark.asyncio
 async def test_command_dispatch_supports_explicit_ble_channel() -> None:
     """Publishers should honour an explicit BLE channel request."""
 
@@ -361,6 +487,95 @@ async def test_command_dispatch_supports_explicit_ble_channel() -> None:
         )
     ]
     assert api_client.iot_commands == []
+
+
+@pytest.mark.asyncio
+async def test_iot_commands_use_mqtt_client_when_enabled() -> None:
+    """When configured the coordinator should send commands via the IoT client."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-iot",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Humidifier",
+                "channels": {
+                    "iot": {
+                        "state_topic": "state/device-iot",
+                        "command_topic": "command/device-iot",
+                        "refresh_topic": "refresh/device-iot",
+                    }
+                },
+            }
+        ]
+    )
+    device_registry = FakeDeviceRegistry()
+    entity_registry = FakeEntityRegistry()
+    iot_client = FakeIoTClient()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=device_registry,
+        entity_registry=entity_registry,
+        iot_client=iot_client,
+        iot_state_enabled=True,
+        iot_command_enabled=True,
+        iot_refresh_enabled=True,
+    )
+
+    await coordinator.async_discover_devices()
+
+    publisher = coordinator.get_command_publisher("device-iot", channel="iot")
+    await publisher({"opcode": "0x20"})
+
+    assert iot_client.commands == [("device-iot", {"opcode": "0x20"})]
+    assert api_client.iot_commands == []
+
+
+@pytest.mark.asyncio
+async def test_iot_refresh_requests_use_mqtt_client() -> None:
+    """Refresh requests should be forwarded to the IoT client when enabled."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-iot",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Humidifier",
+                "channels": {
+                    "iot": {
+                        "state_topic": "state/device-iot",
+                        "command_topic": "command/device-iot",
+                        "refresh_topic": "refresh/device-iot",
+                    }
+                },
+            }
+        ]
+    )
+    iot_client = FakeIoTClient()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=iot_client,
+        iot_state_enabled=False,
+        iot_command_enabled=False,
+        iot_refresh_enabled=True,
+    )
+
+    await coordinator.async_discover_devices()
+    await coordinator.async_request_device_refresh("device-iot")
+
+    assert iot_client.refreshes == ["device-iot"]
 
 
 @pytest.mark.asyncio
