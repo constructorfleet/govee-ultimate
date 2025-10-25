@@ -264,7 +264,11 @@ class EnablePresenceState(DeviceOpState[dict[str, bool | None]]):
                 "data": {"command": [frame]},
             },
             "status": {
-                "op": {"command": [[bio_flag, mm_flag]]},
+                "op": {
+                    "command": [
+                        [_REPORT_OPCODE, *self._identifier, bio_flag, mm_flag]
+                    ]
+                },
             },
         }
 
@@ -332,7 +336,13 @@ class DetectionSettingsState(DeviceOpState[dict[str, Any]]):
                 "command": "multi_sync",
                 "data": {"command": command_frames},
             },
-            "status": {"op": {"command": [status_payload]}},
+            "status": {
+                "op": {
+                    "command": [
+                        [_REPORT_OPCODE, *self._identifier, *status_payload]
+                    ]
+                }
+            },
         }
 
     def _resolve_distance(self, next_state: dict[str, Any]) -> int | None:
