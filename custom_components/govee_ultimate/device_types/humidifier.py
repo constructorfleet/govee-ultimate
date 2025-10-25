@@ -12,7 +12,7 @@ from custom_components.govee_ultimate.state import (
     PowerState,
 )
 
-from .base import BaseDevice, HumidifierEntities
+from .base import BaseDevice, EntityCategory, HumidifierEntities
 
 
 class _BooleanState(DeviceState[bool | None]):
@@ -140,14 +140,42 @@ class HumidifierDevice(BaseDevice):
         "H7142": ("night_light", "display_schedule", "uvc", "humidity"),
     }
 
+    _FEATURE_PLATFORMS = {
+        "night_light": ("light", None),
+        "control_lock": ("switch", EntityCategory.CONFIG),
+        "display_schedule": ("switch", EntityCategory.CONFIG),
+        "uvc": ("switch", EntityCategory.CONFIG),
+        "humidity": ("sensor", EntityCategory.DIAGNOSTIC),
+    }
+
     def __init__(self, device_model: Any) -> None:
         """Initialise humidifier states based on the device model."""
 
         super().__init__(device_model)
         power = self.add_state(PowerState(device_model))
-        self.add_state(ActiveState(device_model))
-        self.add_state(_BooleanState(device_model, "water_shortage"))
-        self.add_state(_BooleanState(device_model, "timer"))
+        self.expose_entity(platform="humidifier", state=power)
+
+        active = self.add_state(ActiveState(device_model))
+        self.expose_entity(
+            platform="binary_sensor",
+            state=active,
+            entity_category=EntityCategory.DIAGNOSTIC,
+        )
+
+        shortage = self.add_state(_BooleanState(device_model, "water_shortage"))
+        self.expose_entity(
+            platform="binary_sensor",
+            state=shortage,
+            entity_category=EntityCategory.DIAGNOSTIC,
+        )
+
+        timer = self.add_state(_BooleanState(device_model, "timer"))
+        self.expose_entity(
+            platform="switch",
+            state=timer,
+            translation_key="timer",
+            entity_category=EntityCategory.CONFIG,
+        )
 
         manual = self.add_state(_ModeOptionState(device_model, "manual_mode", 0x00))
         custom = self.add_state(_ModeOptionState(device_model, "custom_mode", 0x01))
@@ -156,11 +184,14 @@ class HumidifierDevice(BaseDevice):
         self._mode_state = self.add_state(
             HumidifierActiveState(device_model, [manual, custom, auto])
         )
+        self.expose_entity(platform="select", state=self._mode_state)
 
         self._mist_state = self.add_state(MistLevelState(device_model, self._mode_state))
+        self.expose_entity(platform="number", state=self._mist_state)
         self._target_state = self.add_state(
             TargetHumidityState(device_model, self._mode_state)
         )
+        self.expose_entity(platform="number", state=self._target_state)
 
         for feature in self._MODEL_FEATURES.get(device_model.model, ()):  # type: ignore[attr-defined]
             if feature in {"uvc", "humidity"}:
@@ -171,7 +202,13 @@ class HumidifierDevice(BaseDevice):
                     state = _BooleanState(device_model, feature)
             else:
                 state = _BooleanState(device_model, feature)
-            self.add_state(state)
+            registered = self.add_state(state)
+            platform, category = self._FEATURE_PLATFORMS.get(feature, ("sensor", None))
+            self.expose_entity(
+                platform=platform,
+                state=registered,
+                entity_category=category,
+            )
 
         sensors = []
         current_states = self.states

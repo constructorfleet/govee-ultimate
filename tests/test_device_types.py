@@ -131,6 +131,40 @@ def test_rgbic_light_registers_expected_states(rgbic_device_model: MockDeviceMod
     }
 
 
+def test_device_states_expose_home_assistant_entities(
+    rgbic_device_model: MockDeviceModel,
+    humidifier_model_h7142: MockDeviceModel,
+    purifier_model_h7126: MockDeviceModel,
+) -> None:
+    """Each device should expose a Home Assistant entity mapping per state."""
+
+    light_device = RGBICLightDevice(rgbic_device_model)
+    humidifier_device = HumidifierDevice(humidifier_model_h7142)
+    purifier_device = PurifierDevice(purifier_model_h7126)
+
+    light_entities = light_device.home_assistant_entities
+    assert {"power", "brightness", "color", "mode"} <= set(light_entities)
+    assert light_entities["power"].platform == "light"
+    assert light_entities["power"].state is light_device.states["power"]
+    assert light_entities["mode"].platform == "select"
+
+    humidifier_entities = humidifier_device.home_assistant_entities
+    assert {"power", "mist_level", "target_humidity", "night_light", "uvc"} <= set(
+        humidifier_entities
+    )
+    assert humidifier_entities["power"].platform == "humidifier"
+    assert humidifier_entities["mist_level"].platform == "number"
+    assert humidifier_entities["night_light"].platform == "light"
+    assert humidifier_entities["uvc"].platform == "switch"
+    assert humidifier_entities["humidity"].platform == "sensor"
+
+    purifier_entities = purifier_device.home_assistant_entities
+    assert {"power", "fan_speed", "mode", "filter_life"} <= set(purifier_entities)
+    assert purifier_entities["power"].platform == "fan"
+    assert purifier_entities["mode"].platform == "select"
+    assert purifier_entities["fan_speed"].platform == "number"
+    assert purifier_entities["filter_life"].platform == "sensor"
+
 def test_humidifier_includes_model_specific_states(
     humidifier_model_h7141: MockDeviceModel,
     humidifier_model_h7142: MockDeviceModel,

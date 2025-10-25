@@ -12,7 +12,7 @@ from custom_components.govee_ultimate.state import (
     PowerState,
 )
 
-from .base import BaseDevice, PurifierEntities
+from .base import BaseDevice, EntityCategory, PurifierEntities
 
 
 class _BooleanState(DeviceState[bool | None]):
@@ -113,6 +113,14 @@ class PurifierDevice(BaseDevice):
     """Simplified purifier port matching the TypeScript factory."""
 
     _DEFAULT_FEATURES = ("night_light", "timer", "control_lock")
+    _FEATURE_PLATFORMS = {
+        "night_light": ("light", None),
+        "timer": ("switch", EntityCategory.CONFIG),
+        "control_lock": ("switch", EntityCategory.CONFIG),
+        "display_schedule": ("switch", EntityCategory.CONFIG),
+        "filter_expired": ("binary_sensor", EntityCategory.DIAGNOSTIC),
+        "filter_life": ("sensor", EntityCategory.DIAGNOSTIC),
+    }
 
     def __init__(self, device_model: Any) -> None:
         """Initialise purifier states according to the device model."""
@@ -120,9 +128,22 @@ class PurifierDevice(BaseDevice):
         super().__init__(device_model)
         model_id = getattr(device_model, "model", "")
         power = self.add_state(PowerState(device_model))
-        self.add_state(ActiveState(device_model))
-        self.add_state(_BooleanState(device_model, "display_schedule"))
-        self.add_state(_BooleanState(device_model, "filter_expired"))
+        self.expose_entity(platform="fan", state=power)
+
+        active = self.add_state(ActiveState(device_model))
+        self.expose_entity(
+            platform="binary_sensor",
+            state=active,
+            entity_category=EntityCategory.DIAGNOSTIC,
+        )
+
+        display_schedule = self.add_state(_BooleanState(device_model, "display_schedule"))
+        self._register_feature_entity(
+            "display_schedule", display_schedule, translation_key="display_schedule"
+        )
+
+        filter_expired = self.add_state(_BooleanState(device_model, "filter_expired"))
+        self._register_feature_entity("filter_expired", filter_expired)
 
         mode_states: list[_ModeOptionState] = []
         if model_id == "H7126":
@@ -135,19 +156,24 @@ class PurifierDevice(BaseDevice):
             mode_states.append(auto)
 
         self._mode_state = self.add_state(PurifierActiveState(device_model, mode_states))
+        self.expose_entity(platform="select", state=self._mode_state)
         self._fan_state = self.add_state(PurifierFanSpeedState(device_model, self._mode_state))
+        self.expose_entity(platform="number", state=self._fan_state)
 
         extras: list[DeviceState[Any]] = []
         if model_id == "H7126":
-            self.add_state(_BooleanState(device_model, "timer"))
-            extras.append(
-                self.add_state(
-                    _NumericState(device_model, "filter_life", minimum=0, maximum=100)
-                )
+            timer = self.add_state(_BooleanState(device_model, "timer"))
+            self._register_feature_entity("timer", timer, translation_key="timer")
+            filter_life = self.add_state(
+                _NumericState(device_model, "filter_life", minimum=0, maximum=100)
             )
+            self._register_feature_entity("filter_life", filter_life)
+            extras.append(filter_life)
         else:
             for feature in self._DEFAULT_FEATURES:
-                extras.append(self.add_state(_BooleanState(device_model, feature)))
+                state = self.add_state(_BooleanState(device_model, feature))
+                self._register_feature_entity(feature, state, translation_key=feature)
+                extras.append(state)
 
         self._entities = PurifierEntities(
             primary=power,
@@ -167,3 +193,20 @@ class PurifierDevice(BaseDevice):
         """Return entity metadata for the purifier platform."""
 
         return self._entities
+
+    def _register_feature_entity(
+        self,
+        feature: str,
+        state: DeviceState[Any],
+        *,
+        translation_key: str | None = None,
+    ) -> None:
+        """Register feature-specific entity metadata."""
+
+        platform, category = self._FEATURE_PLATFORMS.get(feature, ("switch", None))
+        self.expose_entity(
+            platform=platform,
+            state=state,
+            translation_key=translation_key,
+            entity_category=category,
+        )

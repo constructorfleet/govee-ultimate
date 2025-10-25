@@ -37,9 +37,16 @@ class RGBICLightDevice(BaseDevice):
 
         super().__init__(device_model)
         power = self.add_state(PowerState(device_model))
-        self.add_state(ActiveState(device_model))
+        self.expose_entity(platform="light", state=power)
+
+        active = self.add_state(ActiveState(device_model))
+        self.expose_entity(platform="binary_sensor", state=active)
+
         brightness = self.add_state(BrightnessState(device_model))
+        self.expose_entity(platform="light", state=brightness)
+
         color = self.add_state(ColorRGBState(device_model))
+        self.expose_entity(platform="light", state=color)
 
         mode_states = self._register_mode_states(
             "color_whole",
@@ -52,6 +59,7 @@ class RGBICLightDevice(BaseDevice):
         self._mode_state = self.add_state(
             ModeState(device=device_model, modes=mode_states)
         )
+        self.expose_entity(platform="select", state=self._mode_state)
 
         self._light_entities = LightEntities(
             primary=power,
