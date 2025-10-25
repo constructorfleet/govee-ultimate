@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 
 
+DOMAIN = "govee_ultimate"
+
+
 def _ensure_event_loop() -> None:
     """Ensure a default asyncio event loop exists for synchronous tests."""
 

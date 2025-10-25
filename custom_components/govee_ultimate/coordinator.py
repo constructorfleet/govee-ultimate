@@ -11,6 +11,8 @@ from typing import Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from . import DOMAIN
+
 from .device_types.base import BaseDevice
 from .device_types.humidifier import HumidifierDevice
 from .device_types.purifier import PurifierDevice
@@ -67,6 +69,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         api_client: Any,
         device_registry: Any,
         entity_registry: Any,
+        config_entry_id: str | None = None,
         refresh_interval: timedelta | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
         logger: logging.Logger | None = None,
@@ -86,6 +89,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         self._api_client = api_client
         self._device_registry = device_registry
         self._entity_registry = entity_registry
+        self._config_entry_id = config_entry_id
         hass_loop = getattr(hass, "loop", None)
         self._loop = loop or hass_loop or asyncio.get_event_loop()
         self._refresh_task: asyncio.TimerHandle | None = None
@@ -115,13 +119,14 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             device = factory(metadata)
             self.devices[metadata.device_id] = device
             self.device_metadata[metadata.device_id] = metadata
-            await self._device_registry.async_get_or_create(
-                id=metadata.device_id,
+            device_entry = await self._device_registry.async_get_or_create(
+                config_entry_id=self._config_entry_id,
+                identifiers={(DOMAIN, metadata.device_id)},
                 name=metadata.device_name,
                 model=metadata.model,
                 manufacturer="Govee",
             )
-            await self._register_entities(metadata, device)
+            await self._register_entities(metadata, device, device_entry.id)
 
     def _resolve_factory(
         self, metadata: DeviceMetadata
@@ -240,13 +245,19 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         return []
 
     async def _register_entities(
-        self, metadata: DeviceMetadata, device: BaseDevice
+        self, metadata: DeviceMetadata, device: BaseDevice, device_entry_id: str
     ) -> None:
         """Register Home Assistant entities exposed by ``device``."""
 
         for name, entity in device.home_assistant_entities.items():
             payload = self._build_entity_payload(metadata, name, entity)
-            await self._entity_registry.async_get_or_create(**payload)
+            await self._entity_registry.async_get_or_create(
+                entity.platform,
+                DOMAIN,
+                payload.pop("unique_id"),
+                device_id=device_entry_id,
+                **payload,
+            )
 
     @staticmethod
     def _build_entity_payload(
@@ -255,9 +266,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         """Serialise Home Assistant entity metadata for registry calls."""
 
         return {
-            "domain": entity.platform,
             "unique_id": f"{metadata.device_id}-{name}",
-            "device_id": metadata.device_id,
             "translation_key": entity.translation_key,
             "entity_category": (
                 entity.entity_category.value if entity.entity_category else None

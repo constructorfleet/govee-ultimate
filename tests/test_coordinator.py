@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from collections.abc import Callable
 from datetime import timedelta
 from types import ModuleType
@@ -81,19 +82,29 @@ class FakeAPIClient:
         self.ble_commands.append((device_id, dict(command), dict(channel_info)))
 
 
+@dataclass
+class FakeDeviceEntry:
+    """Representation of a created device registry entry."""
+
+    id: str
+
+
 class FakeDeviceRegistry:
     """Record device registry calls for verification."""
 
     def __init__(self) -> None:
         """Initialise storage for registered devices."""
 
-        self.created: list[dict[str, str]] = []
+        self.created: list[tuple[FakeDeviceEntry, dict[str, Any]]] = []
+        self._counter = 0
 
-    async def async_get_or_create(self, **kwargs: str) -> dict[str, str]:
+    async def async_get_or_create(self, **kwargs: Any) -> FakeDeviceEntry:
         """Capture device registry registration requests."""
 
-        self.created.append(kwargs)
-        return kwargs
+        self._counter += 1
+        entry = FakeDeviceEntry(id=f"device-entry-{self._counter}")
+        self.created.append((entry, dict(kwargs)))
+        return entry
 
 
 class FakeEntityRegistry:
@@ -102,13 +113,21 @@ class FakeEntityRegistry:
     def __init__(self) -> None:
         """Initialise storage for registered entities."""
 
-        self.created: list[dict[str, str]] = []
+        self.created: list[dict[str, Any]] = []
 
-    async def async_get_or_create(self, **kwargs: str) -> dict[str, str]:
+    async def async_get_or_create(
+        self, domain: str, platform: str, unique_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         """Capture entity registry registration requests."""
 
-        self.created.append(kwargs)
-        return kwargs
+        entry = {
+            "domain": domain,
+            "platform": platform,
+            "unique_id": unique_id,
+            **kwargs,
+        }
+        self.created.append(entry)
+        return entry
 
 
 class FakeTimerHandle:
@@ -202,8 +221,14 @@ async def test_discovery_creates_devices_and_registers_entries() -> None:
     assert isinstance(coordinator.devices["device-1"], HumidifierDevice)
     assert isinstance(coordinator.devices["device-2"], PurifierDevice)
 
-    created_ids = {entry["id"] for entry in device_registry.created}
-    assert created_ids == {"device-1", "device-2"}
+    assert len(device_registry.created) == 2
+    identifiers = {
+        next(iter(data["identifiers"])) for _, data in device_registry.created
+    }
+    assert identifiers == {
+        ("govee_ultimate", "device-1"),
+        ("govee_ultimate", "device-2"),
+    }
 
 
 @pytest.mark.asyncio
@@ -234,12 +259,16 @@ async def test_discovery_registers_home_assistant_entities() -> None:
 
     await coordinator.async_discover_devices()
 
+    assert len(device_registry.created) == 1
+    device_entry, _ = device_registry.created[0]
+
     unique_ids = {entry["unique_id"] for entry in entity_registry.created}
     assert {"device-1-power", "device-1-mist_level"} <= unique_ids
 
     power_entry = next(entry for entry in entity_registry.created if entry["unique_id"] == "device-1-power")
     assert power_entry["domain"] == "humidifier"
-    assert power_entry["device_id"] == "device-1"
+    assert power_entry["platform"] == "govee_ultimate"
+    assert power_entry["device_id"] == device_entry.id
     assert power_entry["entity_category"] is None
 
     diagnostic_entry = next(
