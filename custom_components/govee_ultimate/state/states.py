@@ -226,9 +226,12 @@ class ActiveState(DeviceOpState[bool | None]):
 
     def parse_state(self, data: dict[str, Any]) -> None:
         """Extract active flag from state payloads."""
-        is_on = data.get("state", {}).get("isOn")
-        if isinstance(is_on, bool):
-            self._update_state(is_on)
+        state_payload = data.get("state", {})
+        active = state_payload.get("active")
+        if not isinstance(active, bool):
+            active = state_payload.get("isOn")
+        if isinstance(active, bool):
+            self._update_state(active)
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Consume opcode payloads representing active state."""
