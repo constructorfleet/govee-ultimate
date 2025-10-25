@@ -1,0 +1,40 @@
+{
+  "commands": [
+    {
+      "name": "power_on",
+      "opcode": "0x01",
+      "identifiers": [51, 1, 1],
+      "payload_hex": "01",
+      "extra_payload_hex": "",
+      "vectors": {
+        "ble": "MwEBAQAAAAAAAAAAAAAAAAAAADI=",
+        "iot": "MwEBAQAAAAAAAAAAAAAAAAAAADI="
+      },
+      "description": "Standard BLE frame for powering a device on."
+    },
+    {
+      "name": "power_off",
+      "opcode": "0x01",
+      "identifiers": [51, 1, 1],
+      "payload_hex": "00",
+      "extra_payload_hex": "",
+      "vectors": {
+        "ble": "MwEBAAAAAAAAAAAAAAAAAAAAADM=",
+        "iot": "MwEBAAAAAAAAAAAAAAAAAAAAADM="
+      },
+      "description": "Standard BLE frame for powering a device off."
+    },
+    {
+      "name": "brightness_75",
+      "opcode": "0x04",
+      "identifiers": [51, 4, 1],
+      "payload_hex": "4B",
+      "extra_payload_hex": "00",
+      "vectors": {
+        "ble": "MwQBSwAAAAAAAAAAAAAAAAAAAH0=",
+        "iot": "MwQBSwAAAAAAAAAAAAAAAAAAAH0="
+      },
+      "description": "Brightness command targeting 75%."
+    }
+  ]
+}
