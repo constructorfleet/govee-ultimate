@@ -1,0 +1,457 @@
+{
+  "states": [
+    {
+      "state_name": "power",
+      "op_type": "toggle",
+      "identifiers": {
+        "status": {
+          "opcode": "0x01",
+          "payload": "0100",
+          "description": "Status query for power state"
+        },
+        "command": {
+          "opcode": "0x01",
+          "payloads": {
+            "on": "0101",
+            "off": "0100"
+          }
+        }
+      },
+      "parse_options": {
+        "value_map": {
+          "0101": true,
+          "0100": false
+        },
+        "byte_index": 1
+      },
+      "status_templates": [
+        {
+          "opcode": "0x01",
+          "payload": "0100",
+          "expect_bytes": 3,
+          "notes": "Returns 0x01 when device is powered on"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_power",
+          "opcode": "0x01",
+          "payload_template": "01{{ '01' if value else '00' }}",
+          "description": "Toggle power for devices that use the standard op"
+        }
+      ]
+    },
+    {
+      "state_name": "brightness",
+      "op_type": "range",
+      "identifiers": {
+        "status": {
+          "opcode": "0x02",
+          "payload": "0201",
+          "description": "Reports brightness percentage"
+        },
+        "command": {
+          "opcode": "0x02",
+          "payload_range": {
+            "min": "020000",
+            "max": "026400"
+          }
+        }
+      },
+      "parse_options": {
+        "byte_index": 2,
+        "scaling": {
+          "factor": 1,
+          "min": 0,
+          "max": 100
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x02",
+          "payload": "0200",
+          "expect_bytes": 4,
+          "notes": "Byte 3 encodes brightness level"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_brightness",
+          "opcode": "0x02",
+          "payload_template": "02{{ value | int | format('02x') }}00",
+          "description": "Set brightness percentage"
+        }
+      ]
+    },
+    {
+      "state_name": "color_temperature",
+      "op_type": "kelvin",
+      "identifiers": {
+        "status": {
+          "opcode": "0x03",
+          "payload": "0301",
+          "description": "Reports color temperature in Kelvin"
+        },
+        "command": {
+          "opcode": "0x03",
+          "payload_range": {
+            "min": "0307d0",
+            "max": "0321fc"
+          }
+        }
+      },
+      "parse_options": {
+        "byte_indices": [
+          2,
+          3
+        ],
+        "byte_order": "big",
+        "range": {
+          "min": 2000,
+          "max": 8700
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x03",
+          "payload": "0300",
+          "expect_bytes": 5,
+          "notes": "Bytes 3-4 encode Kelvin value"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_color_temperature",
+          "opcode": "0x03",
+          "payload_template": "03{{ value | int | format('04x') }}",
+          "description": "Set color temperature in Kelvin"
+        }
+      ]
+    },
+    {
+      "state_name": "color_rgb",
+      "op_type": "color",
+      "identifiers": {
+        "status": {
+          "opcode": "0x04",
+          "payload": "0401",
+          "description": "Returns RGB bytes"
+        },
+        "command": {
+          "opcode": "0x04",
+          "payload_format": "rrggbb"
+        }
+      },
+      "parse_options": {
+        "payload_format": {
+          "order": [
+            "red",
+            "green",
+            "blue"
+          ],
+          "bytes": 3,
+          "encoding": "hex"
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x04",
+          "payload": "0400",
+          "expect_bytes": 7,
+          "notes": "Bytes 3-5 map to R,G,B"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_rgb_color",
+          "opcode": "0x04",
+          "payload_template": "04{{ red | int | format('02x') }}{{ green | int | format('02x') }}{{ blue | int | format('02x') }}",
+          "description": "Set RGB color payload"
+        }
+      ]
+    },
+    {
+      "state_name": "scene",
+      "op_type": "enum",
+      "identifiers": {
+        "status": {
+          "opcode": "0x05",
+          "payload": "0501",
+          "description": "Returns scene code"
+        },
+        "command": {
+          "opcode": "0x05",
+          "payload_format": "scene_id"
+        }
+      },
+      "parse_options": {
+        "value_map": {
+          "0001": "sunrise",
+          "0002": "sunset",
+          "0003": "candle"
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x05",
+          "payload": "0500",
+          "expect_bytes": 6,
+          "notes": "Bytes 3-4 encode scene id"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_scene",
+          "opcode": "0x05",
+          "payload_template": "05{{ scene_id }}",
+          "description": "Apply dynamic scene"
+        }
+      ]
+    },
+    {
+      "state_name": "presence_detection",
+      "op_type": "sensor",
+      "identifiers": {
+        "status": {
+          "opcode": "0x10",
+          "payload": "1000",
+          "description": "Presence sensor status"
+        }
+      },
+      "parse_options": {
+        "value_map": {
+          "01": "occupied",
+          "00": "clear"
+        },
+        "byte_index": 2
+      },
+      "status_templates": [
+        {
+          "opcode": "0x10",
+          "payload": "1000",
+          "expect_bytes": 4,
+          "notes": "Byte 3 toggles presence"
+        }
+      ],
+      "command_templates": []
+    },
+    {
+      "state_name": "presence_detection_settings",
+      "op_type": "composite",
+      "identifiers": {
+        "status": {
+          "sequence": [
+            "0x11",
+            "0x12"
+          ],
+          "description": "Sensitivity and timeout query"
+        },
+        "command": {
+          "sequence": [
+            "0x11",
+            "0x12"
+          ],
+          "description": "Two-step write to persist settings"
+        }
+      },
+      "parse_options": {
+        "fields": {
+          "sensitivity": {
+            "byte_index": 2,
+            "range": [
+              1,
+              5
+            ]
+          },
+          "hold_time": {
+            "byte_index": 3,
+            "range": [
+              5,
+              900
+            ]
+          }
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x11",
+          "payload": "1100",
+          "expect_bytes": 6,
+          "notes": "First response yields sensitivity and hold time"
+        },
+        {
+          "opcode": "0x12",
+          "payload": "1200",
+          "expect_bytes": 4,
+          "notes": "Second response confirms mmWave enable flag"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_presence_settings",
+          "opcode": "0x11",
+          "payload_template": "11{{ sensitivity | int | format('02x') }}{{ hold_time | int | format('04x') }}",
+          "description": "Configure mmWave detection",
+          "multi_step": [
+            "Dispatch configuration payload via opcode 0x11",
+            "Send 0x12 commit command to apply updated detection mode"
+          ]
+        }
+      ]
+    },
+    {
+      "state_name": "humidifier_mode",
+      "op_type": "enum",
+      "identifiers": {
+        "status": {
+          "opcode": "0x20",
+          "payload": "2000",
+          "description": "Humidifier operating mode"
+        },
+        "command": {
+          "opcode": "0x20",
+          "payloads": {
+            "auto": "2001",
+            "sleep": "2002",
+            "manual": "2003"
+          }
+        }
+      },
+      "parse_options": {
+        "value_map": {
+          "01": "auto",
+          "02": "sleep",
+          "03": "manual"
+        },
+        "byte_index": 2
+      },
+      "status_templates": [
+        {
+          "opcode": "0x20",
+          "payload": "2000",
+          "expect_bytes": 4,
+          "notes": "Byte 3 encodes humidifier mode"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_humidifier_mode",
+          "opcode": "0x20",
+          "payload_template": "20{{ mode_code }}",
+          "description": "Apply humidifier operating mode"
+        }
+      ]
+    },
+    {
+      "state_name": "mist_level",
+      "op_type": "range",
+      "identifiers": {
+        "status": {
+          "opcode": "0x21",
+          "payload": "2100",
+          "description": "Mist output level"
+        },
+        "command": {
+          "opcode": "0x21",
+          "payload_range": {
+            "min": "2101",
+            "max": "2103"
+          }
+        }
+      },
+      "parse_options": {
+        "value_map": {
+          "01": "low",
+          "02": "medium",
+          "03": "high"
+        },
+        "byte_index": 2
+      },
+      "status_templates": [
+        {
+          "opcode": "0x21",
+          "payload": "2100",
+          "expect_bytes": 4,
+          "notes": "Byte 3 holds mist level code"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_mist_level",
+          "opcode": "0x21",
+          "payload_template": "21{{ level_code }}",
+          "description": "Set humidifier mist intensity"
+        }
+      ]
+    },
+    {
+      "state_name": "target_humidity",
+      "op_type": "range",
+      "identifiers": {
+        "status": {
+          "opcode": "0x22",
+          "payload": "2200",
+          "description": "Target humidity percentage"
+        },
+        "command": {
+          "opcode": "0x22",
+          "payload_range": {
+            "min": "221E",
+            "max": "225A"
+          }
+        }
+      },
+      "parse_options": {
+        "byte_index": 2,
+        "scaling": {
+          "factor": 1,
+          "min": 30,
+          "max": 90
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x22",
+          "payload": "2200",
+          "expect_bytes": 4,
+          "notes": "Byte 3 encodes target humidity"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_target_humidity",
+          "opcode": "0x22",
+          "payload_template": "22{{ value | int | format('02x') }}",
+          "description": "Set humidifier target humidity"
+        }
+      ]
+    },
+    {
+      "state_name": "water_shortage",
+      "op_type": "sensor",
+      "identifiers": {
+        "status": {
+          "opcode": "0x23",
+          "payload": "2300",
+          "description": "Water shortage alarm"
+        }
+      },
+      "parse_options": {
+        "value_map": {
+          "01": "empty",
+          "00": "ok"
+        },
+        "byte_index": 2
+      },
+      "status_templates": [
+        {
+          "opcode": "0x23",
+          "payload": "2300",
+          "expect_bytes": 4,
+          "notes": "Byte 3 raises shortage flag"
+        }
+      ],
+      "command_templates": []
+    }
+  ]
+}
