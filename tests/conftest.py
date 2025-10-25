@@ -14,6 +14,9 @@ if str(ROOT) not in sys.path:
 def pytest_configure(config: pytest.Config) -> None:
     """Configure pytest."""
     config.addinivalue_line("markers", "asyncio: execute test in an event loop")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    config._govee_loop = loop  # type: ignore[attr-defined]
 
 
 def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
@@ -26,7 +29,16 @@ def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(pyfuncitem.obj(**pyfuncitem.funcargs))
             finally:
-                asyncio.set_event_loop(None)
+                default_loop = getattr(pyfuncitem.config, "_govee_loop", None)
+                asyncio.set_event_loop(default_loop)
                 loop.close()
             return True
     return None
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Tear down resources created during configuration."""
+
+    loop = getattr(config, "_govee_loop", None)
+    if loop is not None:
+        loop.close()
