@@ -4,11 +4,45 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-
 from datetime import timedelta
+from types import ModuleType
+from typing import Any
 
 import pytest
 
+if "homeassistant.helpers.update_coordinator" not in __import__("sys").modules:
+    import sys
+
+    homeassistant = ModuleType("homeassistant")
+    helpers = ModuleType("homeassistant.helpers")
+    update_coordinator = ModuleType("homeassistant.helpers.update_coordinator")
+
+    class _DataUpdateCoordinator:
+        """Minimal stub replicating the HA coordinator API for tests."""
+
+        def __init__(
+            self,
+            hass: Any,
+            logger: Any,
+            name: str | None = None,
+            update_interval: timedelta | None = None,
+        ) -> None:
+            self.hass = hass
+            self.logger = logger
+            self.name = name
+            self.update_interval = update_interval
+
+    update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
+    helpers.update_coordinator = update_coordinator
+    homeassistant.helpers = helpers
+
+    sys.modules.setdefault("homeassistant", homeassistant)
+    sys.modules.setdefault("homeassistant.helpers", helpers)
+    sys.modules.setdefault(
+        "homeassistant.helpers.update_coordinator", update_coordinator
+    )
+
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from custom_components.govee_ultimate.coordinator import GoveeDataUpdateCoordinator
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
@@ -112,6 +146,19 @@ class FakeLoop:
         handle = FakeTimerHandle(callback)
         self.calls.append((delay, handle))
         return handle
+
+
+def test_coordinator_inherits_home_assistant_data_update_coordinator() -> None:
+    """The integration coordinator must extend Home Assistant's base class."""
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=object(),
+        api_client=None,
+        device_registry=None,
+        entity_registry=None,
+    )
+
+    assert isinstance(coordinator, DataUpdateCoordinator)
 
 
 @pytest.mark.asyncio

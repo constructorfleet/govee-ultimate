@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
+
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .device_types.base import BaseDevice
 from .device_types.humidifier import HumidifierDevice
@@ -54,7 +57,7 @@ class DeviceMetadata:
         return None
 
 
-class GoveeDataUpdateCoordinator:
+class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
     """Own device instances and orchestrate refresh/events."""
 
     def __init__(
@@ -66,21 +69,39 @@ class GoveeDataUpdateCoordinator:
         entity_registry: Any,
         refresh_interval: timedelta | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
+        logger: logging.Logger | None = None,
     ) -> None:
         """Initialise the coordinator with integration dependencies."""
+
+        coordinator_logger = logger or logging.getLogger(__name__)
+        interval = refresh_interval or _DEFAULT_REFRESH_INTERVAL
+        super().__init__(
+            hass,
+            coordinator_logger,
+            name="Govee Ultimate Data Coordinator",
+            update_interval=interval,
+        )
 
         self.hass = hass
         self._api_client = api_client
         self._device_registry = device_registry
         self._entity_registry = entity_registry
-        self._refresh_interval = refresh_interval or _DEFAULT_REFRESH_INTERVAL
-        self._refresh_interval_seconds = self._refresh_interval.total_seconds()
-        self._loop = loop or asyncio.get_event_loop()
+        hass_loop = getattr(hass, "loop", None)
+        self._loop = loop or hass_loop or asyncio.get_event_loop()
         self._refresh_task: asyncio.TimerHandle | None = None
         self._pending_tasks: set[asyncio.Task[Any]] = set()
 
         self.devices: dict[str, BaseDevice] = {}
         self.device_metadata: dict[str, DeviceMetadata] = {}
+
+    @property
+    def _refresh_interval_seconds(self) -> float:
+        """Expose the coordinator refresh interval as seconds."""
+
+        if self.update_interval is None:
+            msg = "Refresh interval is not configured"
+            raise RuntimeError(msg)
+        return self.update_interval.total_seconds()
 
     async def async_discover_devices(self) -> None:
         """Fetch metadata and materialise device instances."""
