@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,8 @@ class Store:
         key: str,
         private: bool = False,
     ) -> None:
+        """Prepare a storage helper for the given Home Assistant instance."""
+
         self.hass = hass
         self.version = version
         self.key = key
@@ -55,9 +58,7 @@ class Store:
             return
 
         def _remove() -> None:
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 self._path.unlink()
-            except FileNotFoundError:
-                pass
 
         await self.hass.async_add_executor_job(_remove)

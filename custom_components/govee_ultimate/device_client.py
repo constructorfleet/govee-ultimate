@@ -92,7 +92,7 @@ class GoveeDevice:
         return asdict(self)
 
     @classmethod
-    def from_storage(cls, data: dict[str, Any]) -> "GoveeDevice":
+    def from_storage(cls, data: dict[str, Any]) -> GoveeDevice:
         """Hydrate a device from stored JSON."""
 
         wifi = data.get("wifi")
@@ -140,6 +140,8 @@ class DeviceListClient:
         client: httpx.AsyncClient,
         auth: GoveeAuthManager,
     ) -> None:
+        """Bind Home Assistant context, HTTP client, and auth manager for REST operations."""
+
         self._client = client
         self._auth = auth
         self._store = Store(hass, DEVICE_STORE_VERSION, DEVICE_STORE_KEY, private=True)

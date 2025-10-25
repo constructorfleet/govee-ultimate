@@ -28,7 +28,7 @@ class TokenDetails:
     expires_at: datetime
 
     @classmethod
-    def from_login_payload(cls, email: str, payload: dict[str, Any]) -> "TokenDetails":
+    def from_login_payload(cls, email: str, payload: dict[str, Any]) -> TokenDetails:
         """Create token details from a login payload."""
 
         return cls(
@@ -39,7 +39,7 @@ class TokenDetails:
         )
 
     @classmethod
-    def from_storage(cls, data: dict[str, Any]) -> "TokenDetails":
+    def from_storage(cls, data: dict[str, Any]) -> TokenDetails:
         """Create token details from persisted storage."""
 
         return cls(
@@ -71,6 +71,8 @@ class GoveeAuthManager:
     """Manage authentication lifecycle for the Govee Ultimate integration."""
 
     def __init__(self, hass: Any, client: httpx.AsyncClient) -> None:
+        """Initialize the auth manager with Home Assistant and HTTP client dependencies."""
+
         self._hass = hass
         self._client = client
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY, private=True)

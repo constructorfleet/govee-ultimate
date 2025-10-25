@@ -1,6 +1,7 @@
 """Tests for the auth manager."""
 
 import asyncio
+import inspect
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -15,10 +16,14 @@ class StubHass:
     """Minimal hass stub implementing storage API requirements."""
 
     def __init__(self, loop: asyncio.AbstractEventLoop, config_dir: str) -> None:
+        """Store loop and config directory to mirror hass helpers."""
+
         self.loop = loop
         self.config = SimpleNamespace(config_dir=config_dir)
 
     async def async_add_executor_job(self, func, *args):  # type: ignore[no-untyped-def]
+        """Run executor jobs via the ambient event loop."""
+
         return await asyncio.get_running_loop().run_in_executor(None, func, *args)
 
 
@@ -212,3 +217,18 @@ async def test_auth_manager_refresh_failure_clears_state(tmp_path_factory, reque
     await client.aclose()
 
     await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "factory",
+    (
+        TokenDetails.from_login_payload,
+        TokenDetails.from_storage,
+    ),
+)
+def test_token_details_return_annotations_are_concrete(factory) -> None:
+    """TokenDetails factories should declare concrete return annotations."""
+
+    source = inspect.getsource(factory)
+
+    assert '"TokenDetails"' not in source

@@ -1,23 +1,28 @@
 """Tests for the device list client."""
 
 import asyncio
+import inspect
 import json
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from custom_components.govee_ultimate.device_client import DeviceListClient
+from custom_components.govee_ultimate.device_client import DeviceListClient, GoveeDevice
 
 
 class StubHass:
     """Minimal hass stub implementing storage API requirements."""
 
     def __init__(self, loop: asyncio.AbstractEventLoop, config_dir: str) -> None:
+        """Persist Home Assistant loop and config directory references."""
+
         self.loop = loop
         self.config = SimpleNamespace(config_dir=config_dir)
 
     async def async_add_executor_job(self, func, *args):  # type: ignore[no-untyped-def]
+        """Proxy executor jobs through the ambient loop."""
+
         return await asyncio.get_running_loop().run_in_executor(None, func, *args)
 
 
@@ -25,9 +30,13 @@ class StubAuthManager:
     """Auth stub returning a static access token."""
 
     def __init__(self, token: str = "access-token") -> None:
+        """Record the static token returned by the stub."""
+
         self.token = token
 
     async def async_get_access_token(self) -> str:
+        """Return the configured token to mimic the auth manager."""
+
         return self.token
 
 
@@ -185,3 +194,18 @@ async def test_device_list_client_uses_fallback(tmp_path_factory, request):
     assert devices[0].name == "Cached Device"
 
     await failure_client.aclose()
+
+
+@pytest.mark.parametrize(
+    "factory",
+    (
+        DeviceListClient._normalize_device,
+        GoveeDevice.from_storage,
+    ),
+)
+def test_device_from_storage_annotation_is_concrete(factory) -> None:
+    """The GoveeDevice factories should avoid quoted type annotations."""
+
+    source = inspect.getsource(factory)
+
+    assert '"GoveeDevice"' not in source
