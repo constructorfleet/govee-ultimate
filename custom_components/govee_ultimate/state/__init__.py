@@ -1,5 +1,7 @@
 """State management helpers for Govee Ultimate devices."""
 
+from custom_components.govee_ultimate import _ensure_event_loop as _ensure_loop
+
 from .device_state import DeviceOpState, DeviceState, ParseOption
 from .states import (
     ActiveState,
@@ -27,3 +29,5 @@ __all__ = [
     "EnablePresenceState",
     "DetectionSettingsState",
 ]
+
+_ensure_loop()
