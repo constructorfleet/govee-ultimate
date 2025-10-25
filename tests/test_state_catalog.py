@@ -36,6 +36,25 @@ def test_presence_detection_settings_mark_multi_step_sequence():
     assert len(detection_entry.command_templates[0].multi_step) == 2
 
 
+def test_detection_settings_entry_declares_multi_step_payloads():
+    """Detection settings include preamble and value commands."""
+
+    catalog = load_state_catalog()
+    detection_entry = catalog.get_state("detection_settings")
+
+    assert detection_entry.identifiers["command"]["sequence"] == ["0x33", "0x33"]
+    assert len(detection_entry.command_templates) == 2
+    assert detection_entry.command_templates[0].multi_step is not None
+
+
+def test_enable_presence_entry_maps_boolean_flags():
+    """Enable presence metadata documents boolean flag layout."""
+
+    catalog = load_state_catalog()
+    enable_entry = catalog.get_state("enable_presence")
+
+    assert enable_entry.identifiers["status"]["opcode"] == "0x1F"
+    assert enable_entry.command_templates[0].opcode == "0x33"
 def test_state_catalog_module_is_documented():
     """Modules, models, and stubs carry documentation strings."""
 
