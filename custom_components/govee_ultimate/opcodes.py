@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 import base64
-from typing import Any, Sequence, TypedDict, cast
+import json
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any, TypedDict, cast
 
 
 class OpcodeVectors(TypedDict):
@@ -85,9 +86,7 @@ def _normalise_hex(hex_string: str) -> str:
 def hex_to_base64(hex_string: str) -> str:
     """Convert hexadecimal payload text into base64 encoding."""
 
-    normalised = _normalise_hex(hex_string)
-    payload = bytes.fromhex(normalised)
-    return _to_base64(payload)
+    return _to_base64(_hex_to_bytes(hex_string))
 
 
 def base64_to_hex(payload_b64: str) -> str:
@@ -103,14 +102,23 @@ def _to_base64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
-def _to_bytes(payload: bytes | Sequence[int] | None) -> bytes:
+def _to_bytes(payload: bytes | Sequence[int] | str | None) -> bytes:
     """Normalise payload inputs to a byte string."""
 
     if payload is None:
         return b""
     if isinstance(payload, bytes):
         return payload
+    if isinstance(payload, str):
+        return _hex_to_bytes(payload)
     return bytes(payload)
+
+
+def _hex_to_bytes(hex_string: str) -> bytes:
+    """Convert hexadecimal text into a byte string with even-length padding."""
+
+    text = _normalise_hex(hex_string)
+    return bytes.fromhex(_ensure_even_length(text))
 
 
 def assemble_command(

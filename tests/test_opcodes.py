@@ -74,3 +74,13 @@ def test_iot_payload_helper_encodes_bytes() -> None:
     """Raw IoT payloads should be converted to base64 without framing."""
 
     assert opcodes.iot_payload_to_base64([0x01, 0xFF]) == "Af8="
+
+
+def test_assemble_command_accepts_hex_string_payload() -> None:
+    """String payloads expressed as hex should match byte payload assembly."""
+
+    frame_from_hex = opcodes.assemble_command([0x33, 0x01, 0x01], "AA")
+    frame_from_bytes = opcodes.assemble_command([0x33, 0x01, 0x01], bytes.fromhex("AA"))
+
+    assert isinstance(frame_from_hex, bytes)
+    assert frame_from_hex == frame_from_bytes
