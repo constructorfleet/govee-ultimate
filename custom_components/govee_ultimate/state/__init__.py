@@ -1,5 +1,5 @@
-"""State management utilities for Govee Ultimate custom component."""
+"""State management helpers for Govee Ultimate devices."""
 
-from .device_state import DeviceOpState, DeviceState, ParseOption, filter_commands
+from .device_state import DeviceOpState, DeviceState, ParseOption
 
-__all__ = ["DeviceState", "DeviceOpState", "ParseOption", "filter_commands"]
+__all__ = ["DeviceState", "DeviceOpState", "ParseOption"]
