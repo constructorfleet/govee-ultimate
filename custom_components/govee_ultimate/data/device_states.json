@@ -42,6 +42,47 @@
       ]
     },
     {
+      "state_name": "active",
+      "op_type": "toggle",
+      "identifiers": {
+        "status": {
+          "opcode": "0x06",
+          "payload": "0601",
+          "description": "Reports whether a device is actively running"
+        },
+        "command": {
+          "opcode": "0x06",
+          "payloads": {
+            "active": "0601",
+            "inactive": "0600"
+          }
+        }
+      },
+      "parse_options": {
+        "value_map": {
+          "0601": true,
+          "0600": false
+        },
+        "byte_index": 2
+      },
+      "status_templates": [
+        {
+          "opcode": "0x06",
+          "payload": "0600",
+          "expect_bytes": 3,
+          "notes": "Third byte encodes active flag"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_active",
+          "opcode": "0x06",
+          "payload_template": "06{{ '01' if value else '00' }}",
+          "description": "Toggle whether a device is active"
+        }
+      ]
+    },
+    {
       "state_name": "brightness",
       "op_type": "range",
       "identifiers": {
