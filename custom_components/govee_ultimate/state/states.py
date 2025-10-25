@@ -7,10 +7,370 @@ from functools import cache
 from typing import Any
 
 from .. import opcodes
+from collections.abc import Sequence
+
 from ..state_catalog import CommandTemplate, StateEntry, load_state_catalog
-from .device_state import DeviceOpState, ParseOption
+from .device_state import DeviceOpState, DeviceState, ParseOption
 
 _REPORT_OPCODE = 0xAA
+
+
+def _match_identifier_tail(identifier: Sequence[int], active: Sequence[int]) -> bool:
+    """Return True when ``active`` matches the trailing portion of ``identifier``."""
+
+    if not active:
+        return False
+    if len(identifier) < len(active):
+        return False
+    tail = identifier[-len(active) :]
+    return all(candidate == value for candidate, value in zip(tail, active))
+
+
+def _default_mode_identifier(state: ModeState) -> DeviceState[str] | None:
+    """Locate the active sub-state using identifier comparison."""
+
+    active_identifier = state.active_identifier
+    if not active_identifier:
+        return None
+    for mode in state.modes:
+        identifier = getattr(mode, "_identifier", None)
+        if not identifier:
+            continue
+        if _match_identifier_tail(identifier, active_identifier):
+            return mode
+    return None
+
+
+class ModeState(DeviceOpState[DeviceState[str] | None]):
+    """Manage a collection of mode states keyed by identifier sequences."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        modes: list[DeviceState[str] | None],
+        op_type: int = _REPORT_OPCODE,
+        identifier: list[int] | None = None,
+        inline: bool = False,
+        identifier_map=_default_mode_identifier,
+    ) -> None:
+        """Initialise the composite mode state handler."""
+
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifier},
+            device=device,
+            name="mode",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE | ParseOption.STATE,
+        )
+        self._identifier_map = identifier_map
+        self._inline = inline
+        self._active_identifier: list[int] | None = None
+        self._modes: list[DeviceState[str]] = []
+        for mode in modes:
+            self.register_mode(mode)
+
+    @property
+    def active_identifier(self) -> list[int] | None:
+        """Return the currently tracked mode identifier sequence."""
+
+        return list(self._active_identifier) if self._active_identifier else None
+
+    @property
+    def modes(self) -> list[DeviceState[str]]:
+        """Return the registered sub-states."""
+
+        return list(self._modes)
+
+    @property
+    def active_mode(self) -> DeviceState[str] | None:
+        """Return the mode matching the active identifier."""
+
+        return self.value
+
+    def register_mode(self, mode: DeviceState[str] | None) -> None:
+        """Register a sub-state for identifier tracking."""
+
+        if mode is None:
+            return
+        if mode not in self._modes:
+            self._modes.append(mode)
+
+    def parse_state(self, data: dict[str, Any]) -> None:
+        """Capture active mode identifiers from structured state payloads."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return
+        identifier = _int_from_value(state_section.get("mode"))
+        if identifier is None:
+            return
+        self._set_active_identifier([identifier])
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Interpret opcode responses carrying active mode identifiers."""
+
+        if not op_command:
+            return
+        if self._inline:
+            self._set_active_identifier(list(op_command))
+            return
+        leading, *values = op_command
+        if leading != 0x00:
+            return
+        if not values:
+            return
+        self._set_active_identifier(values)
+
+    def _set_active_identifier(self, identifier: list[int]) -> None:
+        self._active_identifier = identifier
+        active_mode = self._identifier_map(self)
+        self._update_state(active_mode)
+
+
+def _strip_op_header(
+    sequence: Sequence[int],
+    op_type: int | None,
+    identifier: Sequence[int] | None,
+) -> list[int]:
+    payload = list(sequence)
+    offset = 0
+    if op_type is not None:
+        offset += 1
+    if identifier:
+        offset += len(identifier)
+    return payload[offset:]
+
+
+class PresenceState(DeviceOpState[dict[str, Any] | None]):
+    """Decode presence sensor opcode payloads into structured values."""
+
+    def __init__(
+        self,
+        device: object,
+        presence_type: str,
+        op_type: int = _REPORT_OPCODE,
+        *identifier: int,
+    ) -> None:
+        """Initialise the presence state with identifier metadata."""
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": list(identifier)},
+            device=device,
+            name=f"presence-{presence_type}",
+            initial_value=None,
+        )
+        self._presence_type = presence_type
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Translate opcode payloads into detection metadata."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) < 3:
+            return
+        detected = payload[0] == 0x01
+        distance = int.from_bytes(payload[1:3], "big")
+        duration = self._extract_duration(payload)
+        value: dict[str, Any] = {
+            "type": self._presence_type,
+            "detected": detected,
+            "distance": {"value": distance, "unit": "cm"},
+        }
+        if duration is not None:
+            value["duration"] = {"value": duration, "unit": "s"}
+        self._update_state(value)
+
+    def _extract_duration(self, payload: list[int]) -> int | None:
+        if len(payload) <= 14:
+            return None
+        duration_bytes = payload[-12:-8]
+        if len(duration_bytes) != 4:
+            return None
+        return int.from_bytes(duration_bytes, "big")
+
+
+class MMWavePresenceState(PresenceState):
+    """Presence state dedicated to mmWave detection hardware."""
+
+    def __init__(self, device: object) -> None:
+        """Initialise the mmWave-specific presence handler."""
+        super().__init__(device, "mmWave", _REPORT_OPCODE, 0x01)
+
+
+class BiologicalPresenceState(PresenceState):
+    """Presence state dedicated to biological detection sensors."""
+
+    def __init__(self, device: object) -> None:
+        """Initialise the biological presence handler."""
+        super().__init__(device, "biological", _REPORT_OPCODE, 0x01, -1, -1, -1)
+
+
+def _opcode_frame(op_type: int, *values: int) -> list[int]:
+    """Construct an opcode frame padded to 19 bytes with checksum."""
+
+    frame = [op_type, *values]
+    if len(frame) < 19:
+        frame.extend([0x00] * (19 - len(frame)))
+    checksum = 0
+    for byte in frame:
+        checksum ^= byte
+    frame.append(checksum)
+    return frame
+
+
+def _int_to_bytes(value: int) -> list[int]:
+    return [value >> 8 & 0xFF, value & 0xFF]
+
+
+class EnablePresenceState(DeviceOpState[dict[str, bool | None]]):
+    """Toggle mmWave and biological presence detection sensors."""
+
+    def __init__(self, device: object) -> None:
+        """Initialise the enable-state wrapper with identifiers."""
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": [0x1F]},
+            device=device,
+            name="enablePresence",
+            initial_value={},
+            state_to_command=self._state_to_command,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Parse opcode responses carrying enable flags."""
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) < 2:
+            return
+        self._update_state(
+            {
+                "biologicalEnabled": payload[0] == 0x01,
+                "mmWaveEnabled": payload[1] == 0x01,
+            }
+        )
+
+    def _state_to_command(self, next_state: dict[str, bool | None]):
+        biological = next_state.get("biologicalEnabled")
+        if biological is None:
+            biological = self.value.get("biologicalEnabled")
+        mmwave = next_state.get("mmWaveEnabled")
+        if mmwave is None:
+            mmwave = self.value.get("mmWaveEnabled")
+        if biological is None or mmwave is None:
+            return None
+        bio_flag = 0x01 if biological else 0x00
+        mm_flag = 0x01 if mmwave else 0x00
+        frame = _opcode_frame(0x33, 0x1F, bio_flag, mm_flag)
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {
+                "op": {
+                    "command": [
+                        [_REPORT_OPCODE, *self._identifier, bio_flag, mm_flag]
+                    ]
+                },
+            },
+        }
+
+
+def _to_seconds(value: Any, unit: str) -> int | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    normalised = unit.lower()
+    if normalised in {"s", "sec", "second", "seconds"}:
+        return int(round(numeric))
+    if normalised in {"m", "min", "minute", "minutes"}:
+        return int(round(numeric * 60))
+    if normalised in {"h", "hr", "hour", "hours"}:
+        return int(round(numeric * 3600))
+    return int(round(numeric))
+
+
+class DetectionSettingsState(DeviceOpState[dict[str, Any]]):
+    """Configure detection distance and reporting intervals."""
+
+    def __init__(self, device: object) -> None:
+        """Initialise the detection settings controller."""
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": [0x05, 0x01]},
+            device=device,
+            name="detectionSettings",
+            initial_value={},
+            state_to_command=self._state_to_command,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Decode detection distance and durations from payloads."""
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) < 6:
+            return
+        distance = int.from_bytes(payload[0:2], "big")
+        absence = int.from_bytes(payload[2:4], "big")
+        report = int.from_bytes(payload[4:6], "big")
+        self._update_state(
+            {
+                "detectionDistance": {"value": distance, "unit": "cm"},
+                "absenceDuration": {"value": absence, "unit": "s"},
+                "reportDetection": {"value": report, "unit": "s"},
+            }
+        )
+
+    def _state_to_command(self, next_state: dict[str, Any]):
+        distance = self._resolve_distance(next_state)
+        absence = self._resolve_duration(next_state, "absenceDuration")
+        report = self._resolve_duration(next_state, "reportDetection")
+        if None in (distance, absence, report):
+            return None
+        distance_bytes = _int_to_bytes(distance)
+        absence_bytes = _int_to_bytes(absence)
+        report_bytes = _int_to_bytes(report)
+        command_frames = [
+            _opcode_frame(0x33, 0x05, 0x00, 0x01),
+            _opcode_frame(0x33, 0x05, 0x01, *distance_bytes, *absence_bytes, *report_bytes),
+        ]
+        status_payload = distance_bytes + absence_bytes + report_bytes
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": command_frames},
+            },
+            "status": {
+                "op": {
+                    "command": [
+                        [_REPORT_OPCODE, *self._identifier, *status_payload]
+                    ]
+                }
+            },
+        }
+
+    def _resolve_distance(self, next_state: dict[str, Any]) -> int | None:
+        candidate = self._select_field(next_state, "detectionDistance")
+        if candidate is None:
+            return None
+        value = candidate.get("value")
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_duration(self, next_state: dict[str, Any], key: str) -> int | None:
+        candidate = self._select_field(next_state, key)
+        if candidate is None:
+            return None
+        value = candidate.get("value")
+        unit = candidate.get("unit", "s")
+        return _to_seconds(value, unit)
+
+    def _select_field(self, next_state: dict[str, Any], key: str) -> Mapping[str, Any] | None:
+        candidate = next_state.get(key)
+        if isinstance(candidate, Mapping):
+            return candidate
+        existing = self.value.get(key)
+        if isinstance(existing, Mapping):
+            return existing
+        return None
 
 
 @cache
