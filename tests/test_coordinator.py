@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from types import ModuleType
 from typing import Any
@@ -47,6 +48,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from custom_components.govee_ultimate.coordinator import GoveeDataUpdateCoordinator
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
+from custom_components.govee_ultimate.iot_client import IoTClientConfig
 
 
 class FakeAPIClient:
@@ -80,6 +82,46 @@ class FakeAPIClient:
         """Record BLE commands issued by the coordinator."""
 
         self.ble_commands.append((device_id, dict(command), dict(channel_info)))
+
+
+class FakeIoTClient:
+    """Capture IoT configuration and command publications."""
+
+    def __init__(self) -> None:
+        self.configured: list[IoTClientConfig] = []
+        self.connected_callbacks: list[Callable[[str, bytes], Awaitable[None]]] = []
+        self.published: list[dict[str, Any]] = []
+        self.expire_calls = 0
+
+    async def async_configure(self, config: IoTClientConfig) -> None:
+        self.configured.append(config)
+
+    async def async_connect(
+        self, callback: Callable[[str, bytes], Awaitable[None]]
+    ) -> None:
+        self.connected_callbacks.append(callback)
+
+    async def async_publish_command(
+        self,
+        *,
+        topic: str,
+        payload: bytes,
+        command_id: str,
+        qos: int = 1,
+        retain: bool = False,
+    ) -> None:
+        self.published.append(
+            {
+                "topic": topic,
+                "payload": payload,
+                "command_id": command_id,
+                "qos": qos,
+                "retain": retain,
+            }
+        )
+
+    def expire_pending_commands(self) -> None:
+        self.expire_calls += 1
 
 
 @dataclass
@@ -280,6 +322,100 @@ async def test_discovery_registers_home_assistant_entities() -> None:
 
 
 @pytest.mark.asyncio
+async def test_configure_transports_sets_up_iot_client() -> None:
+    """Coordinator should configure and connect the IoT client when enabled."""
+
+    api_client = FakeAPIClient([])
+    fake_iot = FakeIoTClient()
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=fake_iot,
+    )
+
+    await coordinator.async_configure_transports(
+        {
+            "iot": {
+                "enabled": True,
+                "broker": "mqtt://example.amazonaws.com",
+                "port": 8883,
+                "username": "user",
+                "password": "pass",
+                "topics": ["govee/state/#"],
+                "command_expiry": 45,
+                "debug": True,
+            }
+        }
+    )
+
+    assert fake_iot.configured == [
+        IoTClientConfig(
+            broker="mqtt://example.amazonaws.com",
+            port=8883,
+            username="user",
+            password="pass",
+            topics=["govee/state/#"],
+            command_expiry=timedelta(seconds=45),
+        )
+    ]
+    assert len(fake_iot.connected_callbacks) == 1
+
+
+@pytest.mark.asyncio
+async def test_configure_transports_reconfigures_on_change() -> None:
+    """Updating the transport settings should reconfigure the IoT client."""
+
+    fake_iot = FakeIoTClient()
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=FakeAPIClient([]),
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=fake_iot,
+    )
+
+    await coordinator.async_configure_transports(
+        {
+            "iot": {
+                "enabled": True,
+                "broker": "mqtt://example.amazonaws.com",
+                "port": 8883,
+                "username": "user",
+                "password": "pass",
+                "topics": ["govee/state/#"],
+                "command_expiry": 30,
+            }
+        }
+    )
+
+    await coordinator.async_configure_transports(
+        {
+            "iot": {
+                "enabled": True,
+                "broker": "mqtt://example.amazonaws.com",
+                "port": 8883,
+                "username": "user",
+                "password": "pass",
+                "topics": ["govee/state/updated"],
+                "command_expiry": 60,
+            }
+        }
+    )
+
+    assert [config.topics for config in fake_iot.configured] == [
+        ["govee/state/#"],
+        ["govee/state/updated"],
+    ]
+    assert [config.command_expiry for config in fake_iot.configured] == [
+        timedelta(seconds=30),
+        timedelta(seconds=60),
+    ]
+    assert len(fake_iot.connected_callbacks) == 2
+
+
+@pytest.mark.asyncio
 async def test_command_dispatch_defaults_to_iot_channel() -> None:
     """Command publishers should select the default IoT channel when available."""
 
@@ -302,25 +438,43 @@ async def test_command_dispatch_defaults_to_iot_channel() -> None:
     device_registry = FakeDeviceRegistry()
     entity_registry = FakeEntityRegistry()
 
+    fake_iot = FakeIoTClient()
     coordinator = GoveeDataUpdateCoordinator(
         hass=None,
         api_client=api_client,
         device_registry=device_registry,
         entity_registry=entity_registry,
+        iot_client=fake_iot,
     )
 
     await coordinator.async_discover_devices()
+    await coordinator.async_configure_transports(
+        {
+            "iot": {
+                "enabled": True,
+                "broker": "mqtt://example.amazonaws.com",
+                "port": 8883,
+                "username": "user",
+                "password": "pass",
+                "topics": ["govee/state/#"],
+                "command_expiry": 30,
+            }
+        }
+    )
 
     publisher = coordinator.get_command_publisher("device-1")
     await publisher({"opcode": "0x01", "payload": "01"})
 
-    assert api_client.iot_commands == [
-        (
-            "device-1",
-            {"opcode": "0x01", "payload": "01"},
-            {"topic": "govee/device-1"},
-        )
+    assert fake_iot.published == [
+        {
+            "topic": "govee/device-1",
+            "payload": b'{"opcode": "0x01", "payload": "01"}',
+            "command_id": "device-1",
+            "qos": 1,
+            "retain": False,
+        }
     ]
+    assert api_client.iot_commands == []
     assert api_client.ble_commands == []
 
 
@@ -364,6 +518,48 @@ async def test_command_dispatch_supports_explicit_ble_channel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_iot_disabled_falls_back_to_rest_client() -> None:
+    """When IoT is disabled the coordinator should use the REST client."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-1",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Living Room Humidifier",
+                "channels": {"iot": {"topic": "govee/device-1"}},
+            }
+        ]
+    )
+    fake_iot = FakeIoTClient()
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=fake_iot,
+    )
+
+    await coordinator.async_discover_devices()
+    await coordinator.async_configure_transports({"iot": {"enabled": False}})
+
+    publisher = coordinator.get_command_publisher("device-1")
+    await publisher({"opcode": "0x01", "payload": "01"})
+
+    assert api_client.iot_commands == [
+        (
+            "device-1",
+            {"opcode": "0x01", "payload": "01"},
+            {"topic": "govee/device-1"},
+        )
+    ]
+    assert fake_iot.published == []
+
+
+@pytest.mark.asyncio
 async def test_event_processing_updates_device_state() -> None:
     """Incoming state updates should fan out to device state objects."""
 
@@ -397,6 +593,61 @@ async def test_event_processing_updates_device_state() -> None:
     assert device.states["water_shortage"].value is False
     assert set(updated) >= {"power", "water_shortage"}
 
+
+@pytest.mark.asyncio
+async def test_iot_messages_update_state_and_prune_commands() -> None:
+    """IoT messages should update devices and trigger command expiry."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-1",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Living Room Humidifier",
+            }
+        ]
+    )
+    iot_client = FakeIoTClient()
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=iot_client,
+    )
+
+    await coordinator.async_discover_devices()
+    await coordinator.async_configure_transports(
+        {
+            "iot": {
+                "enabled": True,
+                "broker": "mqtt://example.amazonaws.com",
+                "port": 8883,
+                "username": "user",
+                "password": "pass",
+                "topics": ["govee/state/#"],
+                "command_expiry": 30,
+            }
+        }
+    )
+
+    callback = iot_client.connected_callbacks[0]
+    payload = json.dumps(
+        {
+            "device": "device-1",
+            "state": {"power": True},
+            "command_id": "cmd-123",
+        }
+    ).encode()
+
+    await callback("govee/state/device-1", payload)
+
+    device = coordinator.devices["device-1"]
+    assert device.states["power"].value is True
+    assert iot_client.expire_calls == 1
 
 def test_refresh_scheduler_reschedules_callback() -> None:
     """Refresh scheduling should reschedule callbacks at the configured interval."""

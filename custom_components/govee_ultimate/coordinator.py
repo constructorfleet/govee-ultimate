@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from .device_types.base import BaseDevice
 from .device_types.humidifier import HumidifierDevice
 from .device_types.purifier import PurifierDevice
 from .device_types.rgbic_light import RGBICLightDevice
+from .iot_client import IoTClient, IoTClientConfig
 
 
 _DEFAULT_REFRESH_INTERVAL = timedelta(minutes=5)
@@ -73,6 +75,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         refresh_interval: timedelta | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
         logger: logging.Logger | None = None,
+        iot_client: IoTClient | None = None,
     ) -> None:
         """Initialise the coordinator with integration dependencies."""
 
@@ -94,6 +97,11 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         self._loop = loop or hass_loop or asyncio.get_event_loop()
         self._refresh_task: asyncio.TimerHandle | None = None
         self._pending_tasks: set[asyncio.Task[Any]] = set()
+        self._iot_client = iot_client
+        self._iot_config: IoTClientConfig | None = None
+        self._iot_enabled = False
+        self._iot_debug = False
+        self._iot_logger = coordinator_logger.getChild("iot")
 
         self.devices: dict[str, BaseDevice] = {}
         self.device_metadata: dict[str, DeviceMetadata] = {}
@@ -204,15 +212,54 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         """Send ``command`` via the correct transport channel."""
 
         if channel_name == "iot":
-            await self._api_client.async_publish_iot_command(
-                device_id, channel_info, command
-            )
+            if self._iot_enabled and self._iot_client is not None:
+                topic = channel_info.get("topic")
+                if topic is None:
+                    raise ValueError(f"IoT channel missing topic for {device_id}")
+                await self._iot_client.async_publish_command(
+                    topic=topic,
+                    payload=self._encode_command_payload(command),
+                    command_id=self._resolve_command_id(device_id, command),
+                )
+            else:
+                await self._api_client.async_publish_iot_command(
+                    device_id, channel_info, command
+                )
         elif channel_name == "ble":
             await self._api_client.async_publish_ble_command(
                 device_id, channel_info, command
             )
         else:
             raise ValueError(f"Unsupported channel {channel_name}")
+
+    async def async_configure_transports(self, config: dict[str, Any]) -> None:
+        """Apply runtime transport configuration settings."""
+
+        if self._iot_client is None:
+            self._iot_enabled = False
+            return
+
+        iot_settings = dict(config.get("iot", {}))
+        self._iot_debug = bool(iot_settings.get("debug"))
+        enabled = bool(iot_settings.get("enabled"))
+
+        if not enabled:
+            self._iot_enabled = False
+            self._iot_config = None
+            return
+
+        new_config = self._build_iot_config(iot_settings)
+
+        if self._iot_config != new_config:
+            if self._iot_debug:
+                self._iot_logger.debug(
+                    "Configuring IoT client with topics: %s", new_config.topics
+                )
+            await self._iot_client.async_configure(new_config)
+            self._iot_config = new_config
+
+        await self._iot_client.async_connect(self._handle_iot_message)
+        self._iot_enabled = True
 
     async def async_process_state_update(
         self, device_id: str, updates: dict[str, Any]
@@ -272,6 +319,79 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                 entity.entity_category.value if entity.entity_category else None
             ),
         }
+
+    def _encode_command_payload(self, command: dict[str, Any]) -> bytes:
+        """Serialise a command dictionary for IoT publication."""
+
+        if self._iot_debug:
+            self._iot_logger.debug("Publishing command: %s", command)
+        return json.dumps(command).encode("utf-8")
+
+    @staticmethod
+    def _resolve_command_id(device_id: str, command: dict[str, Any]) -> str:
+        """Determine the identifier used to track command expiry."""
+
+        for key in ("command_id", "request_id", "transaction_id"):
+            value = command.get(key)
+            if value is not None:
+                return str(value)
+        return device_id
+
+    async def _handle_iot_message(self, topic: str, payload: bytes) -> None:
+        """Process MQTT messages relayed from the IoT client."""
+
+        if self._iot_debug:
+            self._iot_logger.debug("Received MQTT payload on %s: %s", topic, payload)
+
+        data = self._decode_iot_payload(payload)
+        if not data:
+            return
+
+        device_id = (
+            data.get("device")
+            or data.get("device_id")
+            or data.get("did")
+            or data.get("mac")
+        )
+        state_payload = data.get("state") or data.get("payload") or {}
+
+        if device_id and isinstance(state_payload, dict):
+            await self.async_process_state_update(device_id, state_payload)
+
+        if self._iot_client is not None:
+            self._iot_client.expire_pending_commands()
+
+    def _decode_iot_payload(self, payload: bytes) -> dict[str, Any] | None:
+        """Decode MQTT payloads into dictionaries when possible."""
+
+        if not payload:
+            return None
+
+        try:
+            return json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            if self._iot_debug:
+                self._iot_logger.debug("Unable to decode MQTT payload: %s", payload)
+            return None
+
+    def _build_iot_config(self, settings: dict[str, Any]) -> IoTClientConfig:
+        """Construct an IoT client configuration from raw settings."""
+
+        expiry_value = settings.get("command_expiry", 30)
+        expiry_delta = (
+            expiry_value
+            if isinstance(expiry_value, timedelta)
+            else timedelta(seconds=int(expiry_value))
+        )
+
+        return IoTClientConfig(
+            broker=settings.get("broker", ""),
+            port=int(settings.get("port") or 8883),
+            username=settings.get("username"),
+            password=settings.get("password"),
+            topics=list(settings.get("topics", [])),
+            command_expiry=expiry_delta,
+        )
 _MODEL_PREFIX_FACTORIES: tuple[tuple[str, type[BaseDevice]], ...] = (
     ("H714", HumidifierDevice),
     ("H712", PurifierDevice),
