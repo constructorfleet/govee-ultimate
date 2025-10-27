@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 DOMAIN = "govee_ultimate"
@@ -56,6 +57,17 @@ try:  # pragma: no cover - prefer httpx when available
 except ImportError:  # pragma: no cover - allow tests to stub httpx
     httpx = None  # type: ignore[assignment]
 
+_HTTPXGetAsyncClient = Callable[[Any], Any]
+
+try:  # pragma: no cover - optional Home Assistant httpx helper during tests
+    from homeassistant.helpers.httpx_client import (
+        get_async_client as _ha_httpx_get_async_client,
+    )
+except ImportError:  # pragma: no cover - provide fallback when helper missing
+    _httpx_get_async_client: _HTTPXGetAsyncClient | None = None
+else:  # pragma: no cover - executed only when helper available during runtime
+    _httpx_get_async_client = _ha_httpx_get_async_client
+
 try:  # pragma: no cover - optional Home Assistant registries during tests
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
@@ -63,6 +75,9 @@ except ImportError:  # pragma: no cover - provide fallbacks for unit tests
     dr = er = None  # type: ignore[assignment]
 
 API_BASE_URL = "https://app2.govee.com"
+TOKEN_REFRESH_INTERVAL = 300.0
+SERVICE_REAUTHENTICATE = "reauthenticate"
+_SERVICES_KEY = f"{DOMAIN}_services_registered"
 
 
 def _get_auth_class() -> type[Any]:
@@ -87,18 +102,25 @@ async def async_setup(hass: Any, _config: dict[str, Any]) -> bool:
     """Initialise the integration namespace on Home Assistant startup."""
 
     hass.data.setdefault(DOMAIN, {})
+    _ensure_services_registered(hass)
     return True
 
 
 async def async_setup_entry(hass: Any, entry: Any) -> bool:
     """Set up a config entry for the integration."""
 
+    _ensure_services_registered(hass)
     domain_data = hass.data.setdefault(DOMAIN, {})
 
-    http_client = _create_http_client()
+    http_client = _async_get_http_client(hass)
     auth_class = _get_auth_class()
     auth = auth_class(hass, http_client)
     await auth.async_initialize()
+    tokens: Any | None = None
+    if hasattr(auth, "tokens"):
+        tokens = getattr(auth, "tokens", None)
+        if tokens is None:
+            tokens = await _async_login_with_flow(hass, entry, auth)
     device_client_class = _get_device_client_class()
     api_client = device_client_class(hass, http_client, auth)
 
@@ -121,14 +143,18 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
         iot_refresh_enabled=iot_refresh_enabled,
     )
     await coordinator.async_config_entry_first_refresh()
-
-    domain_data[entry.entry_id] = {
+    entry_state: dict[str, Any] = {
+        "config_entry": entry,
         "http_client": http_client,
         "auth": auth,
         "api_client": api_client,
         "coordinator": coordinator,
         "iot_client": iot_client,
+        "tokens": tokens,
     }
+    token_refresh_cancel = _schedule_token_refresh(hass, entry, auth, entry_state)
+    entry_state["token_refresh_cancel"] = token_refresh_cancel
+    domain_data[entry.entry_id] = entry_state
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -150,6 +176,10 @@ async def async_unload_entry(hass: Any, entry: Any) -> bool:
         cancel = getattr(coordinator, "cancel_refresh", None)
         if callable(cancel):
             cancel()
+
+    token_cancel = entry_data.get("token_refresh_cancel")
+    if callable(token_cancel):
+        token_cancel()
 
     http_client = entry_data.get("http_client")
     if http_client is not None:
@@ -176,6 +206,50 @@ def _create_http_client() -> Any:
     return httpx.AsyncClient(base_url=API_BASE_URL)
 
 
+def _extract_httpx_helper(module: Any) -> _HTTPXGetAsyncClient | None:
+    """Return the helper callable when exported by *module*."""
+
+    candidate = getattr(module, "get_async_client", None)
+    if callable(candidate):
+        return candidate
+    return None
+
+
+def _resolve_httpx_helper() -> _HTTPXGetAsyncClient | None:
+    """Return the Home Assistant httpx helper if available at runtime."""
+
+    global _httpx_get_async_client
+
+    if _httpx_get_async_client is not None:
+        return _httpx_get_async_client
+
+    helper_module = globals().get("httpx_client")
+    helper = _extract_httpx_helper(helper_module)
+    if helper is not None:
+        _httpx_get_async_client = helper
+        return helper
+
+    try:  # pragma: no cover - exercised in Home Assistant runtime
+        from homeassistant.helpers import httpx_client as imported_helper
+    except ImportError:  # pragma: no cover - tests inject helper instead
+        return None
+
+    helper = _extract_httpx_helper(imported_helper)
+    if helper is not None:
+        _httpx_get_async_client = helper
+        return helper
+    return None
+
+
+def _async_get_http_client(hass: Any) -> Any:
+    """Return an AsyncClient sourced from Home Assistant helpers when possible."""
+
+    helper = _resolve_httpx_helper()
+    if helper is not None:
+        return helper(hass)
+    return _create_http_client()
+
+
 def _get_device_registry(hass: Any) -> Any:
     """Return the Home Assistant device registry or a stub for tests."""
 
@@ -192,11 +266,150 @@ def _get_entity_registry(hass: Any) -> Any:
     return _REGISTRY_STUB
 
 
+async def _async_perform_reauth(
+    hass: Any, entry: Any, auth: Any, entry_state: dict[str, Any]
+) -> None:
+    """Execute the reauthentication flow and persist new tokens."""
+
+    credentials = await _async_request_credentials(hass, entry)
+    email = credentials.get("email")
+    password = credentials.get("password")
+    if not email or not password:
+        return
+    tokens = await auth.async_login(email, password)
+    entry_state["tokens"] = tokens
+
+
+def _ensure_services_registered(hass: Any) -> None:
+    """Register integration services exactly once."""
+
+    if hass.data.get(_SERVICES_KEY):
+        return
+
+    async def _handle_service(call: Any) -> None:
+        await _async_service_reauth(hass, call)
+
+    hass.services.async_register(DOMAIN, SERVICE_REAUTHENTICATE, _handle_service)
+    hass.data[_SERVICES_KEY] = True
+
+
+async def _async_service_reauth(hass: Any, call: Any) -> None:
+    """Handle the public service that forces reauthentication."""
+
+    data = getattr(call, "data", call) or {}
+    entry_id = data.get("entry_id")
+    if entry_id is None:
+        return
+    entry_state = _resolve_entry_state(hass, entry_id)
+    if entry_state is None:
+        return
+    entry = entry_state.get("config_entry")
+    auth = entry_state.get("auth")
+    if entry is None or auth is None:
+        return
+    await _async_perform_reauth(hass, entry, auth, entry_state)
+
+
+def _is_http_error(error: Exception) -> bool:
+    """Return True if the provided exception represents an HTTP error."""
+
+    if httpx is None:
+        return False
+    http_error = getattr(httpx, "HTTPError", None)
+    if http_error is None:
+        return False
+    return isinstance(error, http_error)
+
+
+def _resolve_entry_state(hass: Any, entry_id: str) -> dict[str, Any] | None:
+    """Look up the cached integration state for the given entry."""
+
+    domain_data = hass.data.get(DOMAIN)
+    if not isinstance(domain_data, dict):
+        return None
+    state = domain_data.get(entry_id)
+    if not isinstance(state, dict):
+        return None
+    return state
+
+
 class _RegistryStub:
     """Fallback registry implementation for unit tests."""
 
     async def async_get_or_create(self, *args: Any, **kwargs: Any) -> Any:
         return {}
+
+
+async def _async_request_credentials(hass: Any, entry: Any) -> dict[str, Any]:
+    """Request credentials from the config flow to perform authentication."""
+
+    flow = _get_flow_init_callable(hass)
+    entry_data = getattr(entry, "data", {})
+    result = await flow(
+        DOMAIN,
+        context={"source": "reauth", "entry_id": getattr(entry, "entry_id", None)},
+        data={
+            "email": entry_data.get("email"),
+            "password": entry_data.get("password"),
+        },
+    )
+    data = result.get("data", {}) if isinstance(result, dict) else {}
+    return data
+
+
+async def _async_login_with_flow(hass: Any, entry: Any, auth: Any) -> Any | None:
+    """Fetch credentials from the flow and perform an authentication attempt."""
+
+    login = getattr(auth, "async_login", None)
+    if not callable(login):
+        return None
+
+    credentials = await _async_request_credentials(hass, entry)
+    return await login(credentials["email"], credentials["password"])
+
+
+def _get_flow_init_callable(hass: Any) -> Any:
+    """Return the config flow async_init helper from Home Assistant."""
+
+    flow_container = getattr(hass.config_entries, "flow", hass.config_entries)
+    flow = getattr(flow_container, "async_init", None)
+    if not callable(flow):
+        msg = "Config flow helper unavailable"
+        raise TypeError(msg)
+    return flow
+
+
+def _schedule_token_refresh(hass: Any, entry: Any, auth: Any, entry_state: dict[str, Any]) -> Any:
+    """Periodically refresh access tokens via Home Assistant's event loop."""
+
+    loop = getattr(hass, "loop", None) or asyncio.get_event_loop()
+    handle: asyncio.TimerHandle | None = None
+
+    async def _refresh() -> None:
+        try:
+            await auth.async_get_access_token()
+        except Exception as exc:  # pragma: no cover - defensive, surfaced via services
+            if _is_http_error(exc):
+                await _async_perform_reauth(hass, entry, auth, entry_state)
+        finally:
+            _arm()
+
+    def _arm() -> None:
+        nonlocal handle
+        handle = loop.call_later(TOKEN_REFRESH_INTERVAL, _tick)
+
+    def _tick() -> None:
+        hass.async_create_task(_refresh())
+
+    _arm()
+
+    def _cancel() -> None:
+        nonlocal handle
+        if handle is not None:
+            handle.cancel()
+            handle = None
+
+    return _cancel
 
 
 _REGISTRY_STUB = _RegistryStub()
