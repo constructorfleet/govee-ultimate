@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -26,6 +27,31 @@ if "httpx" not in sys.modules:
     httpx_module.HTTPError = _HTTPError
     httpx_module.Timeout = Exception  # type: ignore[attr-defined]
     sys.modules["httpx"] = httpx_module
+
+if "homeassistant.helpers.httpx_client" not in sys.modules:
+    httpx_client_module = ModuleType("homeassistant.helpers.httpx_client")
+
+    async def _get_async_client(*args: Any, **kwargs: Any) -> Any:  # pragma: no cover - patched in tests
+        raise AssertionError("httpx client helper should be patched in tests")
+
+    httpx_client_module.get_async_client = _get_async_client  # type: ignore[assignment]
+    sys.modules["homeassistant.helpers.httpx_client"] = httpx_client_module
+
+if "homeassistant.helpers.event" not in sys.modules:
+    event_module = ModuleType("homeassistant.helpers.event")
+
+    def _async_track_time_interval(
+        hass: Any, action: Callable[[Any], Awaitable[None]], interval: Any
+    ) -> Callable[[], None]:  # pragma: no cover - patched in tests
+        hass.tracked_interval = (action, interval)
+
+        def _cancel() -> None:
+            hass.tracked_interval = None
+
+        return _cancel
+
+    event_module.async_track_time_interval = _async_track_time_interval  # type: ignore[assignment]
+    sys.modules["homeassistant.helpers.event"] = event_module
 
 if "homeassistant.helpers.update_coordinator" not in sys.modules:
     homeassistant_module = ModuleType("homeassistant")
@@ -63,9 +89,14 @@ class FakeHass:
         self.config_entries = SimpleNamespace(
             async_forward_entry_setups=self._capture_forward,
             async_unload_platforms=self._capture_unload,
+            flow=SimpleNamespace(async_init=self._capture_flow_init),
         )
         self.forwarded: list[tuple[Any, tuple[str, ...]]] = []
         self.unloaded: list[tuple[Any, tuple[str, ...]]] = []
+        self.flow_inits: list[dict[str, Any]] = []
+        self.services = SimpleNamespace(async_register=self._register_service)
+        self.registered_services: dict[tuple[str, str], Callable[..., Awaitable[None]]] = {}
+        self.tracked_interval: tuple[Callable[..., Awaitable[None]], Any] | None = None
 
     async def _capture_forward(
         self, entry: Any, platforms: tuple[str, ...]
@@ -82,6 +113,18 @@ class FakeHass:
         """Document stub executor job helper."""
 
         return func(*args)
+
+    async def _capture_flow_init(self, domain: str, *, context: dict[str, Any], data: dict[str, Any]) -> None:
+        """Record requests to start config flows."""
+
+        self.flow_inits.append({"domain": domain, "context": context, "data": data})
+
+    async def _register_service(
+        self, domain: str, service: str, handler: Callable[..., Awaitable[None]]
+    ) -> None:
+        """Record registered services for verification."""
+
+        self.registered_services[(domain, service)] = handler
 
 
 class FakeConfigEntry:
@@ -171,9 +214,19 @@ async def test_async_setup_entry_creates_coordinator_and_forwards(
             self.hass = hass
             self.client = client
             self.initialized = False
+            self.tokens: Any | None = None
 
         async def async_initialize(self) -> None:
             self.initialized = True
+
+        async def async_login(self, email: str, password: str) -> Any:
+            self.tokens = SimpleNamespace(access_token="token", should_refresh=lambda *_: False)
+            return self.tokens
+
+        async def async_get_access_token(self) -> str:
+            if self.tokens is None:
+                raise RuntimeError("No tokens")
+            return self.tokens.access_token
 
     class FakeApiClient:
         def __init__(self, hass: Any, client: Any, auth: Any) -> None:
@@ -192,8 +245,20 @@ async def test_async_setup_entry_creates_coordinator_and_forwards(
         def cancel_refresh(self) -> None:
             pass
 
+    async def fake_get_async_client(hass: Any, *, verify_ssl: bool = True) -> FakeClient:
+        return FakeClient()
+
     monkeypatch.setattr(
         integration, "httpx", SimpleNamespace(AsyncClient=FakeClient), raising=False
+    )
+    monkeypatch.setattr(
+        integration, "_REAUTH_SERVICE_REGISTERED", False, raising=False
+    )
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers.httpx_client"],
+        "get_async_client",
+        fake_get_async_client,
+        raising=False,
     )
     monkeypatch.setattr(
         integration, "_get_auth_class", lambda: FakeAuth, raising=False
@@ -304,12 +369,22 @@ async def test_async_setup_entry_enables_iot_client_when_requested(
             pass
 
     class FakeAuth:
-        async def async_initialize(self) -> None:
-            pass
-
         def __init__(self, hass: Any, client: Any) -> None:
             self.hass = hass
             self.client = client
+            self.tokens: Any | None = None
+
+        async def async_initialize(self) -> None:
+            pass
+
+        async def async_login(self, email: str, password: str) -> Any:
+            self.tokens = SimpleNamespace(access_token="token", should_refresh=lambda *_: False)
+            return self.tokens
+
+        async def async_get_access_token(self) -> str:
+            if self.tokens is None:
+                raise RuntimeError("No tokens")
+            return self.tokens.access_token
 
     class FakeApiClient:
         def __init__(self, hass: Any, client: Any, auth: Any) -> None:
@@ -326,6 +401,9 @@ async def test_async_setup_entry_enables_iot_client_when_requested(
 
     class FakeIoTClient:
         pass
+
+    async def fake_get_async_client(hass: Any, *, verify_ssl: bool = True) -> FakeClient:
+        return FakeClient()
 
     monkeypatch.setattr(
         integration, "httpx", SimpleNamespace(AsyncClient=FakeClient), raising=False
@@ -348,6 +426,12 @@ async def test_async_setup_entry_enables_iot_client_when_requested(
         _prepare_iot_enabled,
         raising=False,
     )
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers.httpx_client"],
+        "get_async_client",
+        fake_get_async_client,
+        raising=False,
+    )
 
     assert await integration.async_setup_entry(hass, entry) is True
     stored = hass.data[DOMAIN][entry.entry_id]
@@ -357,3 +441,268 @@ async def test_async_setup_entry_enables_iot_client_when_requested(
     assert coordinator.kwargs["iot_state_enabled"] is True
     assert coordinator.kwargs["iot_command_enabled"] is True
     assert coordinator.kwargs["iot_refresh_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_initializes_tokens_and_schedules_refresh(
+    tmp_path, tmp_path_factory, request, monkeypatch
+) -> None:
+    """Setup should login when missing tokens and schedule refresh handling."""
+
+    hass = FakeHass(config_dir=str(tmp_path))
+    entry = FakeConfigEntry(
+        entry_id="auth-entry",
+        data={
+            "email": "user@example.com",
+            "password": "secret",
+            "enable_iot": False,
+            "enable_iot_state_updates": False,
+            "enable_iot_commands": False,
+            "enable_iot_refresh": False,
+        },
+    )
+
+    class FakeClient:
+        async def aclose(self) -> None:
+            pass
+
+    class FakeTokens:
+        access_token = "token"
+
+        def should_refresh(self, now: Any | None = None) -> bool:
+            return False
+
+    class FakeAuth:
+        def __init__(self, hass: Any, client: Any) -> None:
+            self.hass = hass
+            self.client = client
+            self.initialized = False
+            self.login_calls: list[tuple[str, str]] = []
+            self.tokens: FakeTokens | None = None
+
+        async def async_initialize(self) -> None:
+            self.initialized = True
+
+        async def async_login(self, email: str, password: str) -> FakeTokens:
+            self.login_calls.append((email, password))
+            self.tokens = FakeTokens()
+            return self.tokens
+
+        async def async_get_access_token(self) -> str:
+            if self.tokens is None:
+                raise RuntimeError("No tokens")
+            return self.tokens.access_token
+
+    class FakeApiClient:
+        def __init__(self, hass: Any, client: Any, auth: Any) -> None:
+            self.hass = hass
+            self.client = client
+            self.auth = auth
+
+    class FakeCoordinator:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def async_config_entry_first_refresh(self) -> None:
+            pass
+
+    scheduled: dict[str, Any] = {}
+
+    def fake_track_time_interval(hass: Any, action: Callable[..., Awaitable[None]], interval: Any) -> Callable[[], None]:
+        scheduled.update({"action": action, "interval": interval, "cancelled": False})
+
+        def _cancel() -> None:
+            scheduled["cancelled"] = True
+
+        return _cancel
+
+    async def fake_get_async_client(hass: Any, *, verify_ssl: bool = True) -> FakeClient:
+        return FakeClient()
+
+    monkeypatch.setattr(
+        integration,
+        "async_track_time_interval",
+        fake_track_time_interval,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_REAUTH_SERVICE_REGISTERED",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_create_http_client",
+        lambda: FakeClient(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers.httpx_client"],
+        "get_async_client",
+        fake_get_async_client,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_get_auth_class",
+        lambda: FakeAuth,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_get_device_client_class",
+        lambda: FakeApiClient,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_get_coordinator_class",
+        lambda: FakeCoordinator,
+        raising=False,
+    )
+    async def fake_prepare_iot(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        return None, False, False, False
+
+    monkeypatch.setattr(
+        integration,
+        "_async_prepare_iot_runtime",
+        fake_prepare_iot,
+        raising=False,
+    )
+
+    assert await integration.async_setup_entry(hass, entry) is True
+
+    stored = hass.data[DOMAIN][entry.entry_id]
+    auth = stored["auth"]
+    assert auth.login_calls == [("user@example.com", "secret")]
+    assert "tokens" in stored
+    assert stored["tokens"].access_token == "token"
+    assert "refresh_unsub" in stored
+    assert callable(stored["refresh_unsub"])
+    assert scheduled["action"] is not None
+    assert (DOMAIN, "reauthenticate") in hass.registered_services
+
+
+@pytest.mark.asyncio
+async def test_refresh_job_triggers_reauth_on_http_error(
+    tmp_path, tmp_path_factory, request, monkeypatch
+) -> None:
+    """Refresh routine should trigger reauth flow when HTTP errors occur."""
+
+    hass = FakeHass(config_dir=str(tmp_path))
+    entry = FakeConfigEntry(entry_id="reauth-entry", data={"email": "a", "password": "b"})
+
+    class FakeClient:
+        async def aclose(self) -> None:
+            pass
+
+    class FakeTokens:
+        access_token = "token"
+
+        def should_refresh(self, now: Any | None = None) -> bool:
+            return False
+
+    class FakeAuth:
+        def __init__(self, hass: Any, client: Any) -> None:
+            self.hass = hass
+            self.client = client
+            self.tokens: FakeTokens | None = FakeTokens()
+
+        async def async_initialize(self) -> None:
+            pass
+
+        async def async_login(self, email: str, password: str) -> FakeTokens:
+            raise AssertionError("login should not be called when tokens exist")
+
+        async def async_get_access_token(self) -> str:
+            raise integration.httpx.HTTPError("boom")
+
+    class FakeApiClient:
+        def __init__(self, hass: Any, client: Any, auth: Any) -> None:
+            self.hass = hass
+            self.client = client
+            self.auth = auth
+
+    class FakeCoordinator:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def async_config_entry_first_refresh(self) -> None:
+            pass
+
+    scheduled: dict[str, Any] = {}
+
+    def fake_track_time_interval(hass: Any, action: Callable[..., Awaitable[None]], interval: Any) -> Callable[[], None]:
+        scheduled.update({"action": action, "interval": interval})
+
+        def _cancel() -> None:
+            scheduled["cancelled"] = True
+
+        return _cancel
+
+    async def fake_get_async_client(hass: Any, *, verify_ssl: bool = True) -> FakeClient:
+        return FakeClient()
+
+    monkeypatch.setattr(
+        integration,
+        "async_track_time_interval",
+        fake_track_time_interval,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_REAUTH_SERVICE_REGISTERED",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_create_http_client",
+        lambda: FakeClient(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers.httpx_client"],
+        "get_async_client",
+        fake_get_async_client,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_get_auth_class",
+        lambda: FakeAuth,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_get_device_client_class",
+        lambda: FakeApiClient,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_get_coordinator_class",
+        lambda: FakeCoordinator,
+        raising=False,
+    )
+    async def fake_prepare_iot(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        return None, False, False, False
+
+    monkeypatch.setattr(
+        integration,
+        "_async_prepare_iot_runtime",
+        fake_prepare_iot,
+        raising=False,
+    )
+
+    assert await integration.async_setup_entry(hass, entry) is True
+
+    callback = scheduled["action"]
+    with pytest.raises(integration.httpx.HTTPError):
+        await callback(None)
+
+    assert hass.flow_inits
+    flow = hass.flow_inits[-1]
+    assert flow["context"]["source"] == "reauth"
+    assert flow["data"]["entry_id"] == entry.entry_id
