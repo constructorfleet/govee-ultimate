@@ -329,7 +329,7 @@ def _get_flow_init_callable(hass: Any) -> Any:
     flow = getattr(flow_container, "async_init", None)
     if not callable(flow):
         msg = "Config flow helper unavailable"
-        raise RuntimeError(msg)
+        raise TypeError(msg)
     return flow
 
 
