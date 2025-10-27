@@ -13,6 +13,8 @@ if "homeassistant.data_entry_flow" not in sys.modules:
     data_entry_flow = ModuleType("homeassistant.data_entry_flow")
 
     class FlowResultType:
+        """Describe fallback flow result values for unit tests."""
+
         FORM = "form"
         CREATE_ENTRY = "create_entry"
 
@@ -60,6 +62,14 @@ if "homeassistant.config_entries" not in sys.modules:
 
 
 from custom_components.govee_ultimate import config_flow
+
+
+def test_stub_flow_result_type_includes_docstring() -> None:
+    """Fallback FlowResultType should document its purpose."""
+
+    assert FlowResultType.__doc__ == (
+        "Describe fallback flow result values for unit tests."
+    )
 
 
 @pytest.mark.asyncio

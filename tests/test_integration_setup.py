@@ -55,6 +55,8 @@ class FakeHass:
     """Lightweight Home Assistant test double."""
 
     def __init__(self, *, config_dir: str) -> None:
+        """Document stub Home Assistant initialization."""
+
         self.data: dict[str, Any] = {}
         self.loop = asyncio.get_event_loop()
         self.config = SimpleNamespace(config_dir=config_dir)
@@ -77,6 +79,8 @@ class FakeHass:
         return True
 
     async def async_add_executor_job(self, func: Any, *args: Any) -> Any:
+        """Document stub executor job helper."""
+
         return func(*args)
 
 
@@ -84,16 +88,43 @@ class FakeConfigEntry:
     """Mimic the attributes used by the integration."""
 
     def __init__(self, *, entry_id: str, data: dict[str, Any]) -> None:
+        """Document stub config entry initialization."""
+
         self.entry_id = entry_id
         self.data = data
         self.title = "Test"
         self.options: dict[str, Any] = {}
 
     async def async_unload(self) -> None:
-        """Placeholder for API compatibility."""
+        """Document stub unload coroutine."""
 
     async def async_setup(self) -> None:
-        """Placeholder for API compatibility."""
+        """Document stub setup coroutine."""
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    (
+        (FakeHass.__init__, "Document stub Home Assistant initialization."),
+        (FakeHass.async_add_executor_job, "Document stub executor job helper."),
+        (FakeConfigEntry.__init__, "Document stub config entry initialization."),
+        (FakeConfigEntry.async_unload, "Document stub unload coroutine."),
+        (FakeConfigEntry.async_setup, "Document stub setup coroutine."),
+    ),
+    ids=(
+        "hass_init",
+        "hass_executor",
+        "config_entry_init",
+        "config_entry_unload",
+        "config_entry_setup",
+    ),
+)
+def test_fake_homeassistant_stubs_include_docstrings(
+    target: Any, expected: str
+) -> None:
+    """Ensure the testing doubles expose docstrings for lint coverage."""
+
+    assert target.__doc__ == expected
 
 
 @pytest.mark.asyncio

@@ -110,6 +110,8 @@ except ImportError:  # pragma: no cover - exercised in unit tests via stubs
             }
 
     class FlowResultType:  # type: ignore[too-few-public-methods]
+        """Document stub flow result values when Home Assistant is unavailable."""
+
         FORM = "form"
         CREATE_ENTRY = "create_entry"
 
