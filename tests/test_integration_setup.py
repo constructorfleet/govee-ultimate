@@ -222,6 +222,7 @@ async def test_async_setup_entry_creates_coordinator_and_forwards(
             self.hass = hass
             self.client = client
             self.initialized = False
+            self.tokens = object()
 
         async def async_initialize(self) -> None:
             self.initialized = True
@@ -290,6 +291,7 @@ async def test_async_setup_entry_uses_httpx_helper(
             self.hass = hass
             self.client = client
             self.initialized = False
+            self.tokens = object()
 
         async def async_initialize(self) -> None:
             self.initialized = True
@@ -307,15 +309,18 @@ async def test_async_setup_entry_uses_httpx_helper(
         async def async_config_entry_first_refresh(self) -> None:
             pass
 
-    helper_module = ModuleType("homeassistant.helpers.httpx_client")
     calls: list[tuple[Any, ...]] = []
 
     def _get_async_client(hass_param: Any, /) -> Any:
         calls.append((hass_param,))
         return fake_client
 
-    helper_module.get_async_client = _get_async_client  # type: ignore[attr-defined]
-    monkeypatch.setattr(integration, "httpx_client", helper_module, raising=False)
+    monkeypatch.setattr(
+        integration,
+        "_httpx_get_async_client",
+        _get_async_client,
+        raising=False,
+    )
 
     monkeypatch.setattr(
         integration, "_get_auth_class", lambda: FakeAuth, raising=False

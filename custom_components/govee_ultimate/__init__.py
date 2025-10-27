@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 DOMAIN = "govee_ultimate"
@@ -56,10 +57,16 @@ try:  # pragma: no cover - prefer httpx when available
 except ImportError:  # pragma: no cover - allow tests to stub httpx
     httpx = None  # type: ignore[assignment]
 
+_HTTPXGetAsyncClient = Callable[[Any], Any]
+
 try:  # pragma: no cover - optional Home Assistant httpx helper during tests
-    from homeassistant.helpers import httpx_client
+    from homeassistant.helpers.httpx_client import (
+        get_async_client as _ha_httpx_get_async_client,
+    )
 except ImportError:  # pragma: no cover - provide fallback when helper missing
-    httpx_client = None  # type: ignore[assignment]
+    _httpx_get_async_client: _HTTPXGetAsyncClient | None = None
+else:  # pragma: no cover - executed only when helper available during runtime
+    _httpx_get_async_client = _ha_httpx_get_async_client
 
 try:  # pragma: no cover - optional Home Assistant registries during tests
     from homeassistant.helpers import device_registry as dr
@@ -203,11 +210,8 @@ def _create_http_client() -> Any:
 def _async_get_http_client(hass: Any) -> Any:
     """Return an AsyncClient sourced from Home Assistant helpers when possible."""
 
-    helper = None
-    if httpx_client is not None:
-        helper = getattr(httpx_client, "get_async_client", None)
-    if callable(helper):
-        return helper(hass)
+    if _httpx_get_async_client is not None:
+        return _httpx_get_async_client(hass)
     return _create_http_client()
 
 
