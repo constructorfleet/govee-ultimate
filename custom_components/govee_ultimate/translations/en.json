@@ -1,0 +1,19 @@
+{
+  "title": "Govee Ultimate",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Govee Ultimate",
+        "description": "Enter your account credentials and optional IoT settings.",
+        "data": {
+          "email": "Email address",
+          "password": "Password",
+          "enable_iot": "Enable IoT connectivity",
+          "enable_iot_state_updates": "Receive IoT state updates",
+          "enable_iot_commands": "Send commands via IoT",
+          "enable_iot_refresh": "Allow IoT refresh requests"
+        }
+      }
+    }
+  }
+}
