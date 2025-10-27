@@ -351,6 +351,29 @@ async def test_async_setup_entry_uses_httpx_helper(
     assert calls == [(hass,)]
 
 
+def test_async_get_http_client_prefers_runtime_helper(monkeypatch) -> None:
+    """Helper module injected after import should supply the HTTP client."""
+
+    hass = FakeHass(config_dir="/tmp")
+    sentinel_client = object()
+
+    helper_module = ModuleType("homeassistant.helpers.httpx_client")
+    helper_module.get_async_client = lambda hass_param: sentinel_client  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(integration, "_httpx_get_async_client", None, raising=False)
+    monkeypatch.setattr(integration, "httpx_client", helper_module, raising=False)
+    monkeypatch.setattr(
+        integration,
+        "httpx",
+        SimpleNamespace(AsyncClient=lambda *args, **kwargs: object()),
+        raising=False,
+    )
+
+    client = integration._async_get_http_client(hass)
+
+    assert client is sentinel_client
+
+
 @pytest.mark.asyncio
 async def test_async_setup_entry_requests_tokens_when_missing(
     tmp_path, tmp_path_factory, request, monkeypatch
@@ -625,6 +648,79 @@ async def test_async_setup_entry_registers_reauth_service(
     auth = stored["auth"]
     assert auth.login_calls == [("service@example.com", "servpass")]
     assert stored["tokens"] is issued_tokens
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_skips_credentials_when_tokens_attr_missing(
+    tmp_path, tmp_path_factory, request, monkeypatch
+):
+    """Auth objects without a tokens attribute should not trigger reauth."""
+
+    hass = FakeHass(config_dir=str(tmp_path))
+    entry = FakeConfigEntry(
+        entry_id="no-tokens",
+        data={"email": "iot@example.com", "password": "secret"},
+    )
+
+    class FakeClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            pass
+
+    class FakeAuth:
+        async def async_initialize(self) -> None:
+            pass
+
+        def __init__(self, hass_param: Any, client: Any) -> None:
+            self.hass = hass_param
+            self.client = client
+
+    class FakeApiClient:
+        def __init__(self, hass_param: Any, client: Any, auth: Any) -> None:
+            self.hass = hass_param
+            self.client = client
+            self.auth = auth
+
+    class FakeCoordinator:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def async_config_entry_first_refresh(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        integration, "httpx", SimpleNamespace(AsyncClient=FakeClient), raising=False
+    )
+    monkeypatch.setattr(
+        integration, "_get_auth_class", lambda: FakeAuth, raising=False
+    )
+    monkeypatch.setattr(
+        integration, "_get_device_client_class", lambda: FakeApiClient, raising=False
+    )
+    monkeypatch.setattr(
+        integration, "_get_coordinator_class", lambda: FakeCoordinator, raising=False
+    )
+
+    async def _fail_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("credentials should not be requested")
+
+    monkeypatch.setattr(
+        integration, "_async_request_credentials", _fail_request, raising=False
+    )
+
+    async def _prepare_iot(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        return None, False, False, False
+
+    monkeypatch.setattr(
+        integration,
+        "_async_prepare_iot_runtime",
+        _prepare_iot,
+        raising=False,
+    )
+
+    assert await integration.async_setup_entry(hass, entry) is True
 
 
 @pytest.mark.asyncio

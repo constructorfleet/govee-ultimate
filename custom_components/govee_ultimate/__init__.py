@@ -116,12 +116,11 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     auth_class = _get_auth_class()
     auth = auth_class(hass, http_client)
     await auth.async_initialize()
-    tokens = getattr(auth, "tokens", None)
-    if tokens is None:
-        credentials = await _async_request_credentials(hass, entry)
-        tokens = await auth.async_login(
-            credentials["email"], credentials["password"]
-        )
+    tokens: Any | None = None
+    if hasattr(auth, "tokens"):
+        tokens = getattr(auth, "tokens", None)
+        if tokens is None:
+            tokens = await _async_login_with_flow(hass, entry, auth)
     device_client_class = _get_device_client_class()
     api_client = device_client_class(hass, http_client, auth)
 
@@ -207,11 +206,47 @@ def _create_http_client() -> Any:
     return httpx.AsyncClient(base_url=API_BASE_URL)
 
 
+def _extract_httpx_helper(module: Any) -> _HTTPXGetAsyncClient | None:
+    """Return the helper callable when exported by *module*."""
+
+    candidate = getattr(module, "get_async_client", None)
+    if callable(candidate):
+        return candidate
+    return None
+
+
+def _resolve_httpx_helper() -> _HTTPXGetAsyncClient | None:
+    """Return the Home Assistant httpx helper if available at runtime."""
+
+    global _httpx_get_async_client
+
+    if _httpx_get_async_client is not None:
+        return _httpx_get_async_client
+
+    helper_module = globals().get("httpx_client")
+    helper = _extract_httpx_helper(helper_module)
+    if helper is not None:
+        _httpx_get_async_client = helper
+        return helper
+
+    try:  # pragma: no cover - exercised in Home Assistant runtime
+        from homeassistant.helpers import httpx_client as imported_helper
+    except ImportError:  # pragma: no cover - tests inject helper instead
+        return None
+
+    helper = _extract_httpx_helper(imported_helper)
+    if helper is not None:
+        _httpx_get_async_client = helper
+        return helper
+    return None
+
+
 def _async_get_http_client(hass: Any) -> Any:
     """Return an AsyncClient sourced from Home Assistant helpers when possible."""
 
-    if _httpx_get_async_client is not None:
-        return _httpx_get_async_client(hass)
+    helper = _resolve_httpx_helper()
+    if helper is not None:
+        return helper(hass)
     return _create_http_client()
 
 
@@ -320,6 +355,17 @@ async def _async_request_credentials(hass: Any, entry: Any) -> dict[str, Any]:
     )
     data = result.get("data", {}) if isinstance(result, dict) else {}
     return data
+
+
+async def _async_login_with_flow(hass: Any, entry: Any, auth: Any) -> Any | None:
+    """Fetch credentials from the flow and perform an authentication attempt."""
+
+    login = getattr(auth, "async_login", None)
+    if not callable(login):
+        return None
+
+    credentials = await _async_request_credentials(hass, entry)
+    return await login(credentials["email"], credentials["password"])
 
 
 def _get_flow_init_callable(hass: Any) -> Any:
