@@ -7,6 +7,7 @@ import re
 from typing import Final
 
 import pytest
+from packaging.requirements import Requirement
 
 Version = tuple[int, int, int]
 
@@ -33,10 +34,17 @@ EXPECTED_EXACT_VERSIONS: Final[dict[str, Version]] = {
 REQUIREMENTS_PATH = Path("requirements.txt")
 
 
-def _pinned_version(package: str) -> Version:
+def _requirement_line(package: str) -> str:
     content = REQUIREMENTS_PATH.read_text(encoding="utf-8")
-    pattern = rf"^{re.escape(package)}==(?P<version>\d+\.\d+\.\d+)$"
+    pattern = rf"^{re.escape(package)}==[^\n]+$"
     match = re.search(pattern, content, flags=re.MULTILINE)
+    assert match, f"Expected an exact {package} pin in requirements.txt"
+    return match.group(0)
+
+
+def _pinned_version(package: str) -> Version:
+    requirement = _requirement_line(package)
+    match = re.search(r"==(?P<version>\d+\.\d+\.\d+)", requirement)
     assert match, f"Expected an exact {package} pin in requirements.txt"
     return tuple(int(part) for part in match.group("version").split("."))  # type: ignore[return-value]
 
@@ -80,6 +88,32 @@ def test_urllib3_pin_remains_below_major_two() -> None:
     """Ensure urllib3 stays within Home Assistant's supported range."""
 
     _assert_version_in_range("urllib3", (1, 26, 5), (2, 0, 0))
+
+
+@pytest.mark.parametrize(
+    ("package", "minimum", "maximum"),
+    [
+        pytest.param("httpcore", (1, 0, 0), (2, 0, 0), id="httpcore"),
+        pytest.param("h11", (0, 16, 0), (1, 0, 0), id="h11"),
+    ],
+)
+def test_http_stack_pins_match_expectations(
+    package: str, minimum: Version, maximum: Version
+) -> None:
+    """Ensure the HTTP client stack stays within compatible version ranges."""
+
+    _assert_version_in_range(package, minimum, maximum)
+
+
+def test_homeassistant_pin_is_python313_guarded() -> None:
+    """Ensure the homeassistant dependency only installs on Python 3.13+."""
+
+    requirement = Requirement(_requirement_line("homeassistant"))
+    assert str(requirement.specifier) == "==2024.12.5"
+    assert (
+        requirement.marker is not None
+        and str(requirement.marker) == 'python_version >= "3.13"'
+    ), "homeassistant pin must be gated for Python 3.13 environments"
 
 
 @pytest.mark.parametrize(
