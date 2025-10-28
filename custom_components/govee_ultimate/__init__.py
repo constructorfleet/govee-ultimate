@@ -15,6 +15,7 @@ PLATFORMS: tuple[str, ...] = (
     "number",
     "sensor",
     "binary_sensor",
+    "select",
 )
 
 __all__ = [

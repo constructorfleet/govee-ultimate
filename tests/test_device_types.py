@@ -13,6 +13,9 @@ from custom_components.govee_ultimate.device_types.presence import PresenceDevic
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
 from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
+from custom_components.govee_ultimate.device_types.meat_thermometer import (
+    MeatThermometerDevice,
+)
 from custom_components.govee_ultimate.state import (
     ActiveState,
     BatteryLevelState,
@@ -52,6 +55,10 @@ from custom_components.govee_ultimate.state.states import (
     SceneModeState,
     TimerState,
     WaterShortageState,
+    BuzzerState,
+    PresetState,
+    ProbeTempState,
+    TemperatureUnitState,
 )
 
 
@@ -164,6 +171,19 @@ def air_quality_model() -> MockDeviceModel:
         category="Air Quality Monitor",
         category_group="Air Quality",
         model_name="Air Quality Monitor",
+    )
+
+
+@pytest.fixture
+def meat_thermometer_model() -> MockDeviceModel:
+    """Return metadata for meat thermometer devices."""
+
+    return MockDeviceModel(
+        model="H7480",
+        sku="H7480",
+        category="Home Improvement",
+        category_group="Kitchen",
+        model_name="WiFi Meat Thermometer",
     )
 
 
@@ -617,6 +637,46 @@ def test_humidifier_registers_catalog_state_types(
     shortage_entity = device.home_assistant_entities["waterShortage"]
     assert shortage_entity.translation_key == "water_shortage"
     assert shortage_entity.entity_category == EntityCategory.DIAGNOSTIC
+
+
+def test_meat_thermometer_registers_probes_and_presets(
+    meat_thermometer_model: MockDeviceModel,
+) -> None:
+    """Meat thermometer devices should expose probe sensors and preset selects."""
+
+    device = MeatThermometerDevice(meat_thermometer_model)
+
+    states = device.states
+    assert {
+        "power",
+        "isConnected",
+        "buzzer",
+        "temperatureUnit",
+        "earlyWarning",
+        "probeTemp1",
+        "probeTemp2",
+        "probeTemp3",
+        "probeTemp4",
+        "preset1",
+        "preset2",
+        "preset3",
+        "preset4",
+    } <= set(states)
+    assert isinstance(states["buzzer"], BuzzerState)
+    assert isinstance(states["temperatureUnit"], TemperatureUnitState)
+    for index in range(1, 5):
+        assert isinstance(states[f"probeTemp{index}"], ProbeTempState)
+        assert isinstance(states[f"preset{index}"], PresetState)
+
+    ha_entities = device.home_assistant_entities
+    assert ha_entities["power"].platform == "switch"
+    assert ha_entities["isConnected"].platform == "binary_sensor"
+    assert ha_entities["isConnected"].translation_key == "connected"
+    for index in range(1, 5):
+        probe_key = f"probeTemp{index}"
+        preset_key = f"preset{index}"
+        assert ha_entities[probe_key].platform == "sensor"
+        assert ha_entities[preset_key].platform == "select"
 
 
 def test_humidifier_mode_interlocks_gate_mist_levels(
