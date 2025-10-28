@@ -339,6 +339,97 @@ async def test_async_setup_entry_creates_coordinator_and_forwards(
 
 
 @pytest.mark.asyncio
+async def test_async_setup_entry_schedules_metadata_refresh(
+    tmp_path, tmp_path_factory, request, monkeypatch
+) -> None:
+    """Setup should schedule coordinator refresh callbacks for metadata."""
+
+    hass = FakeHass(config_dir=str(tmp_path))
+    entry = FakeConfigEntry(entry_id="refresh", data={})
+
+    class FakeAuth:
+        def __init__(self, hass: Any, client: Any) -> None:
+            self.tokens = SimpleNamespace(
+                access_token="token", should_refresh=lambda *_: False
+            )
+
+        async def async_initialize(self) -> None:
+            return None
+
+        async def async_login(self, email: str, password: str) -> Any:
+            return self.tokens
+
+        async def async_get_access_token(self) -> str:
+            return self.tokens.access_token
+
+    class FakeDeviceClient:
+        def __init__(self, hass: Any, client: Any, auth: Any) -> None:
+            self.hass = hass
+            self.client = client
+            self.auth = auth
+
+    class FakeCoordinator:
+        def __init__(self, **_: Any) -> None:
+            self.refreshed = False
+            self.scheduled: Callable[[], Any] | None = None
+
+        async def async_config_entry_first_refresh(self) -> None:
+            self.refreshed = True
+
+        async def async_request_refresh(self) -> None:
+            return None
+
+        def async_schedule_refresh(self, callback: Callable[[], Any]) -> Any:
+            self.scheduled = callback
+            return SimpleNamespace(cancelled=False)
+
+        def cancel_refresh(self) -> None:
+            return None
+
+    async def fake_get_async_client(
+        hass_param: Any, *, verify_ssl: bool = True
+    ) -> SimpleNamespace:
+        return SimpleNamespace()
+
+    monkeypatch.setattr(integration, "_REAUTH_SERVICE_REGISTERED", False, raising=False)
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers.httpx_client"],
+        "get_async_client",
+        fake_get_async_client,
+        raising=False,
+    )
+    monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
+    monkeypatch.setattr(
+        integration, "_get_device_client_class", lambda: FakeDeviceClient, raising=False
+    )
+    monkeypatch.setattr(
+        integration, "_get_coordinator_class", lambda: FakeCoordinator, raising=False
+    )
+
+    async def _prepare_iot(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        return None, False, False, False
+
+    monkeypatch.setattr(
+        integration,
+        "_async_prepare_iot_runtime",
+        _prepare_iot,
+        raising=False,
+    )
+
+    assert await integration.async_setup_entry(hass, entry) is True
+
+    stored = hass.data[DOMAIN][entry.entry_id]
+    coordinator: FakeCoordinator = stored["coordinator"]
+    assert coordinator.refreshed is True
+    assert coordinator.scheduled is not None
+    scheduled = coordinator.scheduled
+    assert (
+        getattr(scheduled, "__func__", scheduled)
+        is FakeCoordinator.async_request_refresh
+    )
+
+
+@pytest.mark.asyncio
 async def test_async_setup_entry_uses_httpx_helper(
     tmp_path, tmp_path_factory, request, monkeypatch
 ):
