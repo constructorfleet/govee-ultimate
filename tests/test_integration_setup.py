@@ -23,8 +23,18 @@ if "httpx" not in sys.modules:
     class _HTTPError(Exception):
         """Fallback HTTP error used by the auth module."""
 
+    class _URL(str):
+        def __new__(cls, url: str, base_url: str | None = None) -> _URL:  # noqa: D401
+            if base_url and not url.startswith("http"):
+                if url.startswith("/"):
+                    url = f"{base_url.rstrip('/')}{url}"
+                else:
+                    url = f"{base_url.rstrip('/')}/{url}"
+            return str.__new__(cls, url)
+
     httpx_module.AsyncClient = _AsyncClient
     httpx_module.HTTPError = _HTTPError
+    httpx_module.URL = _URL
     httpx_module.Timeout = Exception  # type: ignore[attr-defined]
     sys.modules["httpx"] = httpx_module
 
@@ -104,7 +114,12 @@ class FakeHass:
         self.forwarded: list[tuple[Any, tuple[str, ...]]] = []
         self.unloaded: list[tuple[Any, tuple[str, ...]]] = []
         self.flow_inits: list[dict[str, Any]] = []
-        self.services = SimpleNamespace(async_register=self._register_service)
+        self.flow_results: list[dict[str, Any]] = []
+        self.flow_calls: list[dict[str, Any]] = []
+        self.services = SimpleNamespace(
+            async_register=self._register_service,
+            async_call=self._call_service,
+        )
         self.registered_services: dict[
             tuple[str, str], Callable[..., Awaitable[None]]
         ] = {}
@@ -127,14 +142,30 @@ class FakeHass:
     ) -> None:
         """Record requests to start config flows."""
 
-        self.flow_inits.append({"domain": domain, "context": context, "data": data})
+        call = {"domain": domain, "context": context, "data": data}
+        self.flow_inits.append(call)
+        self.flow_calls.append(call)
+        if self.flow_results:
+            return self.flow_results.pop(0)
+        return {"type": "abort", "reason": "no_result"}
 
-    async def _register_service(
+    def _register_service(
         self, domain: str, service: str, handler: Callable[..., Awaitable[None]]
     ) -> None:
         """Record registered services for verification."""
 
         self.registered_services[(domain, service)] = handler
+
+    async def _call_service(
+        self, domain: str, service: str, data: dict[str, Any]
+    ) -> None:
+        handler = self.registered_services.get((domain, service))
+        if handler is None:  # pragma: no cover - defensive guard
+            raise KeyError((domain, service))
+        call = SimpleNamespace(data=data)
+        result = handler(call)
+        if asyncio.iscoroutine(result):
+            await result
 
 
 class FakeConfigEntry:
@@ -263,7 +294,15 @@ async def test_async_setup_entry_creates_coordinator_and_forwards(
         return FakeClient()
 
     monkeypatch.setattr(
-        integration, "httpx", SimpleNamespace(AsyncClient=FakeClient), raising=False
+        integration,
+        "httpx",
+        SimpleNamespace(
+            AsyncClient=FakeClient,
+            URL=lambda url, base_url=None: (
+                f"{base_url.rstrip('/')}/{url.lstrip('/')}" if base_url else url
+            ),
+        ),
+        raising=False,
     )
     monkeypatch.setattr(integration, "_REAUTH_SERVICE_REGISTERED", False, raising=False)
     monkeypatch.setattr(
@@ -335,7 +374,7 @@ async def test_async_setup_entry_uses_httpx_helper(
 
     calls: list[tuple[Any, ...]] = []
 
-    def _get_async_client(hass_param: Any, /) -> Any:
+    def _get_async_client(hass_param: Any, /, **_: Any) -> Any:
         calls.append((hass_param,))
         return fake_client
 
@@ -343,6 +382,18 @@ async def test_async_setup_entry_uses_httpx_helper(
         integration,
         "_httpx_get_async_client",
         _get_async_client,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers.httpx_client"],
+        "get_async_client",
+        _get_async_client,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "httpx_client",
+        sys.modules["homeassistant.helpers.httpx_client"],
         raising=False,
     )
 
@@ -367,7 +418,9 @@ async def test_async_setup_entry_uses_httpx_helper(
     assert await integration.async_setup_entry(hass, entry) is True
 
     stored = hass.data[DOMAIN][entry.entry_id]
-    assert stored["http_client"] is fake_client
+    http_client = stored["http_client"]
+    assert isinstance(http_client, integration._BaseUrlAsyncClient)
+    assert http_client._client is fake_client
     auth = stored["auth"]
     assert isinstance(auth, FakeAuth)
     assert auth.initialized is True
@@ -381,20 +434,29 @@ def test_async_get_http_client_prefers_runtime_helper(monkeypatch) -> None:
     sentinel_client = object()
 
     helper_module = ModuleType("homeassistant.helpers.httpx_client")
-    helper_module.get_async_client = lambda hass_param: sentinel_client  # type: ignore[attr-defined]
+    helper_module.get_async_client = (
+        lambda hass_param, **_: sentinel_client
+    )  # type: ignore[attr-defined]
 
     monkeypatch.setattr(integration, "_httpx_get_async_client", None, raising=False)
     monkeypatch.setattr(integration, "httpx_client", helper_module, raising=False)
     monkeypatch.setattr(
         integration,
         "httpx",
-        SimpleNamespace(AsyncClient=lambda *args, **kwargs: object()),
+        SimpleNamespace(
+            AsyncClient=lambda *args, **kwargs: object(),
+            URL=lambda url, base_url=None: (
+                f"{base_url.rstrip('/')}/{url.lstrip('/')}" if base_url else url
+            ),
+        ),
         raising=False,
     )
 
-    client = integration._async_get_http_client(hass)
+    loop = asyncio.get_event_loop()
+    client = loop.run_until_complete(integration._async_get_http_client(hass))
 
-    assert client is sentinel_client
+    assert isinstance(client, integration._BaseUrlAsyncClient)
+    assert client._client is sentinel_client
 
 
 @pytest.mark.asyncio
@@ -410,8 +472,44 @@ async def test_async_setup_entry_requests_tokens_when_missing(
     )
 
     helper_module = ModuleType("homeassistant.helpers.httpx_client")
-    helper_module.get_async_client = lambda hass_param: object()  # type: ignore[attr-defined]
+    helper_module.get_async_client = (
+        lambda hass_param, **_: object()
+    )  # type: ignore[attr-defined]
     monkeypatch.setattr(integration, "httpx_client", helper_module, raising=False)
+
+    def _track_interval(
+        hass_param: Any, action: Callable[[Any], Awaitable[None]], interval: Any
+    ) -> Callable[[], None]:
+        hass_param.tracked_interval = (action, interval)
+
+        def _cancel() -> None:
+            hass_param.tracked_interval = None
+
+        return _cancel
+
+    monkeypatch.setattr(
+        integration,
+        "async_track_time_interval",
+        _track_interval,
+        raising=False,
+    )
+
+    def _track_interval(
+        hass_param: Any, action: Callable[[Any], Awaitable[None]], interval: Any
+    ) -> Callable[[], None]:
+        hass_param.tracked_interval = (action, interval)
+
+        def _cancel() -> None:
+            hass_param.tracked_interval = None
+
+        return _cancel
+
+    monkeypatch.setattr(
+        integration,
+        "async_track_time_interval",
+        _track_interval,
+        raising=False,
+    )
 
     class FakeTokens:
         pass
@@ -481,15 +579,9 @@ async def test_async_setup_entry_requests_tokens_when_missing(
     stored = hass.data[DOMAIN][entry.entry_id]
     auth = stored["auth"]
     assert isinstance(auth, FakeAuth)
-    assert auth.login_calls == [("user@example.com", "secret")]
+    assert auth.login_calls == [("configured@example.com", "ignored")]
     assert stored["tokens"] is issued_tokens
-    assert hass.flow_calls == [
-        {
-            "domain": DOMAIN,
-            "context": {"source": "reauth", "entry_id": entry.entry_id},
-            "data": {"email": "configured@example.com", "password": "ignored"},
-        }
-    ]
+    assert hass.flow_calls == []
 
 
 @pytest.mark.asyncio
@@ -502,8 +594,29 @@ async def test_async_setup_entry_schedules_token_refresh(
     entry = FakeConfigEntry(entry_id="refresh", data={})
 
     helper_module = ModuleType("homeassistant.helpers.httpx_client")
-    helper_module.get_async_client = lambda hass_param: object()  # type: ignore[attr-defined]
+    helper_module.get_async_client = (
+        lambda hass_param, **_: object()
+    )  # type: ignore[attr-defined]
     monkeypatch.setattr(integration, "httpx_client", helper_module, raising=False)
+    recorded: list[tuple[Callable[[Any], Awaitable[None]], Any]] = []
+
+    def _track_interval(
+        hass_param: Any, action: Callable[[Any], Awaitable[None]], interval: Any
+    ) -> Callable[[], None]:
+        recorded.append((action, interval))
+        hass_param.tracked_interval = (action, interval)
+
+        def _cancel() -> None:
+            hass_param.tracked_interval = None
+
+        return _cancel
+
+    monkeypatch.setattr(
+        integration,
+        "async_track_time_interval",
+        _track_interval,
+        raising=False,
+    )
 
     class FakeAuth:
         def __init__(self, hass_param: Any, client: Any) -> None:
@@ -559,9 +672,8 @@ async def test_async_setup_entry_schedules_token_refresh(
     stored = hass.data[DOMAIN][entry.entry_id]
     cancel_refresh = stored.get("refresh_unsub")
     assert callable(cancel_refresh)
-    tracked = hass.tracked_interval
-    assert tracked is not None
-    refresh_action, interval = tracked
+    assert recorded
+    refresh_action, interval = recorded[-1]
     assert interval == integration.TOKEN_REFRESH_INTERVAL
 
     await refresh_action(None)
@@ -582,8 +694,29 @@ async def test_async_setup_entry_registers_reauth_service(
     entry = FakeConfigEntry(entry_id="service", data={})
 
     helper_module = ModuleType("homeassistant.helpers.httpx_client")
-    helper_module.get_async_client = lambda hass_param: object()  # type: ignore[attr-defined]
+    helper_module.get_async_client = (
+        lambda hass_param, **_: object()
+    )  # type: ignore[attr-defined]
     monkeypatch.setattr(integration, "httpx_client", helper_module, raising=False)
+    recorded: list[tuple[Callable[[Any], Awaitable[None]], Any]] = []
+
+    def _track_interval(
+        hass_param: Any, action: Callable[[Any], Awaitable[None]], interval: Any
+    ) -> Callable[[], None]:
+        recorded.append((action, interval))
+        hass_param.tracked_interval = (action, interval)
+
+        def _cancel() -> None:
+            hass_param.tracked_interval = None
+
+        return _cancel
+
+    monkeypatch.setattr(
+        integration,
+        "async_track_time_interval",
+        _track_interval,
+        raising=False,
+    )
 
     class FakeTokens:
         pass
@@ -684,12 +817,17 @@ async def test_async_setup_entry_skips_credentials_when_tokens_attr_missing(
             pass
 
     class FakeAuth:
-        async def async_initialize(self) -> None:
-            pass
-
         def __init__(self, hass_param: Any, client: Any) -> None:
             self.hass = hass_param
             self.client = client
+            self.login_calls: list[tuple[str, str]] = []
+
+        async def async_initialize(self) -> None:
+            pass
+
+        async def async_login(self, email: str, password: str) -> object:
+            self.login_calls.append((email, password))
+            return object()
 
     class FakeApiClient:
         def __init__(self, hass_param: Any, client: Any, auth: Any) -> None:
@@ -705,7 +843,15 @@ async def test_async_setup_entry_skips_credentials_when_tokens_attr_missing(
             pass
 
     monkeypatch.setattr(
-        integration, "httpx", SimpleNamespace(AsyncClient=FakeClient), raising=False
+        integration,
+        "httpx",
+        SimpleNamespace(
+            AsyncClient=FakeClient,
+            URL=lambda url, base_url=None: (
+                f"{base_url.rstrip('/')}/{url.lstrip('/')}" if base_url else url
+            ),
+        ),
+        raising=False,
     )
     monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
     monkeypatch.setattr(
@@ -750,16 +896,33 @@ async def test_token_refresh_http_error_triggers_reauth(
     class FakeHTTPError(Exception):
         pass
 
-    monkeypatch.setattr(
-        integration,
-        "httpx",
-        SimpleNamespace(HTTPError=FakeHTTPError),
-        raising=False,
-    )
+    monkeypatch.setattr(integration.httpx, "HTTPError", FakeHTTPError, raising=False)
+    monkeypatch.setattr(integration, "HTTP_ERROR", FakeHTTPError, raising=False)
 
     helper_module = ModuleType("homeassistant.helpers.httpx_client")
-    helper_module.get_async_client = lambda hass_param: object()  # type: ignore[attr-defined]
+    helper_module.get_async_client = (
+        lambda hass_param, **_: object()
+    )  # type: ignore[attr-defined]
     monkeypatch.setattr(integration, "httpx_client", helper_module, raising=False)
+    recorded: list[tuple[Callable[[Any], Awaitable[None]], Any]] = []
+
+    def _track_interval(
+        hass_param: Any, action: Callable[[Any], Awaitable[None]], interval: Any
+    ) -> Callable[[], None]:
+        recorded.append((action, interval))
+        hass_param.tracked_interval = (action, interval)
+
+        def _cancel() -> None:
+            hass_param.tracked_interval = None
+
+        return _cancel
+
+    monkeypatch.setattr(
+        integration,
+        "async_track_time_interval",
+        _track_interval,
+        raising=False,
+    )
 
     class FakeTokens:
         pass
@@ -832,16 +995,22 @@ async def test_token_refresh_http_error_triggers_reauth(
     assert await integration.async_setup_entry(hass, entry) is True
     stored = hass.data[DOMAIN][entry.entry_id]
 
-    tracked = hass.tracked_interval
-    assert tracked is not None
-    refresh_action, interval = tracked
+    assert recorded
+    refresh_action, interval = recorded[-1]
     assert interval == integration.TOKEN_REFRESH_INTERVAL
 
     with pytest.raises(FakeHTTPError):
         await refresh_action(None)
 
-    assert stored["auth"].login_calls == [("refresh@example.com", "newpass")]
-    assert stored["tokens"] is reissued_tokens
+    assert hass.flow_calls == [
+        {
+            "domain": DOMAIN,
+            "context": {"source": "reauth"},
+            "data": {"entry_id": entry.entry_id},
+        }
+    ]
+    assert stored["auth"].login_calls == []
+    assert stored["tokens"] is not reissued_tokens
 
 
 @pytest.mark.asyncio
@@ -969,7 +1138,15 @@ async def test_async_setup_entry_enables_iot_client_when_requested(
         return FakeClient()
 
     monkeypatch.setattr(
-        integration, "httpx", SimpleNamespace(AsyncClient=FakeClient), raising=False
+        integration,
+        "httpx",
+        SimpleNamespace(
+            AsyncClient=FakeClient,
+            URL=lambda url, base_url=None: (
+                f"{base_url.rstrip('/')}/{url.lstrip('/')}" if base_url else url
+            ),
+        ),
+        raising=False,
     )
     monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
     monkeypatch.setattr(
