@@ -1,0 +1,256 @@
+"""Tests for additional state implementations."""
+
+from __future__ import annotations
+
+import pytest
+
+from custom_components.govee_ultimate.state.states import (
+    ConnectedState,
+    ControlLockState,
+    DisplayScheduleState,
+    NightLightState,
+)
+
+
+class DummyDevice:
+    """Minimal device stub for state tests."""
+
+    def add_status_listener(self, _callback):
+        """Compatibility hook for state classes."""
+
+
+@pytest.fixture
+def device() -> DummyDevice:
+    """Return a dummy device instance for tests."""
+
+    return DummyDevice()
+
+
+@pytest.fixture
+def connected_state(device: DummyDevice) -> ConnectedState:
+    """Return a connected state bound to a dummy device."""
+
+    return ConnectedState(device=device)
+
+
+def _next_command(state) -> dict:
+    """Return the next queued command payload for assertions."""
+
+    queued = state.command_queue.get_nowait()
+    assert isinstance(queued, dict)
+    return queued
+
+
+def _schedule_payload(
+    identifier: int, *, on: bool, start: tuple[int, int], end: tuple[int, int]
+) -> list[int]:
+    """Construct an opcode payload for display schedule assertions."""
+
+    return [
+        0xAA,
+        identifier,
+        0x01 if on else 0x00,
+        start[0],
+        start[1],
+        end[0],
+        end[1],
+    ]
+
+
+def _night_light_payload(identifier: int, *, on: bool, brightness: int) -> list[int]:
+    """Build a night light opcode payload."""
+
+    return [0xAA, identifier, 0x01 if on else 0x00, brightness]
+
+
+def test_connected_state_parses_multiple_boolean_keys(
+    connected_state: ConnectedState,
+) -> None:
+    """Connected state accepts any supported boolean flag from payloads."""
+
+    connected_state.parse({"state": {"isConnected": True}})
+    assert connected_state.value is True
+
+    connected_state.parse({"state": {"isOnline": False}})
+    assert connected_state.value is False
+
+    connected_state.parse({"state": {"connected": True}})
+    assert connected_state.value is True
+
+    connected_state.parse({"state": {"online": False}})
+    assert connected_state.value is False
+
+
+def test_connected_state_is_not_commandable_and_history(
+    connected_state: ConnectedState,
+) -> None:
+    """Connected state does not emit commands and supports history rewind."""
+
+    assert connected_state.set_state(True) == []
+    assert connected_state.command_queue.empty()
+
+    connected_state.parse({"state": {"isConnected": True}})
+    connected_state.parse({"state": {"isConnected": False}})
+
+    assert connected_state.value is False
+
+    connected_state.previous_state()
+    assert connected_state.value is True
+
+
+@pytest.fixture
+def control_lock_state(device: DummyDevice) -> ControlLockState:
+    """Return a control lock state bound to a dummy device."""
+
+    return ControlLockState(device=device, identifier=[0x0A])
+
+
+def test_control_lock_state_parses_opcode_payload(
+    control_lock_state: ControlLockState,
+) -> None:
+    """Control lock state interprets opcode payload values as booleans."""
+
+    control_lock_state.parse({"op": {"command": [[0xAA, 0x0A, 0x00]]}})
+    assert control_lock_state.value is False
+
+    control_lock_state.parse({"op": {"command": [[0xAA, 0x0A, 0x01]]}})
+    assert control_lock_state.value is True
+
+
+def test_control_lock_state_emits_commands_and_tracks_history(
+    control_lock_state: ControlLockState,
+) -> None:
+    """Control lock state emits multi-sync commands and maintains history."""
+
+    assert control_lock_state.set_state(None) == []
+    assert control_lock_state.command_queue.empty()
+
+    command_ids = control_lock_state.set_state(True)
+    assert len(command_ids) == 1
+
+    queued = _next_command(control_lock_state)
+    assert queued["command"] == "multi_sync"
+    frame = queued["data"]["command"][0]
+    assert frame[0] == 0x33
+    assert frame[1] == 0x0A
+    assert frame[2] == 0x01
+
+    control_lock_state.parse({"op": {"command": [[0xAA, 0x0A, 0x01]]}})
+    assert control_lock_state.value is True
+
+    control_lock_state.parse({"op": {"command": [[0xAA, 0x0A, 0x00]]}})
+    assert control_lock_state.value is False
+
+    control_lock_state.previous_state()
+    assert control_lock_state.value is True
+
+
+@pytest.fixture
+def display_schedule_state(device: DummyDevice) -> DisplayScheduleState:
+    """Return a display schedule state bound to a dummy device."""
+
+    return DisplayScheduleState(device=device, identifier=[0x30])
+
+
+def test_display_schedule_state_parses_payload(
+    display_schedule_state: DisplayScheduleState,
+) -> None:
+    """Display schedule payloads map to structured from/to fields."""
+
+    payload = _schedule_payload(0x30, on=True, start=(0x06, 0x2D), end=(0x07, 0x3C))
+    display_schedule_state.parse({"op": {"command": [payload]}})
+
+    assert display_schedule_state.value == {
+        "on": True,
+        "from": {"hour": 0x06, "minute": 0x2D},
+        "to": {"hour": 0x07, "minute": 0x3C},
+    }
+
+
+def test_display_schedule_state_emits_command_and_history(
+    display_schedule_state: DisplayScheduleState,
+) -> None:
+    """Display schedule emits structured commands and maintains history."""
+
+    command_ids = display_schedule_state.set_state(
+        {
+            "on": True,
+            "from": {"hour": 8, "minute": 15},
+            "to": {"hour": 20, "minute": 45},
+        }
+    )
+
+    assert len(command_ids) == 1
+
+    queued = _next_command(display_schedule_state)
+    frame = queued["data"]["command"][0]
+    assert frame[:3] == [0x33, 0x30, 0x01]
+    assert frame[3:7] == [8, 15, 20, 45]
+
+    display_schedule_state.parse(
+        {
+            "op": {
+                "command": [
+                    _schedule_payload(0x30, on=True, start=(8, 15), end=(20, 45))
+                ]
+            }
+        }
+    )
+    assert display_schedule_state.value["on"] is True
+
+    display_schedule_state.parse(
+        {
+            "op": {
+                "command": [_schedule_payload(0x30, on=False, start=(0, 0), end=(0, 0))]
+            }
+        }
+    )
+    assert display_schedule_state.value["on"] is False
+
+    display_schedule_state.previous_state()
+    assert display_schedule_state.value["on"] is True
+
+
+@pytest.fixture
+def night_light_state(device: DummyDevice) -> NightLightState:
+    """Return a night light state bound to a dummy device."""
+
+    return NightLightState(device=device, identifier=[0x40])
+
+
+def test_night_light_state_parses_payload(night_light_state: NightLightState) -> None:
+    """Night light payloads expose on flag and brightness."""
+
+    night_light_state.parse(
+        {"op": {"command": [_night_light_payload(0x40, on=True, brightness=0x20)]}}
+    )
+
+    assert night_light_state.value == {"on": True, "brightness": 0x20}
+
+
+def test_night_light_state_emits_command_and_history(
+    night_light_state: NightLightState,
+) -> None:
+    """Night light commands emit proper frames and track history."""
+
+    assert night_light_state.set_state({"on": True}) == []
+
+    command_ids = night_light_state.set_state({"on": True, "brightness": 64})
+    assert len(command_ids) == 1
+
+    queued = _next_command(night_light_state)
+    frame = queued["data"]["command"][0]
+    assert frame[:4] == [0x33, 0x40, 0x01, 0x40]
+
+    night_light_state.parse(
+        {"op": {"command": [_night_light_payload(0x40, on=True, brightness=0x40)]}}
+    )
+    assert night_light_state.value == {"on": True, "brightness": 0x40}
+
+    night_light_state.parse(
+        {"op": {"command": [_night_light_payload(0x40, on=False, brightness=0x10)]}}
+    )
+    assert night_light_state.value["on"] is False
+
+    night_light_state.previous_state()
+    assert night_light_state.value["on"] is True
