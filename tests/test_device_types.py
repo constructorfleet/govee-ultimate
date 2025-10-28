@@ -7,16 +7,20 @@ import pytest
 from custom_components.govee_ultimate.device_types.base import EntityCategory
 from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
+from custom_components.govee_ultimate.device_types.hygrometer import HygrometerDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
 from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
 from custom_components.govee_ultimate.state import (
     ActiveState,
+    BatteryLevelState,
     BrightnessState,
     ColorRGBState,
     ConnectedState,
+    HumidityState,
     ModeState,
     PowerState,
+    TemperatureState,
 )
 from custom_components.govee_ultimate.state.states import (
     ColorTemperatureState,
@@ -28,7 +32,6 @@ from custom_components.govee_ultimate.state.states import (
     AirQualityHumidityState,
     AirQualityPM25State,
     AirQualityTemperatureState,
-    HumidityState,
     LightEffectState,
     MicModeState,
     NightLightState,
@@ -149,6 +152,62 @@ def air_quality_model() -> MockDeviceModel:
         category_group="Air Quality",
         model_name="Air Quality Monitor",
     )
+
+
+@pytest.fixture
+def hygrometer_model() -> MockDeviceModel:
+    """Return metadata for a hygrometer device."""
+
+    return MockDeviceModel(
+        model="H5075",
+        sku="H5075",
+        category="Thermo-Hygrometer",
+        category_group="Thermo-Hygrometers",
+        model_name="Smart Hygrometer",
+    )
+
+
+def test_hygrometer_registers_expected_states_and_entities(
+    hygrometer_model: MockDeviceModel,
+) -> None:
+    """Hygrometer devices should expose climate sensors and diagnostics."""
+
+    device = HygrometerDevice(hygrometer_model)
+
+    states = device.states
+    assert set(states) >= {
+        "power",
+        "isConnected",
+        "temperature",
+        "humidity",
+        "batteryLevel",
+    }
+    assert isinstance(states["power"], PowerState)
+    assert isinstance(states["isConnected"], ConnectedState)
+    assert isinstance(states["temperature"], TemperatureState)
+    assert isinstance(states["humidity"], HumidityState)
+    assert isinstance(states["batteryLevel"], BatteryLevelState)
+
+    entities = device.home_assistant_entities
+    assert entities["power"].platform == "switch"
+
+    connected_entity = entities["isConnected"]
+    assert connected_entity.platform == "binary_sensor"
+    assert connected_entity.translation_key == "connected"
+    assert connected_entity.entity_category is EntityCategory.DIAGNOSTIC
+
+    temperature_entity = entities["temperature"]
+    assert temperature_entity.platform == "sensor"
+    assert temperature_entity.translation_key == "temperature"
+
+    humidity_entity = entities["humidity"]
+    assert humidity_entity.platform == "sensor"
+    assert humidity_entity.translation_key == "humidity"
+
+    battery_entity = entities["batteryLevel"]
+    assert battery_entity.platform == "sensor"
+    assert battery_entity.translation_key == "battery"
+    assert battery_entity.entity_category is EntityCategory.DIAGNOSTIC
 
 
 def test_rgbic_light_registers_expected_states(

@@ -9,6 +9,7 @@ import pytest
 from custom_components.govee_ultimate.state.states import (
     BatteryLevelState,
     ControlLockState,
+    TemperatureState,
     TimerState,
     WaterShortageState,
 )
@@ -46,6 +47,31 @@ def test_battery_level_state_parses_top_level_and_nested(device: DummyDevice) ->
 
     state.parse({"state": {"battery": 17}})
     assert state.value == 17
+
+
+def test_battery_level_state_rejects_out_of_range_values(device: DummyDevice) -> None:
+    """Battery percentages outside 0-100 should be ignored."""
+
+    state = BatteryLevelState(device=device)
+
+    state.parse({"battery": 120})
+    assert state.value is None
+
+    state.parse({"state": {"battery": -5}})
+    assert state.value is None
+
+    state.parse({"battery": "85"})
+    assert state.value == 85
+
+
+def test_temperature_state_parses_simple_payload(device: DummyDevice) -> None:
+    """Scalar temperature values should update the measurement state."""
+
+    state = TemperatureState(device=device)
+
+    state.parse({"state": {"temperature": 23.5}})
+
+    assert state.value == {"current": 23.5, "raw": 23.5}
 
 
 def test_water_shortage_state_parses_boolean_and_opcode(device: DummyDevice) -> None:

@@ -306,31 +306,43 @@ class TemperatureState(DeviceOpState[dict[str, Any]]):
         if not isinstance(state_section, Mapping):
             return
         measurement = state_section.get("temperature")
-        if not isinstance(measurement, Mapping):
-            return
         previous = self.value if isinstance(self.value, Mapping) else {}
         previous_range = previous.get("range")
         if not isinstance(previous_range, Mapping):
             previous_range = {}
         prev_min = previous_range.get("min")
         prev_max = previous_range.get("max")
-        calibration = self._measurement_value(
-            measurement.get("calibration"), previous.get("calibration")
-        )
-        current = self._measurement_value(
-            measurement.get("current"), previous.get("current")
-        )
-        if current is None:
-            return
-        min_value = self._range_value(measurement.get("min"), prev_min)
-        max_value = self._range_value(measurement.get("max"), prev_max)
+
+        if isinstance(measurement, Mapping):
+            calibration = self._measurement_value(
+                measurement.get("calibration"), previous.get("calibration")
+            )
+            current = self._measurement_value(
+                measurement.get("current"), previous.get("current")
+            )
+            if current is None:
+                return
+            min_value = self._range_value(measurement.get("min"), prev_min)
+            max_value = self._range_value(measurement.get("max"), prev_max)
+        else:
+            calibration = previous.get("calibration")
+            current = self._measurement_value(measurement, previous.get("current"))
+            if current is None:
+                return
+            min_value = prev_min
+            max_value = prev_max
+
         if min_value is not None and current < min_value:
             return
         if max_value is not None and current > max_value:
             return
+
         range_value = None
         if min_value is not None and max_value is not None:
             range_value = {"min": min_value, "max": max_value}
+        elif previous_range:
+            range_value = previous_range
+
         raw = current - calibration if calibration is not None else current
         next_state: dict[str, Any] = {"current": current, "raw": raw}
         if calibration is not None:

@@ -20,6 +20,7 @@ from .device_types.humidifier import HumidifierDevice
 from .device_types.purifier import PurifierDevice
 from .device_types.rgb_light import RGBLightDevice
 from .device_types.rgbic_light import RGBICLightDevice
+from .device_types.hygrometer import HygrometerDevice
 
 
 _DEFAULT_REFRESH_INTERVAL = timedelta(minutes=5)
@@ -237,6 +238,10 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         category = metadata.category.lower()
         if "air quality" in group or "air quality" in category:
             return AirQualityDevice
+        if any(keyword in group for keyword in ("hygro", "thermo")) or any(
+            keyword in category for keyword in ("hygro", "thermo")
+        ):
+            return HygrometerDevice
         if "rgbic" in group or "rgbic" in category:
             return RGBICLightDevice
 
@@ -487,4 +492,5 @@ _MODEL_PREFIX_FACTORIES: tuple[tuple[str, type[BaseDevice]], ...] = (
     ("H714", HumidifierDevice),
     ("H712", PurifierDevice),
     ("H600", RGBLightDevice),
+    ("H5", HygrometerDevice),
 )
