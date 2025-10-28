@@ -63,20 +63,31 @@ def test_water_shortage_state_parses_boolean_and_opcode(device: DummyDevice) -> 
     assert state.value is True
 
 
-def test_timer_state_parses_and_generates_command(device: DummyDevice) -> None:
-    """Timer state should decode opcode payloads and emit commands."""
+def test_timer_state_tracks_boolean_and_duration(device: DummyDevice) -> None:
+    """Timer state should expose a boolean value while tracking duration."""
 
     state = TimerState(device=device, identifier=[0x0A, 0x0B])
 
     state.parse({"op": {"command": [[0xAA, 0x0A, 0x0B, 0x01, 0x01, 0x2C]]}})
-    assert state.value == {"enabled": True, "duration": 300}
+    assert state.value is True
+    assert state.duration == 300
 
-    command_ids = state.set_state({"enabled": False, "duration": 600})
+    command_ids = state.set_state(False)
     assert command_ids
 
     queued = _next_command(state)
     frame = queued["data"]["command"][0]
-    assert frame[:6] == [0x33, 0x0A, 0x0B, 0x00, 0x02, 0x58]
+    assert frame[:6] == [0x33, 0x0A, 0x0B, 0x00, 0x01, 0x2C]
+
+
+def test_timer_state_parses_disabled_payload(device: DummyDevice) -> None:
+    """Timer payloads with disabled flag should update state and duration."""
+
+    state = TimerState(device=device, identifier=[0x0A, 0x0B])
+
+    state.parse({"op": {"command": [[0xAA, 0x0A, 0x0B, 0x00, 0x00, 0x3C]]}})
+    assert state.value is False
+    assert state.duration == 60
 
 
 def test_control_lock_state_parses_and_emits_command(device: DummyDevice) -> None:

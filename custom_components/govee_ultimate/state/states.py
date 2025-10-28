@@ -277,7 +277,7 @@ class HumidityState(DeviceState[int | None]):
             return
 
 
-class TimerState(DeviceOpState[dict[str, int | bool | None]]):
+class TimerState(DeviceOpState[bool | None]):
     """Represent the configured countdown timer for supported devices."""
 
     def __init__(
@@ -298,7 +298,7 @@ class TimerState(DeviceOpState[dict[str, int | bool | None]]):
             op_identifier={"op_type": op_type, "identifier": identifiers},
             device=device,
             name="timer",
-            initial_value={"enabled": None, "duration": None},
+            initial_value=None,
             parse_option=ParseOption.OP_CODE,
             state_to_command=self._state_to_command,
         )
@@ -314,6 +314,7 @@ class TimerState(DeviceOpState[dict[str, int | bool | None]]):
                 else int(duration_indexes[0]) + 1
             ),
         )
+        self._duration: int | None = None
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Decode opcode payloads into enabled flag and remaining seconds."""
@@ -325,30 +326,30 @@ class TimerState(DeviceOpState[dict[str, int | bool | None]]):
         enabled_flag = payload[self._enabled_index] == 0x01
         hi_index, lo_index = self._duration_indexes
         duration = (payload[hi_index] << 8) | payload[lo_index]
-        self._update_state({"enabled": enabled_flag, "duration": duration})
+        self._duration = duration
+        self._update_state(enabled_flag)
+
+    @property
+    def duration(self) -> int | None:
+        """Return the last known timer duration in seconds."""
+
+        return self._duration
 
     def _state_to_command(self, next_state: Mapping[str, Any] | bool | None):
         """Translate timer requests into multi-sync commands."""
 
         if not self._status_identifier:
             return None
-        if isinstance(next_state, bool):
-            existing = self.value
-            duration_source: Any = None
-            if isinstance(existing, Mapping):
-                duration_source = existing.get("duration")
-            duration = _int_from_value(duration_source)
-            if duration is None:
-                duration = 0
-            next_state = {"enabled": next_state, "duration": duration}
-        if not isinstance(next_state, Mapping):
+        enabled, duration = self._normalise_request(next_state)
+        if enabled is None:
             return None
-        enabled = _bool_from_value(next_state.get("enabled"))
-        duration = _int_from_value(next_state.get("duration"))
-        if enabled is None or duration is None:
-            return None
+        if duration is None:
+            duration = self._duration
+        if duration is None:
+            duration = 0
         if duration < 0 or duration > 0xFFFF:
             return None
+        self._duration = duration
         enabled_byte = 0x01 if enabled else 0x00
         duration_high = (duration >> 8) & 0xFF
         duration_low = duration & 0xFF
@@ -376,6 +377,16 @@ class TimerState(DeviceOpState[dict[str, int | bool | None]]):
                 {"state": {"timer": {"enabled": enabled, "duration": duration}}},
             ],
         }
+
+    def _normalise_request(
+        self, next_state: Mapping[str, Any] | bool | None
+    ) -> tuple[bool | None, int | None]:
+        if isinstance(next_state, Mapping):
+            return (
+                _bool_from_value(next_state.get("enabled")),
+                _int_from_value(next_state.get("duration")),
+            )
+        return _bool_from_value(next_state), None
 
 
 class FilterLifeState(DeviceState[int | None]):
