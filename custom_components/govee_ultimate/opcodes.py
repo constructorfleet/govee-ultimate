@@ -67,7 +67,9 @@ def as_opcode(value: int | str) -> str:
         text = _normalise_hex(text)
         try:
             int(text, 16)
-        except ValueError as exc:  # pragma: no cover - rely on exception chaining for clarity
+        except (
+            ValueError
+        ) as exc:  # pragma: no cover - rely on exception chaining for clarity
             raise ValueError(f"Invalid opcode string: {value!r}") from exc
         hex_part = text.upper()
     else:  # pragma: no cover - typing guard
@@ -155,7 +157,9 @@ def ble_command_to_base64(
 ) -> str:
     """Assemble and encode a BLE command frame for transport."""
 
-    frame = assemble_command(identifiers, payload, extra_payload=extra_payload, frame_size=frame_size)
+    frame = assemble_command(
+        identifiers, payload, extra_payload=extra_payload, frame_size=frame_size
+    )
     return _to_base64(frame)
 
 

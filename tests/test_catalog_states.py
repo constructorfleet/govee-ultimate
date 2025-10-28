@@ -112,7 +112,9 @@ def test_active_state_updates_from_op_payload() -> None:
     command = command_payloads[0]
 
     assert command["payload_hex"].endswith("01")
-    assert command["ble_base64"] == _ble_frame(command_template.opcode, command["payload_hex"])
+    assert command["ble_base64"] == _ble_frame(
+        command_template.opcode, command["payload_hex"]
+    )
 
     status_sequence = [0xAA, int(entry.identifiers["status"]["opcode"], 16), 0x01]
     state.parse({"op": {"command": [status_sequence]}})
@@ -199,4 +201,3 @@ def test_state_handlers_expose_method_docstrings() -> None:
         for method_name in method_names:
             method = getattr(cls, method_name)
             assert method.__doc__, f"Missing docstring on {cls.__name__}.{method_name}"
-

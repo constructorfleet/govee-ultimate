@@ -326,8 +326,9 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                 entity.entity_category.value if entity.entity_category else None
             ),
         }
+
+
 _MODEL_PREFIX_FACTORIES: tuple[tuple[str, type[BaseDevice]], ...] = (
     ("H714", HumidifierDevice),
     ("H712", PurifierDevice),
 )
-

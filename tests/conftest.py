@@ -10,7 +10,12 @@ from typing import Any
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+TESTS_ROOT = Path(__file__).resolve().parent
+STUBS = TESTS_ROOT / "stubs"
+if STUBS.exists() and str(STUBS) not in sys.path:
+    sys.path.insert(0, str(STUBS))
+
+ROOT = TESTS_ROOT.parents[0]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

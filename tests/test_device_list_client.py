@@ -114,7 +114,9 @@ async def test_device_list_client_fetches_and_persists(tmp_path_factory, request
         assert request.headers["Authorization"] == "Bearer access-token"
         return httpx.Response(200, json=response_payload)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://app2.govee.com")
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://app2.govee.com"
+    )
     device_client = DeviceListClient(hass, client, auth)
 
     devices = await device_client.async_fetch_devices()
@@ -183,7 +185,9 @@ async def test_device_list_client_uses_fallback(tmp_path_factory, request):
     await success_client.aclose()
 
     failure_client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda _: httpx.Response(500, json={"status": 500})),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(500, json={"status": 500})
+        ),
         base_url="https://app2.govee.com",
     )
     device_client = DeviceListClient(hass, failure_client, auth)

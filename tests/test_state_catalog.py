@@ -21,7 +21,11 @@ def test_rgb_state_payload_layout_is_documented():
     rgb_entry = catalog.get_state("color_rgb")
 
     assert rgb_entry.op_type == "color"
-    assert rgb_entry.parse_options["payload_format"]["order"] == ["red", "green", "blue"]
+    assert rgb_entry.parse_options["payload_format"]["order"] == [
+        "red",
+        "green",
+        "blue",
+    ]
     assert rgb_entry.status_templates[0]["expect_bytes"] == 7
 
 
@@ -55,6 +59,8 @@ def test_enable_presence_entry_maps_boolean_flags():
 
     assert enable_entry.identifiers["status"]["opcode"] == "0x1F"
     assert enable_entry.command_templates[0].opcode == "0x33"
+
+
 def test_state_catalog_module_is_documented():
     """Modules, models, and stubs carry documentation strings."""
 

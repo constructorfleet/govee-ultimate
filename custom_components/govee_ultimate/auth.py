@@ -35,7 +35,8 @@ class TokenDetails:
             email=email,
             access_token=payload["accessToken"],
             refresh_token=payload["refreshToken"],
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=payload["expiresIn"]),
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(seconds=payload["expiresIn"]),
         )
 
     @classmethod

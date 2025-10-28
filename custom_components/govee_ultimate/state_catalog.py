@@ -13,7 +13,9 @@ from typing import Any
 def _ensure_pydantic_docstring() -> None:
     """Guarantee the upstream module exposes a docstring for tests."""
 
-    if _pydantic.__doc__ is None:  # pragma: no cover - upstream module lacks documentation string
+    if (
+        _pydantic.__doc__ is None
+    ):  # pragma: no cover - upstream module lacks documentation string
         _pydantic.__doc__ = "Pydantic data validation library."
 
 
@@ -29,7 +31,9 @@ class CommandTemplate(BaseModel):
     opcode: str
     payload_template: str
     description: str | None = None
-    multi_step: list[str] | None = Field(default=None, description="Optional multi-op sequence metadata")
+    multi_step: list[str] | None = Field(
+        default=None, description="Optional multi-op sequence metadata"
+    )
 
 
 class StateEntry(BaseModel):
@@ -51,7 +55,9 @@ class StateCatalog(BaseModel):
     def get_state(self, state_name: str) -> StateEntry:
         """Retrieve a state entry by name."""
         try:
-            return next(state for state in self.states if state.state_name == state_name)
+            return next(
+                state for state in self.states if state.state_name == state_name
+            )
         except StopIteration as exc:  # pragma: no cover - defensive guard
             raise KeyError(state_name) from exc
 

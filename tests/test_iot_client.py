@@ -138,7 +138,7 @@ async def test_state_callback_deserialises_json_payload() -> None:
     assert len(mqtt.subscriptions) == 1
 
     subscription = mqtt.subscriptions[0]
-    subscription.callback(subscription.topic, "{\"battery\":80}")
+    subscription.callback(subscription.topic, '{"battery":80}')
 
     assert updates == [("device-3", {"battery": 80})]
 
@@ -174,7 +174,7 @@ async def test_set_update_callback_replaces_listener() -> None:
     client.set_update_callback(second.append)
 
     subscription = mqtt.subscriptions[0]
-    subscription.callback(subscription.topic, "{\"online\":true}")
+    subscription.callback(subscription.topic, '{"online":true}')
 
     assert first == []
     assert second == [("device-4", {"online": True})]
@@ -297,7 +297,12 @@ async def test_publish_command_serialises_payload_and_tracks_pending() -> None:
     command_id = await client.async_publish_command("device-1", {"power": True})
 
     assert mqtt.published == [
-        ("command/device-1", "{\"power\": true, \"command_id\": \"" + command_id + "\"}", 0, False)
+        (
+            "command/device-1",
+            '{"power": true, "command_id": "' + command_id + '"}',
+            0,
+            False,
+        )
     ]
     assert client.pending_commands == {command_id: pytest.approx(110.0)}
 

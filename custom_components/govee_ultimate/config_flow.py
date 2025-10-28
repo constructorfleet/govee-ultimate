@@ -79,9 +79,7 @@ except ImportError:  # pragma: no cover - exercised in unit tests via stubs
 
         DOMAIN: str | None = None
 
-        def __init_subclass__(
-            cls, *, domain: str | None = None, **kwargs: Any
-        ) -> None:
+        def __init_subclass__(cls, *, domain: str | None = None, **kwargs: Any) -> None:
             super().__init_subclass__(**kwargs)
             if domain is not None:
                 cls.DOMAIN = domain
@@ -147,9 +145,7 @@ class GoveeUltimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Collect user credentials and IoT preferences."""
 
         if user_input is None:
-            return await self.async_show_form(
-                step_id="user", data_schema=_USER_SCHEMA
-            )
+            return await self.async_show_form(step_id="user", data_schema=_USER_SCHEMA)
 
         data = dict(_USER_SCHEMA(user_input))
         if not data.get("enable_iot"):

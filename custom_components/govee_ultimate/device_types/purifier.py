@@ -137,7 +137,9 @@ class PurifierDevice(BaseDevice):
             entity_category=EntityCategory.DIAGNOSTIC,
         )
 
-        display_schedule = self.add_state(_BooleanState(device_model, "display_schedule"))
+        display_schedule = self.add_state(
+            _BooleanState(device_model, "display_schedule")
+        )
         self._register_feature_entity(
             "display_schedule", display_schedule, translation_key="display_schedule"
         )
@@ -155,9 +157,13 @@ class PurifierDevice(BaseDevice):
             auto = self.add_state(_ModeOptionState(device_model, "auto_mode", 0x02))
             mode_states.append(auto)
 
-        self._mode_state = self.add_state(PurifierActiveState(device_model, mode_states))
+        self._mode_state = self.add_state(
+            PurifierActiveState(device_model, mode_states)
+        )
         self.expose_entity(platform="select", state=self._mode_state)
-        self._fan_state = self.add_state(PurifierFanSpeedState(device_model, self._mode_state))
+        self._fan_state = self.add_state(
+            PurifierFanSpeedState(device_model, self._mode_state)
+        )
         self.expose_entity(platform="number", state=self._fan_state)
 
         extras: list[DeviceState[Any]] = []

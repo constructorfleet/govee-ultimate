@@ -55,4 +55,3 @@ def test_mode_state_tracks_active_identifier_and_active_mode() -> None:
 
     assert mode_state.active_identifier == [2]
     assert mode_state.active_mode is report_mode
-

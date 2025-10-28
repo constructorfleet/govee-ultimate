@@ -50,7 +50,9 @@ async def test_auth_manager_login_saves_tokens(tmp_path_factory, request):
             },
         )
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://app2.govee.com")
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://app2.govee.com"
+    )
 
     manager = GoveeAuthManager(hass, client)
     await manager.async_initialize()
@@ -69,7 +71,9 @@ async def test_auth_manager_login_saves_tokens(tmp_path_factory, request):
         "expires_at": tokens.expires_at.isoformat(),
     }
 
-    reload_client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+    reload_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200))
+    )
     reload_manager = GoveeAuthManager(hass, reload_client)
     await reload_manager.async_initialize()
 
@@ -122,7 +126,9 @@ async def test_auth_manager_refreshes_tokens(tmp_path_factory, request):
             },
         )
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://app2.govee.com")
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://app2.govee.com"
+    )
     manager = GoveeAuthManager(hass, client)
     await manager.async_initialize()
 
@@ -169,7 +175,9 @@ async def test_auth_manager_login_failure(tmp_path_factory, request):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"message": "invalid"})
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://app2.govee.com")
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://app2.govee.com"
+    )
     manager = GoveeAuthManager(hass, client)
     await manager.async_initialize()
 
@@ -204,7 +212,9 @@ async def test_auth_manager_refresh_failure_clears_state(tmp_path_factory, reque
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"message": "expired"})
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://app2.govee.com")
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://app2.govee.com"
+    )
     manager = GoveeAuthManager(hass, client)
     await manager.async_initialize()
 

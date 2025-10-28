@@ -1,4 +1,5 @@
 """Binary sensor platform for integration_blueprint."""
+
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (

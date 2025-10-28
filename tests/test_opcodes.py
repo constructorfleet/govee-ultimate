@@ -29,11 +29,15 @@ def test_opcode_catalog_contains_power_and_brightness_commands() -> None:
 
     catalog = opcodes.load_opcode_catalog()
 
-    power_on = next(entry for entry in catalog["commands"] if entry["name"] == "power_on")
+    power_on = next(
+        entry for entry in catalog["commands"] if entry["name"] == "power_on"
+    )
     assert power_on["identifiers"] == [0x33, 0x01, 0x01]
     assert power_on["vectors"]["ble"] == "MwEBAQAAAAAAAAAAAAAAAAAAADI="
 
-    brightness = next(entry for entry in catalog["commands"] if entry["name"] == "brightness_75")
+    brightness = next(
+        entry for entry in catalog["commands"] if entry["name"] == "brightness_75"
+    )
     assert brightness["identifiers"] == [0x33, 0x04, 0x01]
     assert brightness["extra_payload_hex"] == "00"
 
@@ -61,11 +65,15 @@ def test_ble_command_helper_uses_catalog_vectors() -> None:
     """The BLE helper should wrap assembly and return the recorded base64 string."""
 
     catalog = opcodes.load_opcode_catalog()
-    entry = next(item for item in catalog["commands"] if item["name"] == "brightness_75")
+    entry = next(
+        item for item in catalog["commands"] if item["name"] == "brightness_75"
+    )
     payload = bytes.fromhex(entry["payload_hex"])
     extra = bytes.fromhex(entry["extra_payload_hex"])
 
-    result = opcodes.ble_command_to_base64(entry["identifiers"], payload, extra_payload=extra)
+    result = opcodes.ble_command_to_base64(
+        entry["identifiers"], payload, extra_payload=extra
+    )
 
     assert result == entry["vectors"]["ble"]
 

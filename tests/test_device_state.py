@@ -182,7 +182,13 @@ def test_op_state_state_only_skips_opcode_parsing() -> None:
         identifier=[0x01],
     )
 
-    state.parse({"cmd": "status", "state": {"power": "on"}, "op": {"command": [[0x33, 0x01, 0x02]]}})
+    state.parse(
+        {
+            "cmd": "status",
+            "state": {"power": "on"},
+            "op": {"command": [[0x33, 0x01, 0x02]]},
+        }
+    )
 
     assert state.value == {"power": "on"}
     assert state.op_calls == []
@@ -232,9 +238,7 @@ def test_op_state_multi_op_parsing_batches_commands() -> None:
         identifier=[-1],
     )
 
-    payload = {
-        "op": {"command": [[0x40, 0x01, 0x02], [0x41, 0x03, 0x04]]}
-    }
+    payload = {"op": {"command": [[0x40, 0x01, 0x02], [0x41, 0x03, 0x04]]}}
 
     state.parse(payload)
 
