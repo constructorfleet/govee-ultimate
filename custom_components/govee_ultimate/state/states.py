@@ -128,6 +128,237 @@ class ModeState(DeviceOpState[DeviceState[str] | None]):
         self._update_state(active_mode)
 
 
+class ConnectedState(DeviceState[bool | None]):
+    """Track whether a device reports itself as connected."""
+
+    def __init__(self, device: object) -> None:
+        """Initialise the connection state tracker."""
+
+        super().__init__(device=device, name="isConnected", initial_value=None)
+
+    def parse_state(self, data: dict[str, Any]) -> None:
+        """Update connectivity using any known boolean flag."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return
+        for key in ("isConnected", "isOnline", "connected", "online"):
+            value = state_section.get(key)
+            if isinstance(value, bool):
+                self._update_state(value)
+                return
+
+
+class ControlLockState(DeviceOpState[bool | None]):
+    """Enable or disable on-device control buttons."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        identifier: Sequence[int] | None = None,
+        op_type: int = _REPORT_OPCODE,
+    ) -> None:
+        """Initialise the control lock handler."""
+
+        identifiers = list(identifier) if identifier is not None else []
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="controlLock",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Interpret opcode payloads as boolean lock flags."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        value = payload[0]
+        self._update_state(value == 0x01)
+
+    def _state_to_command(self, next_state: bool | None):
+        """Translate desired lock state into a multi-sync command."""
+
+        value = _bool_from_value(next_state)
+        if value is None:
+            return None
+        if not self._identifier:
+            return None
+        byte_value = 0x01 if value else 0x00
+        frame = _opcode_frame(0x33, *self._identifier, byte_value)
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {
+                "op": {
+                    "command": [
+                        [_REPORT_OPCODE, *self._identifier, byte_value],
+                    ]
+                }
+            },
+        }
+
+
+class DisplayScheduleState(DeviceOpState[dict[str, Any]]):
+    """Handle scheduling for device display panels."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        identifier: Sequence[int] | None = None,
+        op_type: int = _REPORT_OPCODE,
+    ) -> None:
+        """Initialise the display schedule handler."""
+
+        identifiers = list(identifier) if identifier is not None else []
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="displaySchedule",
+            initial_value={},
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Convert opcode payloads into structured schedule dictionaries."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) < 5:
+            return
+        on_flag, from_hour, from_minute, to_hour, to_minute = payload[:5]
+        self._update_state(
+            {
+                "on": on_flag == 0x01,
+                "from": {"hour": from_hour, "minute": from_minute},
+                "to": {"hour": to_hour, "minute": to_minute},
+            }
+        )
+
+    def _state_to_command(self, next_state: dict[str, Any]):
+        """Translate structured schedules into multi-sync commands."""
+
+        if not self._identifier:
+            return None
+        if not isinstance(next_state, Mapping):
+            return None
+        on_flag = next_state.get("on")
+        if not isinstance(on_flag, bool):
+            return None
+
+        def _extract_time(key: str) -> tuple[int, int] | None:
+            section = next_state.get(key)
+            if not isinstance(section, Mapping):
+                return None
+            hour = section.get("hour")
+            minute = section.get("minute")
+            if not isinstance(hour, int) or not isinstance(minute, int):
+                return None
+            return hour, minute
+
+        segments: list[int] = []
+        if on_flag:
+            start = _extract_time("from")
+            end = _extract_time("to")
+            if start is None or end is None:
+                return None
+            segments.extend([start[0], start[1], end[0], end[1]])
+        frame = _opcode_frame(
+            0x33, *self._identifier, 0x01 if on_flag else 0x00, *segments
+        )
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {
+                "op": {
+                    "command": [
+                        [
+                            _REPORT_OPCODE,
+                            *self._identifier,
+                            0x01 if on_flag else 0x00,
+                        ]
+                    ]
+                }
+            },
+        }
+
+
+class NightLightState(DeviceOpState[dict[str, Any]]):
+    """Toggle and configure the night-light brightness."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        identifier: Sequence[int] | None = None,
+        op_type: int = _REPORT_OPCODE,
+    ) -> None:
+        """Initialise the night light handler."""
+
+        identifiers = list(identifier) if identifier is not None else []
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="nightLight",
+            initial_value={"on": None, "brightness": None},
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Convert opcode payloads into night-light state dictionaries."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) < 2:
+            return
+        on_flag, brightness = payload[:2]
+        self._update_state({"on": on_flag == 0x01, "brightness": brightness})
+
+    def _state_to_command(self, next_state: dict[str, Any]):
+        """Translate state requests into multi-sync night light commands."""
+
+        if not self._identifier:
+            return None
+        if not isinstance(next_state, Mapping):
+            return None
+        on_flag = next_state.get("on")
+        brightness = next_state.get("brightness")
+        if not isinstance(on_flag, bool):
+            return None
+        if not isinstance(brightness, int) or not (0 <= brightness <= 100):
+            return None
+        frame = _opcode_frame(
+            0x33, *self._identifier, 0x01 if on_flag else 0x00, brightness
+        )
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {
+                "op": {
+                    "command": [
+                        [
+                            _REPORT_OPCODE,
+                            *self._identifier,
+                            0x01 if on_flag else 0x00,
+                            brightness,
+                        ]
+                    ]
+                }
+            },
+        }
+
+
 def _strip_op_header(
     sequence: Sequence[int],
     op_type: int | None,
