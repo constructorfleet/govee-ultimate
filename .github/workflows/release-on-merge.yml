@@ -1,0 +1,71 @@
+name: "Release on Merge"
+
+on:
+  push:
+    branches:
+      - "main"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: "Run tests and publish release"
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: "Checkout repository"
+        uses: "actions/checkout@v4"
+        with:
+          fetch-depth: 0
+
+      - name: "Set up Python"
+        uses: "actions/setup-python@v5"
+        with:
+          python-version: "3.12"
+
+      - name: "Install dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff
+
+      - name: "Run linters"
+        run: "scripts/lint"
+
+      - name: "Run tests"
+        run: "pytest"
+
+      - name: "Prepare release"
+        id: prepare
+        run: |
+          python -m scripts.prepare_release \
+            --manifest custom_components/govee_ultimate/manifest.json \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: "Commit version bump"
+        run: |
+          if git diff --quiet; then
+            echo "No version changes detected"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): v${{ steps.prepare.outputs.version }}"
+
+      - name: "Push changes"
+        run: "git push"
+
+      - name: "Create tag"
+        run: |
+          git tag -a "v${{ steps.prepare.outputs.version }}" -m "Release v${{ steps.prepare.outputs.version }}"
+          git push origin "v${{ steps.prepare.outputs.version }}"
+
+      - name: "Publish release"
+        uses: "actions/create-release@v1"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: "v${{ steps.prepare.outputs.version }}"
+          release_name: "v${{ steps.prepare.outputs.version }}"
+          draft: false
+          prerelease: false
