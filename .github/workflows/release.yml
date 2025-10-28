@@ -1,35 +1,40 @@
-name: "Release"
+name: "Package Release"
 
 on:
   release:
     types:
       - "published"
 
-permissions: {}
+permissions:
+  contents: write
 
 jobs:
-  release:
-    name: "Release"
+  package:
+    name: "Package integration"
     runs-on: "ubuntu-latest"
-    permissions:
-      contents: write
     steps:
       - name: "Checkout the repository"
-        uses: "actions/checkout@v4.1.0"
-
-      - name: "Adjust version number"
-        shell: "bash"
-        run: |
-          yq -i -o json '.version="${{ github.event.release.tag_name }}"' \
-            "${{ github.workspace }}/custom_components/integration_blueprint/manifest.json"
-
-      - name: "ZIP the integration directory"
-        shell: "bash"
-        run: |
-          cd "${{ github.workspace }}/custom_components/integration_blueprint"
-          zip integration_blueprint.zip -r ./
-
-      - name: "Upload the ZIP file to the release"
-        uses: softprops/action-gh-release@v0.1.15
+        uses: "actions/checkout@v4"
         with:
-          files: ${{ github.workspace }}/custom_components/integration_blueprint/integration_blueprint.zip
+          fetch-depth: 0
+
+      - name: "Validate manifest version"
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST_VERSION=$(python -c 'import json, pathlib;print(json.loads(pathlib.Path("custom_components/govee_ultimate/manifest.json").read_text())["version"])')
+          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "Manifest version $MANIFEST_VERSION does not match tag $TAG_VERSION" >&2
+            exit 1
+          fi
+
+      - name: "Create integration archive"
+        shell: bash
+        run: |
+          cd "custom_components/govee_ultimate"
+          zip govee_ultimate.zip -r .
+
+      - name: "Upload integration archive"
+        uses: softprops/action-gh-release@v2
+        with:
+          files: custom_components/govee_ultimate/govee_ultimate.zip
