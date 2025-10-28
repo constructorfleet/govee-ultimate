@@ -62,6 +62,7 @@ from custom_components.govee_ultimate.coordinator import (
 from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.hygrometer import HygrometerDevice
+from custom_components.govee_ultimate.device_types.presence import PresenceDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 
 
@@ -301,6 +302,32 @@ def test_resolve_factory_matches_hygrometer_model_prefix() -> None:
     assert factory is HygrometerDevice
 
 
+def test_resolve_factory_detects_presence_category() -> None:
+    """Presence sensors should resolve to the PresenceDevice factory."""
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=FakeAPIClient([]),
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    metadata = DeviceMetadata(
+        device_id="presence-1",
+        model="H5109",
+        sku="H5109",
+        category="Presence Sensor",
+        category_group="Presence Sensors",
+        device_name="Presence Detector",
+        manufacturer="Govee",
+        channels={},
+    )
+
+    factory = coordinator._resolve_factory(metadata)
+
+    assert factory is PresenceDevice
+
+
 @pytest.mark.asyncio
 async def test_first_refresh_populates_coordinator_data_snapshot() -> None:
     """Initial refresh should store metadata snapshot for entities."""
@@ -529,6 +556,60 @@ async def test_discovery_registers_home_assistant_entities() -> None:
         if entry["unique_id"] == "device-1-active"
     )
     assert diagnostic_entry["entity_category"] == "diagnostic"
+
+
+@pytest.mark.asyncio
+async def test_presence_discovery_registers_presence_entities() -> None:
+    """Presence devices should expose detection and tuning entities."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "presence-1",
+                "model": "H5109",
+                "sku": "H5109",
+                "category": "Presence Sensor",
+                "category_group": "Presence Sensors",
+                "device_name": "Office Presence Sensor",
+            }
+        ]
+    )
+    device_registry = FakeDeviceRegistry()
+    entity_registry = FakeEntityRegistry()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=device_registry,
+        entity_registry=entity_registry,
+    )
+
+    await coordinator.async_discover_devices()
+
+    unique_ids = {entry["unique_id"] for entry in entity_registry.created}
+    assert {
+        "presence-1-presence-mmWave",
+        "presence-1-presence-biological",
+        "presence-1-presenceEnable-mmWave",
+        "presence-1-presenceEnable-biological",
+        "presence-1-detectionDistance",
+    } <= unique_ids
+
+    mmwave_entry = next(
+        entry
+        for entry in entity_registry.created
+        if entry["unique_id"] == "presence-1-presence-mmWave"
+    )
+    assert mmwave_entry["domain"] == "binary_sensor"
+    assert mmwave_entry["translation_key"] == "presence_mmwave"
+
+    distance_entry = next(
+        entry
+        for entry in entity_registry.created
+        if entry["unique_id"] == "presence-1-detectionDistance"
+    )
+    assert distance_entry["domain"] == "number"
+    assert distance_entry["entity_category"] == "config"
 
 
 @pytest.mark.asyncio
