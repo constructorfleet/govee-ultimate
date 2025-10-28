@@ -8,12 +8,300 @@ from collections.abc import Mapping
 from functools import cache
 from typing import Any
 from collections.abc import Callable
+import itertools
+from enum import Enum
 
 from .. import opcodes
 from collections.abc import Sequence
 
 from ..state_catalog import CommandTemplate, StateEntry, load_state_catalog
 from .device_state import DeviceOpState, DeviceState, ParseOption
+
+
+def _chunk(values: Sequence[int], size: int) -> list[list[int]]:
+    """Return ``values`` split into ``size`` sized chunks."""
+
+    return [list(values[idx : idx + size]) for idx in range(0, len(values), size)]
+
+
+def _total(bytes_: Sequence[int]) -> int:
+    """Interpret ``bytes_`` as a big endian integer."""
+
+    result = 0
+    for value in bytes_:
+        result = (result << 8) | (value & 0xFF)
+    return result
+
+
+def _flatten_commands(commands: Sequence[Sequence[int]]) -> list[int]:
+    """Return a flattened copy of the opcode command sequences."""
+
+    return list(itertools.chain.from_iterable(commands))
+
+
+def _probe_readings(commands: Sequence[Sequence[int]]) -> list[list[int]]:
+    """Return probe readings extracted from ``commands``."""
+
+    flattened = _flatten_commands(commands)
+    if len(flattened) <= 10:
+        return []
+    payload = flattened[10:]
+    readings = _chunk(payload, 9)
+    return [reading for reading in readings if len(reading) == 9]
+
+
+def _get_probe_reading(
+    commands: Sequence[Sequence[int]], probe: int
+) -> list[int] | None:
+    """Return the reading for ``probe`` from ``commands`` when available."""
+
+    readings = _probe_readings(commands)
+    index = probe - 1
+    if index < 0 or index >= len(readings):
+        return None
+    return readings[index]
+
+
+def _first_command(op_commands: Sequence[Sequence[int]]) -> list[int]:
+    """Return the first opcode command when present."""
+
+    if not op_commands:
+        return []
+    return list(op_commands[0])
+
+
+class ProbeTempState(DeviceOpState[float | None]):
+    """Expose probe temperature readings for meat thermometers."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        probe: int,
+        default_state: float | None = None,
+    ) -> None:
+        """Track temperatures for ``probe`` using aggregated opcode payloads."""
+
+        super().__init__(
+            op_identifier={"op_type": None},
+            device=device,
+            name=f"probeTemp{probe}",
+            initial_value=default_state,
+            parse_option=ParseOption.MULTI_OP,
+        )
+        self._probe = probe
+
+    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
+        """Convert multi-op payloads into a float temperature reading."""
+
+        reading = _get_probe_reading(op_commands, self._probe)
+        if reading is None:
+            return
+        if len(reading) < 2:
+            return
+        temperature = _total(reading[:2]) / 100
+        self._update_state(temperature)
+
+
+class BuzzerState(DeviceOpState[bool | None]):
+    """Expose the hardware buzzer enable flag."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        default_state: bool | None = None,
+    ) -> None:
+        """Initialise the buzzer state wrapper."""
+
+        super().__init__(
+            op_identifier={"op_type": None},
+            device=device,
+            name="buzzer",
+            initial_value=default_state,
+            parse_option=ParseOption.MULTI_OP,
+        )
+
+    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
+        """Map header byte to a boolean buzzer flag."""
+
+        op_command = _first_command(op_commands)
+        if len(op_command) <= 6:
+            return
+        flag = op_command[6]
+        if flag in (0, 1):
+            self._update_state(flag == 1)
+
+
+class TemperatureUnitState(DeviceOpState[str | None]):
+    """Report the preferred temperature unit for the device."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        default_state: str | None = None,
+    ) -> None:
+        """Initialise the temperature unit tracker."""
+
+        super().__init__(
+            op_identifier={"op_type": None},
+            device=device,
+            name="temperatureUnit",
+            initial_value=default_state,
+            parse_option=ParseOption.MULTI_OP,
+        )
+
+    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
+        """Decode the Fahrenheit/Celsius flag from the header."""
+
+        op_command = _first_command(op_commands)
+        if len(op_command) <= 2:
+            return
+        self._update_state("F" if op_command[2] == 1 else "C")
+
+
+class EarlyWarningOffset(str, Enum):
+    """Enumeration of supported early warning offsets."""
+
+    OFF = "OFF"
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class EarlyWarningState(DeviceOpState[dict[str, Any] | None]):
+    """Decode early warning enablement and offset configuration."""
+
+    _VALID_FLAGS = {0, 1, 3, 5}
+    _OFFSET_MAP = {
+        0: EarlyWarningOffset.OFF,
+        1: EarlyWarningOffset.LOW,
+        3: EarlyWarningOffset.MEDIUM,
+        5: EarlyWarningOffset.HIGH,
+    }
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        default_state: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialise the early warning configuration tracker."""
+
+        super().__init__(
+            op_identifier={"op_type": None},
+            device=device,
+            name="earlyWarning",
+            initial_value=default_state,
+            parse_option=ParseOption.MULTI_OP,
+        )
+
+    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
+        """Map header bytes to structured early warning metadata."""
+
+        op_command = _first_command(op_commands)
+        if len(op_command) <= 4:
+            return
+        enabled_flag = op_command[3]
+        if enabled_flag not in self._VALID_FLAGS:
+            return
+        setting = self._OFFSET_MAP.get(op_command[4], EarlyWarningOffset.OFF)
+        self._update_state(
+            {
+                "enabled": enabled_flag != 0,
+                "setting": setting,
+            }
+        )
+
+
+_FOOD_MAP: dict[int, str] = {
+    0: "BEEF",
+    1: "LAMB",
+    2: "PORK",
+    3: "POULTRY",
+    4: "TURKEY",
+    5: "FISH",
+    6: "DIY",
+    7: "VEAL",
+    8: "SAUSAGE",
+    9: "HAM",
+    10: "SHRIMP",
+    11: "POTATO",
+    12: "CUPCAKE",
+    13: "EGG",
+}
+
+_DIY_DONE_LEVEL = {1: "LOW", 2: "HIGH", 3: "RANGE"}
+_SAUSAGE_HAM_DONE_LEVEL = {1: "RAW", 2: "PRE_COOKER"}
+_PORK_DONE_LEVEL = {1: "MEDIUM", 2: "WELL_DONE"}
+_MEAT_DONE_LEVEL = {
+    1: "RARE",
+    2: "MEDIUM_RARE",
+    3: "MEDIUM",
+    4: "MEDIUM_WELL",
+    5: "WELL_DONE",
+}
+_REFERENCE_DONE_LEVEL = {1: "REFERENCE"}
+
+_DONE_LEVEL_MAP: dict[str, dict[int, str]] = {
+    "DIY": _DIY_DONE_LEVEL,
+    "SAUSAGE": _SAUSAGE_HAM_DONE_LEVEL,
+    "HAM": _SAUSAGE_HAM_DONE_LEVEL,
+    "PORK": _PORK_DONE_LEVEL,
+    "BEEF": _MEAT_DONE_LEVEL,
+    "LAMB": _MEAT_DONE_LEVEL,
+    "VEAL": _MEAT_DONE_LEVEL,
+}
+
+
+class PresetState(DeviceOpState[dict[str, Any] | None]):
+    """Represent preset alarm and doneness configuration per probe."""
+
+    options: tuple[str, ...] = tuple(
+        _FOOD_MAP[key] for key in sorted(_FOOD_MAP)  # type: ignore[index]
+    )
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        probe: int,
+        default_state: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialise preset decoding for ``probe``."""
+
+        super().__init__(
+            op_identifier={"op_type": None},
+            device=device,
+            name=f"preset{probe}",
+            initial_value=default_state,
+            parse_option=ParseOption.MULTI_OP,
+        )
+        self._probe = probe
+
+    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
+        """Decode preset metadata from the aggregated payload."""
+
+        reading = _get_probe_reading(op_commands, self._probe)
+        if reading is None:
+            return
+        if len(reading) < 9:
+            return
+        alarm_high = _total(reading[2:4]) / 100
+        alarm_low = _total(reading[4:6]) / 100
+        food = _FOOD_MAP.get(reading[6])
+        done_lookup = _REFERENCE_DONE_LEVEL
+        if food is not None and food in _DONE_LEVEL_MAP:
+            done_lookup = _DONE_LEVEL_MAP[food]
+        done_level = done_lookup.get(reading[8])
+        state: dict[str, Any] = {
+            "food": food,
+            "alarm": {"high": alarm_high, "low": alarm_low},
+            "doneLevel": done_level,
+        }
+        self._update_state(state)
+
 
 _REPORT_OPCODE = 0xAA
 

@@ -168,6 +168,23 @@ def setup_platform_stubs() -> Callable[[], None]:  # noqa: C901
         def is_on(self) -> bool | None:
             return self._attr_is_on
 
+    class _SelectEntity(_Entity):
+        _attr_options: list[str] = []
+        _attr_current_option: str | None = None
+
+        @property
+        def options(self) -> list[str]:
+            return list(self._attr_options)
+
+        @property
+        def current_option(self) -> str | None:
+            return self._attr_current_option
+
+        async def async_select_option(
+            self, option: str
+        ) -> None:  # pragma: no cover - stub
+            raise NotImplementedError
+
     platform_classes = {
         "homeassistant.components.light": ("LightEntity", _LightEntity),
         "homeassistant.components.humidifier": ("HumidifierEntity", _HumidifierEntity),
@@ -179,6 +196,7 @@ def setup_platform_stubs() -> Callable[[], None]:  # noqa: C901
             "BinarySensorEntity",
             _BinarySensorEntity,
         ),
+        "homeassistant.components.select": ("SelectEntity", _SelectEntity),
     }
 
     for module_name, (class_name, class_obj) in platform_classes.items():

@@ -65,6 +65,9 @@ from custom_components.govee_ultimate.device_types.ice_maker import IceMakerDevi
 from custom_components.govee_ultimate.device_types.hygrometer import HygrometerDevice
 from custom_components.govee_ultimate.device_types.presence import PresenceDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
+from custom_components.govee_ultimate.device_types.meat_thermometer import (
+    MeatThermometerDevice,
+)
 
 
 class FakeAPIClient:
@@ -277,6 +280,32 @@ def test_resolve_factory_matches_ice_maker_category() -> None:
     assert factory is IceMakerDevice
 
 
+def test_resolve_factory_matches_meat_thermometer_category() -> None:
+    """Kitchen devices named like WiFi meat thermometers should map correctly."""
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=FakeAPIClient([]),
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    metadata = DeviceMetadata(
+        device_id="meat-1",
+        model="H7480",
+        sku="H7480",
+        category="Home Improvement",
+        category_group="Kitchen",
+        device_name="WiFi Meat Thermometer",
+        manufacturer="Govee",
+        channels={},
+    )
+
+    factory = coordinator._resolve_factory(metadata)
+
+    assert factory is MeatThermometerDevice
+
+
 def test_resolve_factory_matches_air_quality_model_prefix() -> None:
     """Specific air quality model prefixes should map to AirQualityDevice."""
 
@@ -327,6 +356,32 @@ def test_resolve_factory_matches_ice_maker_model_prefix() -> None:
     factory = coordinator._resolve_factory(metadata)
 
     assert factory is IceMakerDevice
+
+
+def test_resolve_factory_matches_meat_thermometer_model_prefix() -> None:
+    """Meat thermometer model prefixes should map to MeatThermometerDevice."""
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=FakeAPIClient([]),
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    metadata = DeviceMetadata(
+        device_id="meat-2",
+        model="H7481",
+        sku="H7481",
+        category="Unknown",
+        category_group="",
+        device_name="Smart Thermometer",
+        manufacturer="Govee",
+        channels={},
+    )
+
+    factory = coordinator._resolve_factory(metadata)
+
+    assert factory is MeatThermometerDevice
 
 
 def test_resolve_factory_matches_hygrometer_model_prefix() -> None:

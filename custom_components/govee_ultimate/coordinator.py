@@ -22,6 +22,7 @@ from .device_types.presence import PresenceDevice
 from .device_types.purifier import PurifierDevice
 from .device_types.rgb_light import RGBLightDevice
 from .device_types.rgbic_light import RGBICLightDevice
+from .device_types.meat_thermometer import MeatThermometerDevice
 from .device_types.hygrometer import HygrometerDevice
 
 
@@ -249,6 +250,8 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         name = metadata.device_name.lower()
         if category == "home appliances" and group == "kitchen" and "ice maker" in name:
             return IceMakerDevice
+        if self._is_meat_thermometer(group, name):
+            return MeatThermometerDevice
         if _category_matches(group, category, ("presence",)):
             return PresenceDevice
         if _category_matches(group, category, ("air quality",)):
@@ -497,12 +500,19 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             ),
         }
 
+    @staticmethod
+    def _is_meat_thermometer(group: str, name: str) -> bool:
+        """Return True when metadata matches meat thermometer heuristics."""
+
+        return group == "kitchen" and "meat thermometer" in name
+
 
 _MODEL_PREFIX_FACTORIES: tuple[tuple[str, type[BaseDevice]], ...] = (
     ("H660", AirQualityDevice),
     ("H714", HumidifierDevice),
     ("H712", PurifierDevice),
     ("H717", IceMakerDevice),
+    ("H74", MeatThermometerDevice),
     ("H600", RGBLightDevice),
     ("H51", PresenceDevice),
     ("H5", HygrometerDevice),

@@ -8,6 +8,7 @@ from .presence import PresenceDevice
 from .purifier import PurifierDevice
 from .rgb_light import RGBLightDevice
 from .rgbic_light import RGBICLightDevice
+from .meat_thermometer import MeatThermometerDevice
 
 __all__ = [
     "RGBLightDevice",
@@ -18,4 +19,5 @@ __all__ = [
     "HygrometerDevice",
     "PresenceDevice",
     "IceMakerDevice",
+    "MeatThermometerDevice",
 ]
