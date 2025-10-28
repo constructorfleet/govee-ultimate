@@ -5,6 +5,7 @@ from custom_components.govee_ultimate import _ensure_event_loop as _ensure_loop
 from .device_state import DeviceOpState, DeviceState, ParseOption
 from .states import (
     ActiveState,
+    BatteryLevelState,
     BiologicalPresenceState,
     BrightnessState,
     ColorRGBState,
@@ -24,6 +25,7 @@ from .states import (
     TimerState,
     FilterLifeState,
     FilterExpiredState,
+    WaterShortageState,
     PowerState,
 )
 
@@ -38,6 +40,7 @@ __all__ = [
     "ColorRGBState",
     "ControlLockState",
     "ColorTemperatureState",
+    "BatteryLevelState",
     "MMWavePresenceState",
     "BiologicalPresenceState",
     "EnablePresenceState",
@@ -52,6 +55,7 @@ __all__ = [
     "TimerState",
     "FilterLifeState",
     "FilterExpiredState",
+    "WaterShortageState",
 ]
 
 _ensure_loop()

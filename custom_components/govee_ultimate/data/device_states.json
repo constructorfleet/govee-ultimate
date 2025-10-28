@@ -596,6 +596,65 @@
       ]
     },
     {
+      "state_name": "battery_level",
+      "op_type": "sensor",
+      "identifiers": {
+        "status": {
+          "opcode": "0x2A",
+          "payload": "2A00",
+          "description": "Battery percentage status"
+        }
+      },
+      "parse_options": {
+        "byte_index": 2,
+        "scaling": {
+          "factor": 1,
+          "min": 0,
+          "max": 100
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x2A",
+          "payload": "2A00",
+          "expect_bytes": 4,
+          "notes": "Byte 3 reports battery percentage"
+        }
+      ],
+      "command_templates": []
+    },
+    {
+      "state_name": "timer",
+      "op_type": "command",
+      "identifiers": {
+        "status": {
+          "opcode": "0x32",
+          "payload": "3200",
+          "description": "Timer enabled flag and duration"
+        }
+      },
+      "parse_options": {
+        "byte_index": 0,
+        "duration_bytes": [1, 2]
+      },
+      "status_templates": [
+        {
+          "opcode": "0x32",
+          "payload": "3200",
+          "expect_bytes": 6,
+          "notes": "Bytes 3-5 encode timer status"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_timer",
+          "opcode": "0x32",
+          "payload_template": "32{{ '01' if enabled else '00' }}{{ duration | int | format('04x') }}",
+          "description": "Configure timer enabled flag and duration in seconds"
+        }
+      ]
+    },
+    {
       "state_name": "water_shortage",
       "op_type": "sensor",
       "identifiers": {

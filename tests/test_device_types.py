@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from custom_components.govee_ultimate.device_types.base import EntityCategory
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
@@ -26,6 +27,7 @@ from custom_components.govee_ultimate.state.states import (
     NightLightState,
     SegmentColorState,
     TimerState,
+    WaterShortageState,
 )
 
 
@@ -267,6 +269,11 @@ def test_humidifier_registers_catalog_state_types(
     assert isinstance(states["displaySchedule"], DisplayScheduleState)
     assert isinstance(states["controlLock"], ControlLockState)
     assert isinstance(states["humidity"], HumidityState)
+    assert isinstance(states["waterShortage"], WaterShortageState)
+
+    shortage_entity = device.home_assistant_entities["waterShortage"]
+    assert shortage_entity.translation_key == "water_shortage"
+    assert shortage_entity.entity_category == EntityCategory.DIAGNOSTIC
 
 
 def test_humidifier_mode_interlocks_gate_mist_levels(
