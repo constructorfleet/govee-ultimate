@@ -163,6 +163,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
         iot_refresh_enabled=iot_refresh_enabled,
     )
     await coordinator.async_config_entry_first_refresh()
+    _schedule_coordinator_refresh(coordinator)
 
     refresh_unsub = _schedule_token_refresh(hass, auth, entry)
 
@@ -510,6 +511,15 @@ def _schedule_token_refresh(hass: Any, auth: Any, entry: Any) -> Any:
             raise
 
     return async_track_time_interval(hass, _async_refresh, TOKEN_REFRESH_INTERVAL)
+
+
+def _schedule_coordinator_refresh(coordinator: Any) -> None:
+    """Schedule metadata refresh callbacks on the coordinator."""
+
+    schedule_refresh = getattr(coordinator, "async_schedule_refresh", None)
+    request_refresh = getattr(coordinator, "async_request_refresh", None)
+    if callable(schedule_refresh) and callable(request_refresh):
+        schedule_refresh(request_refresh)
 
 
 async def _async_register_reauth_service(hass: Any) -> None:

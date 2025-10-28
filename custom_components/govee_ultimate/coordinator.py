@@ -22,6 +22,33 @@ from .device_types.rgbic_light import RGBICLightDevice
 _DEFAULT_REFRESH_INTERVAL = timedelta(minutes=5)
 
 
+def _camel_to_snake(value: str) -> str:
+    """Convert camelCase or PascalCase identifiers to snake_case."""
+
+    result = []
+    for index, char in enumerate(value):
+        if char.isupper() and index > 0 and value[index - 1] != "_":
+            result.append("_")
+        result.append(char.lower())
+    return "".join(result)
+
+
+def _resolve_payload_value(
+    payload: dict[str, Any],
+    *keys: str,
+    default: Any = None,
+    required: bool = False,
+) -> Any:
+    """Return the first non-``None`` value for ``keys`` in ``payload``."""
+
+    for key in keys:
+        if key in payload and payload[key] is not None:
+            return payload[key]
+    if required:
+        raise KeyError(keys[0])
+    return default
+
+
 @dataclass(slots=True)
 class DeviceMetadata:
     """Structured representation of API device metadata."""
@@ -32,20 +59,55 @@ class DeviceMetadata:
     category: str
     category_group: str
     device_name: str
+    manufacturer: str
     channels: dict[str, dict[str, Any]]
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> DeviceMetadata:
         """Normalise payload from the upstream API client."""
 
+        device_id = _resolve_payload_value(
+            payload, "device_id", "deviceId", required=True
+        )
+        model = _resolve_payload_value(payload, "model", "deviceModel", required=True)
+        sku = _resolve_payload_value(payload, "sku", "deviceSku", default=model)
+        category = _resolve_payload_value(
+            payload, "category", "categoryName", default=""
+        )
+        category_group = _resolve_payload_value(
+            payload,
+            "category_group",
+            "categoryGroup",
+            "category_group_name",
+            default="",
+        )
+        device_name = _resolve_payload_value(
+            payload, "device_name", "deviceName", "name", default=model
+        )
+        manufacturer = _resolve_payload_value(
+            payload, "manufacturer", "manufacturerName", default="Govee"
+        )
+        channels_payload = _resolve_payload_value(
+            payload, "channels", "deviceChannels", default={}
+        )
+
+        channels: dict[str, dict[str, Any]] = {
+            channel: {
+                _camel_to_snake(key): value
+                for key, value in dict(channel_payload).items()
+            }
+            for channel, channel_payload in channels_payload.items()
+        }
+
         return cls(
-            device_id=payload["device_id"],
-            model=payload["model"],
-            sku=payload.get("sku", payload["model"]),
-            category=payload.get("category", ""),
-            category_group=payload.get("category_group", ""),
-            device_name=payload.get("device_name", payload["model"]),
-            channels={k: dict(v) for k, v in payload.get("channels", {}).items()},
+            device_id=device_id,
+            model=model,
+            sku=sku,
+            category=category,
+            category_group=category_group,
+            device_name=device_name,
+            manufacturer=manufacturer,
+            channels=channels,
         )
 
     @property
@@ -123,27 +185,38 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch metadata and materialise device instances."""
 
         payloads = await self._api_client.async_get_devices()
+        discovered_devices: dict[str, BaseDevice] = {}
+        discovered_metadata: dict[str, DeviceMetadata] = {}
         for payload in payloads:
             metadata = DeviceMetadata.from_dict(payload)
             factory = self._resolve_factory(metadata)
             if factory is None:
                 continue
             device = factory(metadata)
-            self.devices[metadata.device_id] = device
-            self.device_metadata[metadata.device_id] = metadata
+            discovered_devices[metadata.device_id] = device
+            discovered_metadata[metadata.device_id] = metadata
             device_entry = await self._device_registry.async_get_or_create(
                 config_entry_id=self._config_entry_id,
                 identifiers={(DOMAIN, metadata.device_id)},
                 name=metadata.device_name,
                 model=metadata.model,
-                manufacturer="Govee",
+                manufacturer=metadata.manufacturer,
             )
             await self._register_entities(metadata, device, device_entry.id)
+
+        self.devices = discovered_devices
+        self.device_metadata = discovered_metadata
 
         if self._iot_client and self._iot_state_enabled:
             iot_devices = self._iot_device_ids()
             if iot_devices:
                 await self._iot_client.async_start(iot_devices)
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Refresh metadata and expose a snapshot for Home Assistant entities."""
+
+        await self.async_discover_devices()
+        return {"devices": self.devices, "device_metadata": self.device_metadata}
 
     def _resolve_factory(
         self, metadata: DeviceMetadata

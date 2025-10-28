@@ -32,6 +32,16 @@ if "homeassistant.helpers.update_coordinator" not in __import__("sys").modules:
             self.logger = logger
             self.name = name
             self.update_interval = update_interval
+            self.data: Any | None = None
+
+        async def async_config_entry_first_refresh(self) -> None:
+            update = getattr(self, "_async_update_data", None)
+            if update is None:
+                return
+            self.data = await update()
+
+        async def async_request_refresh(self) -> None:
+            await self.async_config_entry_first_refresh()
 
     update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
     helpers.update_coordinator = update_coordinator
@@ -44,7 +54,11 @@ if "homeassistant.helpers.update_coordinator" not in __import__("sys").modules:
     )
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from custom_components.govee_ultimate.coordinator import GoveeDataUpdateCoordinator
+from custom_components.govee_ultimate import DOMAIN
+from custom_components.govee_ultimate.coordinator import (
+    DeviceMetadata,
+    GoveeDataUpdateCoordinator,
+)
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 
@@ -80,6 +94,37 @@ class FakeAPIClient:
         """Record BLE commands issued by the coordinator."""
 
         self.ble_commands.append((device_id, dict(command), dict(channel_info)))
+
+
+def test_device_metadata_accepts_typescript_payload() -> None:
+    """TypeScript-style payloads should normalise to DeviceMetadata."""
+
+    payload = {
+        "deviceId": "ts-device-1",
+        "model": "H7141",
+        "sku": "H7141",
+        "category": "Home Appliances",
+        "categoryGroup": "Air Treatment",
+        "deviceName": "Bedroom Humidifier",
+        "channels": {
+            "iot": {
+                "stateTopic": "state/ts-device-1",
+                "commandTopic": "command/ts-device-1",
+            }
+        },
+    }
+
+    metadata = DeviceMetadata.from_dict(payload)
+
+    assert metadata.device_id == "ts-device-1"
+    assert metadata.model == "H7141"
+    assert metadata.sku == "H7141"
+    assert metadata.category == "Home Appliances"
+    assert metadata.category_group == "Air Treatment"
+    assert metadata.device_name == "Bedroom Humidifier"
+    assert metadata.manufacturer == "Govee"
+    assert metadata.channels["iot"]["state_topic"] == "state/ts-device-1"
+    assert metadata.channels["iot"]["command_topic"] == "command/ts-device-1"
 
 
 @dataclass
@@ -128,6 +173,83 @@ class FakeEntityRegistry:
         }
         self.created.append(entry)
         return entry
+
+
+@pytest.mark.asyncio
+async def test_update_data_discovers_devices_from_typescript_payload() -> None:
+    """Coordinator refresh should discover devices and expose snapshot data."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "deviceId": "ts-device-1",
+                "model": "H7141",
+                "categoryGroup": "Air Treatment",
+                "category": "Humidifier",
+                "deviceName": "Bedroom Humidifier",
+                "channels": {
+                    "iot": {
+                        "stateTopic": "state/ts-device-1",
+                        "commandTopic": "command/ts-device-1",
+                        "refreshTopic": "refresh/ts-device-1",
+                    }
+                },
+            }
+        ]
+    )
+    device_registry = FakeDeviceRegistry()
+    entity_registry = FakeEntityRegistry()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=device_registry,
+        entity_registry=entity_registry,
+    )
+
+    data = await coordinator._async_update_data()
+
+    assert api_client.request_count == 1
+    assert coordinator.device_metadata.keys() == {"ts-device-1"}
+    assert coordinator.devices.keys() == {"ts-device-1"}
+    assert data["device_metadata"] is coordinator.device_metadata
+    assert data["devices"] is coordinator.devices
+
+    [(entry, payload)] = device_registry.created
+    assert payload["identifiers"] == {(DOMAIN, "ts-device-1")}
+    assert payload["manufacturer"] == "Govee"
+    assert payload["model"] == "H7141"
+
+
+@pytest.mark.asyncio
+async def test_first_refresh_populates_coordinator_data_snapshot() -> None:
+    """Initial refresh should store metadata snapshot for entities."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "deviceId": "ts-device-1",
+                "model": "H7141",
+                "categoryGroup": "Air Treatment",
+                "category": "Humidifier",
+                "deviceName": "Bedroom Humidifier",
+            }
+        ]
+    )
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    await coordinator.async_config_entry_first_refresh()
+
+    assert coordinator.data == {
+        "devices": coordinator.devices,
+        "device_metadata": coordinator.device_metadata,
+    }
+    assert "ts-device-1" in coordinator.device_metadata
 
 
 class FakeTimerHandle:
