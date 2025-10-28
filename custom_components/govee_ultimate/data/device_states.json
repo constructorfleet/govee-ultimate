@@ -635,7 +635,10 @@
       },
       "parse_options": {
         "byte_index": 0,
-        "duration_bytes": [1, 2]
+        "duration_bytes": [
+          1,
+          2
+        ]
       },
       "status_templates": [
         {
@@ -733,11 +736,212 @@
             "min",
             "max"
           ],
-          "unit": "µg/m³",
+          "unit": "\u00b5g/m\u00b3",
           "warning_flag": "warning"
         }
       },
       "status_templates": [],
+      "command_templates": []
+    },
+    {
+      "state_name": "ice_maker_nugget_size",
+      "op_type": "appliance",
+      "identifiers": {
+        "status": {
+          "opcode": "0x05",
+          "payload": "0500",
+          "description": "Reports selected nugget size"
+        },
+        "command": {
+          "opcode": "0x33",
+          "payload": "0500",
+          "description": "Set nugget size preference"
+        }
+      },
+      "parse_options": {
+        "value_map": {
+          "03": "SMALL",
+          "02": "MEDIUM",
+          "01": "LARGE"
+        },
+        "default": "SMALL"
+      },
+      "status_templates": [
+        {
+          "opcode": "0x05",
+          "payload": "0500",
+          "expect_bytes": 3,
+          "notes": "Last byte enumerates nugget size"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_nugget_size",
+          "opcode": "0x33",
+          "payload_template": "05{{ code|format('02X') }}",
+          "description": "Select nugget size for ice production"
+        }
+      ]
+    },
+    {
+      "state_name": "ice_maker_basket_full",
+      "op_type": "appliance",
+      "identifiers": {
+        "status": {
+          "opcode": "0x17",
+          "payload": "1700",
+          "description": "Basket capacity alarm"
+        }
+      },
+      "parse_options": {
+        "byte_index": 3
+      },
+      "status_templates": [
+        {
+          "opcode": "0x17",
+          "payload": "170000",
+          "expect_bytes": 4,
+          "notes": "Fourth byte contains full flag"
+        }
+      ],
+      "command_templates": []
+    },
+    {
+      "state_name": "ice_maker_water_empty",
+      "op_type": "appliance",
+      "identifiers": {
+        "status": {
+          "opcode": "0x17",
+          "payload": "1700",
+          "description": "Water reservoir empty alarm"
+        }
+      },
+      "parse_options": {
+        "byte_index": 3
+      },
+      "status_templates": [
+        {
+          "opcode": "0x17",
+          "payload": "170000",
+          "expect_bytes": 4,
+          "notes": "Fourth byte contains water empty flag"
+        }
+      ],
+      "command_templates": []
+    },
+    {
+      "state_name": "ice_maker_status",
+      "op_type": "appliance",
+      "identifiers": {
+        "status": {
+          "opcode": "0x19",
+          "payload": "1900",
+          "description": "Operational state of the ice maker"
+        },
+        "command": {
+          "opcode": "0x33",
+          "payload": "1900",
+          "description": "Set operational state"
+        }
+      },
+      "parse_options": {
+        "value_map": {
+          "00": "STANDBY",
+          "01": "MAKING_ICE",
+          "02": "FULL",
+          "03": "WASHING",
+          "04": "FINISHED_WASHING",
+          "05": "SCHEDULED"
+        },
+        "default": "STANDBY"
+      },
+      "status_templates": [
+        {
+          "opcode": "0x19",
+          "payload": "1900",
+          "expect_bytes": 3,
+          "notes": "Last byte enumerates status code"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_ice_maker_status",
+          "opcode": "0x33",
+          "payload_template": "19{{ code|format('02X') }}",
+          "description": "Request a specific operating state"
+        }
+      ]
+    },
+    {
+      "state_name": "ice_maker_scheduled_start",
+      "op_type": "appliance",
+      "identifiers": {
+        "status": {
+          "opcode": "0x23",
+          "payload": "2300",
+          "description": "Scheduled start configuration"
+        },
+        "command": {
+          "opcode": "0x33",
+          "payload": "2300",
+          "description": "Configure scheduled start"
+        }
+      },
+      "parse_options": {
+        "fields": [
+          "enabled",
+          "hourStart",
+          "minuteStart",
+          "nuggetSize"
+        ]
+      },
+      "status_templates": [
+        {
+          "opcode": "0x23",
+          "payload": "230000000000",
+          "expect_bytes": 10,
+          "notes": "Payload includes enable flag, delay, epoch seconds and nugget size"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_scheduled_start",
+          "opcode": "0x33",
+          "payload_template": "23{{ payload }}",
+          "description": "Schedule ice production"
+        }
+      ]
+    },
+    {
+      "state_name": "ice_maker_temperature",
+      "op_type": "environment",
+      "identifiers": {
+        "status": {
+          "opcode": "0x10",
+          "payload": "1000",
+          "description": "Ambient temperature inside the ice maker"
+        }
+      },
+      "parse_options": {
+        "measurement": {
+          "fields": [
+            "current"
+          ],
+          "unit": "C",
+          "range": {
+            "min": -20,
+            "max": 60
+          }
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x10",
+          "payload": "10000000",
+          "expect_bytes": 5,
+          "notes": "Second through fourth bytes encode temperature x10000"
+        }
+      ],
       "command_templates": []
     }
   ]

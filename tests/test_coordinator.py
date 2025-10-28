@@ -61,6 +61,7 @@ from custom_components.govee_ultimate.coordinator import (
 )
 from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
+from custom_components.govee_ultimate.device_types.ice_maker import IceMakerDevice
 from custom_components.govee_ultimate.device_types.hygrometer import HygrometerDevice
 from custom_components.govee_ultimate.device_types.presence import PresenceDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
@@ -250,6 +251,32 @@ def test_resolve_factory_selects_air_quality_by_category() -> None:
     assert factory is AirQualityDevice
 
 
+def test_resolve_factory_matches_ice_maker_category() -> None:
+    """Kitchen appliances matching ice maker naming should use IceMakerDevice."""
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=FakeAPIClient([]),
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    metadata = DeviceMetadata(
+        device_id="ice-1",
+        model="H8000",
+        sku="H8000",
+        category="Home Appliances",
+        category_group="Kitchen",
+        device_name="Smart Countertop Ice Maker",
+        manufacturer="Govee",
+        channels={},
+    )
+
+    factory = coordinator._resolve_factory(metadata)
+
+    assert factory is IceMakerDevice
+
+
 def test_resolve_factory_matches_air_quality_model_prefix() -> None:
     """Specific air quality model prefixes should map to AirQualityDevice."""
 
@@ -274,6 +301,32 @@ def test_resolve_factory_matches_air_quality_model_prefix() -> None:
     factory = coordinator._resolve_factory(metadata)
 
     assert factory is AirQualityDevice
+
+
+def test_resolve_factory_matches_ice_maker_model_prefix() -> None:
+    """Ice maker model prefixes should map directly to IceMakerDevice."""
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=FakeAPIClient([]),
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    metadata = DeviceMetadata(
+        device_id="ice-2",
+        model="H7172",
+        sku="H7172",
+        category="Unknown",
+        category_group="",
+        device_name="Countertop Ice Maker",
+        manufacturer="Govee",
+        channels={},
+    )
+
+    factory = coordinator._resolve_factory(metadata)
+
+    assert factory is IceMakerDevice
 
 
 def test_resolve_factory_matches_hygrometer_model_prefix() -> None:

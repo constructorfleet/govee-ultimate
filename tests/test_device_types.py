@@ -7,6 +7,7 @@ import pytest
 from custom_components.govee_ultimate.device_types.base import EntityCategory
 from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
+from custom_components.govee_ultimate.device_types.ice_maker import IceMakerDevice
 from custom_components.govee_ultimate.device_types.hygrometer import HygrometerDevice
 from custom_components.govee_ultimate.device_types.presence import PresenceDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
@@ -32,6 +33,13 @@ from custom_components.govee_ultimate.state.states import (
     ControlLockState,
     DisplayScheduleState,
     DiyModeState,
+    IceMakerBasketFullState,
+    IceMakerMakingIceState,
+    IceMakerNuggetSizeState,
+    IceMakerScheduledStartState,
+    IceMakerStatusState,
+    IceMakerTemperatureState,
+    IceMakerWaterEmptyState,
     FilterExpiredState,
     FilterLifeState,
     AirQualityHumidityState,
@@ -185,6 +193,19 @@ def presence_sensor_model() -> MockDeviceModel:
     )
 
 
+@pytest.fixture
+def ice_maker_model() -> MockDeviceModel:
+    """Return metadata for a countertop ice maker."""
+
+    return MockDeviceModel(
+        model="H7172",
+        sku="H7172",
+        category="Home Appliances",
+        category_group="Kitchen",
+        model_name="Smart Countertop Ice Maker",
+    )
+
+
 def test_presence_device_registers_presence_states_and_entities(
     presence_sensor_model: MockDeviceModel,
 ) -> None:
@@ -288,6 +309,54 @@ def test_presence_enable_switches_forward_commands(
     assert biological_payload["command_id"] == biological_commands[0]
     assert biological_payload["command"] == "multi_sync"
     assert enable_state.command_queue.empty()
+
+
+def test_ice_maker_device_registers_states_and_entities(
+    ice_maker_model: MockDeviceModel,
+) -> None:
+    """Ice maker devices should expose specialised states and entities."""
+
+    device = IceMakerDevice(ice_maker_model)
+
+    states = device.states
+    assert isinstance(states["power"], PowerState)
+    assert isinstance(states["isConnected"], ConnectedState)
+    assert isinstance(states["active"], ActiveState)
+    assert isinstance(states["temperature"], IceMakerTemperatureState)
+    assert isinstance(states["nuggetSize"], IceMakerNuggetSizeState)
+    assert isinstance(states["basketFull"], IceMakerBasketFullState)
+    assert isinstance(states["waterShortage"], IceMakerWaterEmptyState)
+    assert isinstance(states["iceMakerStatus"], IceMakerStatusState)
+    assert isinstance(states["scheduledStart"], IceMakerScheduledStartState)
+    assert isinstance(states["makeIce"], IceMakerMakingIceState)
+    assert states["water_shortage"] is states["waterShortage"]
+
+    entities = device.home_assistant_entities
+    assert entities["power"].platform == "switch"
+
+    connected_entity = entities["isConnected"]
+    assert connected_entity.platform == "binary_sensor"
+    assert connected_entity.entity_category is EntityCategory.DIAGNOSTIC
+
+    active_entity = entities["active"]
+    assert active_entity.platform == "binary_sensor"
+    assert active_entity.entity_category is EntityCategory.DIAGNOSTIC
+
+    basket_entity = entities["basketFull"]
+    assert basket_entity.platform == "binary_sensor"
+    assert basket_entity.entity_category is EntityCategory.DIAGNOSTIC
+
+    water_entity = entities["waterShortage"]
+    assert water_entity.platform == "binary_sensor"
+    assert water_entity.entity_category is EntityCategory.DIAGNOSTIC
+
+    status_entity = entities["iceMakerStatus"]
+    assert status_entity.platform == "sensor"
+    assert status_entity.entity_category is None
+
+    temperature_entity = entities["temperature"]
+    assert temperature_entity.platform == "sensor"
+    assert temperature_entity.entity_category is EntityCategory.DIAGNOSTIC
 
 
 def test_hygrometer_registers_expected_states_and_entities(

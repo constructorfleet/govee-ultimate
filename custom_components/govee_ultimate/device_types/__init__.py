@@ -2,6 +2,7 @@
 
 from .air_quality import AirQualityDevice
 from .humidifier import HumidifierDevice
+from .ice_maker import IceMakerDevice
 from .hygrometer import HygrometerDevice
 from .presence import PresenceDevice
 from .purifier import PurifierDevice
@@ -16,4 +17,5 @@ __all__ = [
     "AirQualityDevice",
     "HygrometerDevice",
     "PresenceDevice",
+    "IceMakerDevice",
 ]
