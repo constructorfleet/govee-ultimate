@@ -82,3 +82,23 @@ def test_pydantic_dependency_reports_v2_version():
     import pydantic
 
     assert pydantic.version.VERSION.startswith("2."), pydantic.version.VERSION
+
+
+def test_air_quality_catalog_entries_document_measurements() -> None:
+    """Air quality states should describe their measurement payload layout."""
+
+    catalog = load_state_catalog()
+
+    temperature_entry = catalog.get_state("air_quality_temperature")
+    assert temperature_entry.parse_options["measurement"]["fields"] == [
+        "current",
+        "calibration",
+        "min",
+        "max",
+    ]
+
+    humidity_entry = catalog.get_state("air_quality_humidity")
+    assert humidity_entry.parse_options["measurement"]["range"]["max"] == 100
+
+    pm_entry = catalog.get_state("air_quality_pm25")
+    assert pm_entry.parse_options["measurement"]["warning_flag"] == "warning"

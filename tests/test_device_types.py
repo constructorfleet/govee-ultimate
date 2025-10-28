@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from custom_components.govee_ultimate.device_types.base import EntityCategory
+from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
@@ -24,6 +25,9 @@ from custom_components.govee_ultimate.state.states import (
     DiyModeState,
     FilterExpiredState,
     FilterLifeState,
+    AirQualityHumidityState,
+    AirQualityPM25State,
+    AirQualityTemperatureState,
     HumidityState,
     LightEffectState,
     MicModeState,
@@ -131,6 +135,19 @@ def purifier_model_h7126() -> MockDeviceModel:
         category="Home Appliances",
         category_group="Air Treatment",
         model_name="H7126 Purifier",
+    )
+
+
+@pytest.fixture
+def air_quality_model() -> MockDeviceModel:
+    """Return metadata for an air quality monitor."""
+
+    return MockDeviceModel(
+        model="H6601",
+        sku="H6601",
+        category="Air Quality Monitor",
+        category_group="Air Quality",
+        model_name="Air Quality Monitor",
     )
 
 
@@ -406,3 +423,26 @@ def test_purifier_fan_speed_respects_active_modes(
 
     device.mode_state.activate("auto_mode")
     assert fan_speed.set_state(1) == []
+
+
+def test_air_quality_device_registers_environment_states(
+    air_quality_model: MockDeviceModel,
+) -> None:
+    """Air quality devices should expose power and measurement states."""
+
+    device = AirQualityDevice(air_quality_model)
+
+    states = device.states
+    assert {"power", "isConnected", "temperature", "humidity", "pm25"} <= set(states)
+    assert isinstance(states["power"], PowerState)
+    assert isinstance(states["isConnected"], ConnectedState)
+    assert isinstance(states["temperature"], AirQualityTemperatureState)
+    assert isinstance(states["humidity"], AirQualityHumidityState)
+    assert isinstance(states["pm25"], AirQualityPM25State)
+
+    ha_entities = device.home_assistant_entities
+    assert ha_entities["power"].platform == "switch"
+    assert ha_entities["isConnected"].platform == "binary_sensor"
+    assert ha_entities["temperature"].platform == "sensor"
+    assert ha_entities["humidity"].platform == "sensor"
+    assert ha_entities["pm25"].platform == "sensor"
