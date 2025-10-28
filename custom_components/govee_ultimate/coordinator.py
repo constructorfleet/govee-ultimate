@@ -17,6 +17,7 @@ from . import DOMAIN
 from .device_types.base import BaseDevice
 from .device_types.humidifier import HumidifierDevice
 from .device_types.purifier import PurifierDevice
+from .device_types.rgb_light import RGBLightDevice
 from .device_types.rgbic_light import RGBICLightDevice
 
 
@@ -232,8 +233,15 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                 return factory
 
         group = metadata.category_group.lower()
-        if "rgbic" in group or "light" in group:
+        category = metadata.category.lower()
+        if "rgbic" in group or "rgbic" in category:
             return RGBICLightDevice
+
+        light_keywords = ("light", "lighting", "lamp")
+        if any(keyword in group for keyword in light_keywords) or any(
+            keyword in category for keyword in light_keywords
+        ):
+            return RGBLightDevice
         return None
 
     def async_schedule_refresh(
@@ -474,4 +482,5 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 _MODEL_PREFIX_FACTORIES: tuple[tuple[str, type[BaseDevice]], ...] = (
     ("H714", HumidifierDevice),
     ("H712", PurifierDevice),
+    ("H600", RGBLightDevice),
 )

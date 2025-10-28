@@ -7,10 +7,13 @@ import pytest
 from custom_components.govee_ultimate.device_types.base import EntityCategory
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
+from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
 from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
 from custom_components.govee_ultimate.state import (
+    ActiveState,
     BrightnessState,
     ColorRGBState,
+    ConnectedState,
     ModeState,
     PowerState,
 )
@@ -26,6 +29,7 @@ from custom_components.govee_ultimate.state.states import (
     MicModeState,
     NightLightState,
     SegmentColorState,
+    SceneModeState,
     TimerState,
     WaterShortageState,
 )
@@ -50,6 +54,19 @@ class MockDeviceModel:
         self.category = category
         self.category_group = category_group
         self.model_name = model_name
+
+
+@pytest.fixture
+def rgb_light_device_model() -> MockDeviceModel:
+    """Return a device model matching a standard RGB light."""
+
+    return MockDeviceModel(
+        model="H6003",
+        sku="H6003",
+        category="LED Strip Light",
+        category_group="RGB Strip Lights",
+        model_name="Govee RGB Light",
+    )
 
 
 @pytest.fixture
@@ -164,6 +181,48 @@ def test_rgbic_light_registers_expected_states(
         states["colorTemperature"],
         states["segmentColor"],
     }
+
+
+def test_rgb_light_registers_expected_states(
+    rgb_light_device_model: MockDeviceModel,
+) -> None:
+    """RGB devices should expose the expected core light states."""
+
+    device = RGBLightDevice(rgb_light_device_model)
+
+    states = device.states
+    assert {
+        "power",
+        "isConnected",
+        "active",
+        "brightness",
+        "color",
+        "colorTemperature",
+        "sceneMode",
+    } <= set(states)
+    assert isinstance(states["power"], PowerState)
+    assert isinstance(states["isConnected"], ConnectedState)
+    assert isinstance(states["active"], ActiveState)
+    assert isinstance(states["brightness"], BrightnessState)
+    assert isinstance(states["color"], ColorRGBState)
+    assert isinstance(states["colorTemperature"], ColorTemperatureState)
+    assert isinstance(states["sceneMode"], SceneModeState)
+
+    light_entities = device.light_entities
+    assert light_entities.primary is states["power"]
+    assert set(light_entities.supporting) == {
+        states["brightness"],
+        states["color"],
+        states["colorTemperature"],
+    }
+
+    ha_entities = device.home_assistant_entities
+    assert ha_entities["power"].platform == "light"
+    assert ha_entities["brightness"].platform == "light"
+    assert ha_entities["color"].platform == "light"
+    assert ha_entities["colorTemperature"].platform == "light"
+    assert ha_entities["isConnected"].platform == "binary_sensor"
+    assert ha_entities["active"].platform == "binary_sensor"
 
 
 def test_device_states_expose_home_assistant_entities(
