@@ -23,10 +23,12 @@ from .states import (
     NightLightState,
     SegmentColorState,
     TimerState,
+    TemperatureState,
     FilterLifeState,
     FilterExpiredState,
     WaterShortageState,
     PowerState,
+    UnknownState,
 )
 
 __all__ = [
@@ -53,9 +55,11 @@ __all__ = [
     "MicModeState",
     "DiyModeState",
     "TimerState",
+    "TemperatureState",
     "FilterLifeState",
     "FilterExpiredState",
     "WaterShortageState",
+    "UnknownState",
 ]
 
 _ensure_loop()
