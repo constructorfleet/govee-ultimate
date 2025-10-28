@@ -205,6 +205,137 @@ class ControlLockState(DeviceOpState[bool | None]):
         }
 
 
+class HumidityState(DeviceState[int | None]):
+    """Report the current ambient humidity percentage."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the humidity sensor state handler."""
+
+        super().__init__(device=device, name="humidity", initial_value=None)
+
+    def parse(self, data: dict[str, Any]) -> None:
+        """Parse humidity readings from nested state payloads."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return
+        candidates = [state_section]
+        inner = state_section.get("state")
+        if isinstance(inner, Mapping):
+            candidates.append(inner)
+        for mapping in candidates:
+            value = mapping.get("humidity")
+            humidity = _int_from_value(value)
+            if humidity is None:
+                continue
+            if 0 <= humidity <= 100:
+                self._update_state(humidity)
+            return
+
+
+class TimerState(DeviceOpState[bool | None]):
+    """Toggle the purifier timer on or off via opcode commands."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        identifier: Sequence[int] | None = None,
+        op_type: int = _REPORT_OPCODE,
+    ) -> None:
+        """Initialise the timer handler with optional opcode metadata."""
+
+        identifiers = list(identifier) if identifier is not None else []
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="timer",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Interpret opcode payloads as timer toggles."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        flag = payload[0]
+        if flag in (0x00, 0x01):
+            self._update_state(flag == 0x01)
+
+    def _state_to_command(self, next_state: bool | None):
+        """Translate timer requests into multi-sync commands."""
+
+        value = _bool_from_value(next_state)
+        if value is None:
+            return None
+        if not self._identifier:
+            return None
+        byte_value = 0x01 if value else 0x00
+        frame = _opcode_frame(0x33, *self._identifier, byte_value)
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {
+                "op": {
+                    "command": [
+                        [_REPORT_OPCODE, *self._identifier, byte_value],
+                    ]
+                }
+            },
+        }
+
+
+class FilterLifeState(DeviceState[int | None]):
+    """Expose purifier filter life remaining as a percentage."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the filter life sensor wrapper."""
+
+        super().__init__(device=device, name="filterLife", initial_value=None)
+
+    def parse(self, data: dict[str, Any]) -> None:
+        """Parse numeric filter life values from state payloads."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return
+        value = state_section.get("filterLife")
+        if value is None:
+            value = state_section.get("filter_life")
+        life = _int_from_value(value)
+        if life is None:
+            return
+        if 0 <= life <= 100:
+            self._update_state(life)
+
+
+class FilterExpiredState(DeviceState[bool | None]):
+    """Report whether the purifier filter has expired."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the filter expiration status sensor."""
+
+        super().__init__(device=device, name="filterExpired", initial_value=None)
+
+    def parse(self, data: dict[str, Any]) -> None:
+        """Parse expiration flags from state payloads."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return
+        value = state_section.get("filterExpired")
+        if value is None:
+            value = state_section.get("filter_expired")
+        flag = _bool_from_value(value)
+        if flag is not None:
+            self._update_state(flag)
+
+
 class DisplayScheduleState(DeviceOpState[dict[str, Any]]):
     """Handle scheduling for device display panels."""
 
@@ -972,3 +1103,139 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
             "command": command,
             "status": _status_payload("color", channels, status_sequence),
         }
+
+
+class ColorTemperatureState(DeviceState[int | None]):
+    """Represent the color temperature setting for supported lights."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        minimum: int = 2000,
+        maximum: int = 9000,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the color temperature state wrapper."""
+
+        super().__init__(
+            device=device,
+            name="colorTemperature",
+            initial_value=None,
+            parse_option=ParseOption.NONE,
+        )
+        self._minimum = minimum
+        self._maximum = maximum
+        self._identifier = list(identifier) if identifier is not None else []
+
+    def set_state(self, next_state: Any) -> list[str]:
+        """Update the stored color temperature when ``next_state`` is valid."""
+
+        value = _int_from_value(next_state)
+        if value is None:
+            return []
+        if value < self._minimum or value > self._maximum:
+            return []
+        self._update_state(value)
+        return [self.name]
+
+
+class SegmentColorState(DeviceState[list[int] | None]):
+    """Expose segment-based RGB values for RGBIC devices."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the segment colour tracker."""
+
+        super().__init__(
+            device=device,
+            name="segmentColor",
+            initial_value=None,
+            parse_option=ParseOption.NONE,
+        )
+        self._identifier = list(identifier) if identifier is not None else []
+
+    def set_state(self, next_state: Any) -> list[str]:
+        """Update segment colours when the payload is well-formed."""
+
+        if not isinstance(next_state, list | tuple):
+            return []
+        values: list[int] = []
+        for value in next_state:
+            numeric = _int_from_value(value)
+            if numeric is None or not 0 <= numeric <= 255:
+                return []
+            values.append(numeric)
+        if len(values) % 3 != 0:
+            return []
+        self._update_state(values)
+        return [self.name]
+
+
+class _IdentifierStringState(DeviceState[str | None]):
+    """Base class for identifier-backed string states."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        name: str,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the identifier-tracked string state."""
+
+        super().__init__(
+            device=device,
+            name=name,
+            initial_value=None,
+            parse_option=ParseOption.NONE,
+        )
+        self._identifier = list(identifier) if identifier is not None else []
+
+    def set_state(self, next_state: Any) -> list[str]:
+        """Persist string values after normalising whitespace."""
+
+        if not isinstance(next_state, str):
+            return []
+        value = next_state.strip()
+        if not value:
+            return []
+        self._update_state(value)
+        return [self.name]
+
+
+class LightEffectState(_IdentifierStringState):
+    """Represent the active light effect mode."""
+
+    def __init__(
+        self, *, device: object, identifier: Sequence[int] | None = None
+    ) -> None:
+        """Initialise the light effect selector."""
+
+        super().__init__(device=device, name="lightEffect", identifier=identifier)
+
+
+class MicModeState(_IdentifierStringState):
+    """Track the active microphone reactive mode."""
+
+    def __init__(
+        self, *, device: object, identifier: Sequence[int] | None = None
+    ) -> None:
+        """Initialise the microphone mode selector."""
+
+        super().__init__(device=device, name="micMode", identifier=identifier)
+
+
+class DiyModeState(_IdentifierStringState):
+    """Manage DIY scene selections for RGBIC lights."""
+
+    def __init__(
+        self, *, device: object, identifier: Sequence[int] | None = None
+    ) -> None:
+        """Initialise the DIY mode selector."""
+
+        super().__init__(device=device, name="diyMode", identifier=identifier)

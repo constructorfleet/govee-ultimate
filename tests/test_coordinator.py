@@ -422,7 +422,7 @@ async def test_discovery_registers_home_assistant_entities() -> None:
     device_entry, _ = device_registry.created[0]
 
     unique_ids = {entry["unique_id"] for entry in entity_registry.created}
-    assert {"device-1-power", "device-1-mist_level"} <= unique_ids
+    assert {"device-1-power", "device-1-mistLevel"} <= unique_ids
 
     power_entry = next(
         entry
@@ -735,7 +735,7 @@ async def test_event_processing_updates_device_state() -> None:
 
     device = coordinator.devices["device-1"]
     assert device.states["power"].value is True
-    assert device.states["water_shortage"].value is False
+    assert device.states["waterShortage"].value is False
     assert set(updated) >= {"power", "water_shortage"}
 
 
