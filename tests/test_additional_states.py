@@ -9,6 +9,8 @@ from custom_components.govee_ultimate.state.states import (
     ControlLockState,
     DisplayScheduleState,
     NightLightState,
+    TemperatureState,
+    UnknownState,
 )
 
 
@@ -31,6 +33,13 @@ def connected_state(device: DummyDevice) -> ConnectedState:
     """Return a connected state bound to a dummy device."""
 
     return ConnectedState(device=device)
+
+
+@pytest.fixture
+def temperature_state(device: DummyDevice) -> TemperatureState:
+    """Return a temperature state bound to a dummy device."""
+
+    return TemperatureState(device=device)
 
 
 def _next_command(state) -> dict:
@@ -103,6 +112,13 @@ def control_lock_state(device: DummyDevice) -> ControlLockState:
     """Return a control lock state bound to a dummy device."""
 
     return ControlLockState(device=device, identifier=[0x0A])
+
+
+@pytest.fixture
+def unknown_state(device: DummyDevice) -> UnknownState:
+    """Return an unknown state bound to a dummy device."""
+
+    return UnknownState(device=device, op_type=0xAA, identifier=[0x0B])
 
 
 def test_control_lock_state_parses_opcode_payload(
@@ -209,6 +225,115 @@ def test_display_schedule_state_emits_command_and_history(
 
     display_schedule_state.previous_state()
     assert display_schedule_state.value["on"] is True
+
+
+def test_temperature_state_parses_measurement_payload(
+    temperature_state: TemperatureState,
+) -> None:
+    """Temperature state normalises calibration and current measurements."""
+
+    temperature_state.parse(
+        {
+            "state": {
+                "temperature": {
+                    "calibration": 150,
+                    "current": 235,
+                    "min": 0,
+                    "max": 50,
+                }
+            }
+        }
+    )
+
+    assert temperature_state.value["calibration"] == pytest.approx(1.5)
+    assert temperature_state.value["current"] == pytest.approx(2.35)
+    assert temperature_state.value["raw"] == pytest.approx(0.85)
+    assert temperature_state.value["range"] == {"min": 0, "max": 50}
+
+
+def test_temperature_state_reuses_previous_values_when_missing_fields(
+    temperature_state: TemperatureState,
+) -> None:
+    """Temperature state falls back to previous calibration and range data."""
+
+    temperature_state.parse(
+        {
+            "state": {
+                "temperature": {
+                    "calibration": 1.5,
+                    "current": 23.5,
+                    "min": 0,
+                    "max": 50,
+                }
+            }
+        }
+    )
+
+    temperature_state.parse({"state": {"temperature": {"current": 280}}})
+
+    assert temperature_state.value["calibration"] == pytest.approx(1.5)
+    assert temperature_state.value["current"] == pytest.approx(2.8)
+    assert temperature_state.value["raw"] == pytest.approx(1.3)
+    assert temperature_state.value["range"] == {"min": 0, "max": 50}
+
+
+def test_temperature_state_rejects_values_outside_range(
+    temperature_state: TemperatureState,
+) -> None:
+    """Temperature state ignores updates that violate configured ranges."""
+
+    temperature_state.parse(
+        {
+            "state": {
+                "temperature": {
+                    "calibration": 1.0,
+                    "current": 25.0,
+                    "min": 0,
+                    "max": 40,
+                }
+            }
+        }
+    )
+
+    previous_value = dict(temperature_state.value)
+
+    temperature_state.parse(
+        {
+            "state": {
+                "temperature": {
+                    "current": 6000,
+                    "min": 0,
+                    "max": 40,
+                }
+            }
+        }
+    )
+
+    assert temperature_state.value == previous_value
+
+
+def test_temperature_state_is_not_commandable(
+    temperature_state: TemperatureState,
+) -> None:
+    """Temperature state does not emit commands when set manually."""
+
+    assert temperature_state.set_state({}) == []
+
+
+def test_unknown_state_parses_opcode_payload(
+    unknown_state: UnknownState,
+) -> None:
+    """Unknown state records the raw opcode payload it receives."""
+
+    unknown_state.parse({"op": {"command": [[0xAA, 0x0B, 0x01, 0x02]]}})
+
+    assert unknown_state.value == {"codes": [0xAA, 0x0B, 0x01, 0x02]}
+
+
+def test_unknown_state_is_not_commandable(unknown_state: UnknownState) -> None:
+    """Unknown state ignores manual set requests."""
+
+    assert unknown_state.set_state({}) == []
 
 
 @pytest.fixture

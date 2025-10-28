@@ -277,6 +277,89 @@ class HumidityState(DeviceState[int | None]):
             return
 
 
+class TemperatureState(DeviceOpState[dict[str, Any]]):
+    """Expose ambient temperature measurements with calibration details."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        op_type: int | None = None,
+        identifier: Sequence[int] | None = None,
+        parse_option: ParseOption = ParseOption.STATE,
+    ) -> None:
+        """Initialise the temperature state handler."""
+
+        identifiers = list(identifier or [])
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="temperature",
+            initial_value={},
+            parse_option=parse_option,
+        )
+
+    def parse_state(self, data: dict[str, Any]) -> None:
+        """Normalise measurement payloads into calibrated readings."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return
+        measurement = state_section.get("temperature")
+        if not isinstance(measurement, Mapping):
+            return
+        previous = self.value if isinstance(self.value, Mapping) else {}
+        previous_range = previous.get("range")
+        if not isinstance(previous_range, Mapping):
+            previous_range = {}
+        prev_min = previous_range.get("min")
+        prev_max = previous_range.get("max")
+        calibration = self._measurement_value(
+            measurement.get("calibration"), previous.get("calibration")
+        )
+        current = self._measurement_value(
+            measurement.get("current"), previous.get("current")
+        )
+        if current is None:
+            return
+        min_value = self._range_value(measurement.get("min"), prev_min)
+        max_value = self._range_value(measurement.get("max"), prev_max)
+        if min_value is not None and current < min_value:
+            return
+        if max_value is not None and current > max_value:
+            return
+        range_value = None
+        if min_value is not None and max_value is not None:
+            range_value = {"min": min_value, "max": max_value}
+        raw = current - calibration if calibration is not None else current
+        next_state: dict[str, Any] = {"current": current, "raw": raw}
+        if calibration is not None:
+            next_state["calibration"] = calibration
+        if range_value is not None:
+            next_state["range"] = range_value
+        self._update_state(next_state)
+
+    def _measurement_value(
+        self, candidate: Any, previous: float | None
+    ) -> float | None:
+        numeric = _float_from_value(candidate)
+        if numeric is None:
+            return previous
+        if numeric > 100:
+            numeric /= 100
+        return numeric
+
+    def _range_value(
+        self, candidate: Any, previous: float | int | None
+    ) -> float | int | None:
+        numeric = _float_from_value(candidate)
+        if numeric is None:
+            return previous
+        if numeric.is_integer():
+            return int(numeric)
+        return numeric
+
+
 class TimerState(DeviceOpState[bool | None]):
     """Represent the configured countdown timer for supported devices."""
 
@@ -1043,6 +1126,13 @@ def _int_from_value(value: Any) -> int | None:
         return None
 
 
+def _float_from_value(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class PowerState(DeviceOpState[bool | None]):
     """Boolean power state that uses catalogue metadata."""
 
@@ -1412,3 +1502,31 @@ class DiyModeState(_IdentifierStringState):
         """Initialise the DIY mode selector."""
 
         super().__init__(device=device, name="diyMode", identifier=identifier)
+
+
+class UnknownState(DeviceOpState[dict[str, Any]]):
+    """Record raw opcode payloads that do not map to known states."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        op_type: int = _REPORT_OPCODE,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the unknown state handler for passthrough data."""
+
+        identifiers = list(identifier) if identifier is not None else []
+        name_suffix = ",".join(str(value) for value in identifiers)
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name=f"unknown-{name_suffix}",
+            initial_value={},
+            parse_option=ParseOption.OP_CODE,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Persist the opcode payload for inspection."""
+
+        self._update_state({"codes": list(op_command)})
