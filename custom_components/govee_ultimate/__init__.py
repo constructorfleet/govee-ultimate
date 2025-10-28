@@ -79,6 +79,7 @@ SERVICE_REAUTHENTICATE = "reauthenticate"
 TOKEN_REFRESH_INTERVAL = timedelta(minutes=5)
 
 _REAUTH_SERVICE_REGISTERED = False
+_SERVICES_KEY = f"{DOMAIN}_services_registered"
 
 if httpx is not None:  # pragma: no branch - defined when httpx is available
     HTTP_ERROR = httpx.HTTPError
@@ -165,7 +166,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
 
     refresh_unsub = _schedule_token_refresh(hass, auth, entry)
 
-    domain_data[entry.entry_id] = {
+    entry_state = {
         "http_client": http_client,
         "auth": auth,
         "api_client": api_client,
@@ -173,9 +174,8 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
         "iot_client": iot_client,
         "tokens": tokens,
         "refresh_unsub": refresh_unsub,
+        "config_entry": entry,
     }
-    token_refresh_cancel = _schedule_token_refresh(hass, entry, auth, entry_state)
-    entry_state["token_refresh_cancel"] = token_refresh_cancel
     domain_data[entry.entry_id] = entry_state
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -228,6 +228,45 @@ def _create_http_client() -> Any:
     return httpx.AsyncClient(base_url=API_BASE_URL)
 
 
+class _BaseUrlAsyncClient:
+    """Wrap an async client to ensure relative URLs resolve against the base URL."""
+
+    def __init__(self, client: Any, base_url: str) -> None:
+        self._client = client
+        self._base_url = httpx.URL(base_url) if httpx is not None else base_url
+
+    @property
+    def base_url(self) -> Any:
+        return self._base_url
+
+    def _prepare_url(self, url: Any) -> Any:
+        if httpx is None:
+            if isinstance(url, str) and url.startswith("/"):
+                return f"{self._base_url}{url}"
+            return url
+        return httpx.URL(url, base_url=self._base_url)
+
+    async def request(self, method: str, url: Any, *args: Any, **kwargs: Any) -> Any:
+        return await self._client.request(
+            method, self._prepare_url(url), *args, **kwargs
+        )
+
+    async def post(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+        return await self.request("POST", url, *args, **kwargs)
+
+    async def get(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+        return await self.request("GET", url, *args, **kwargs)
+
+    async def aclose(self) -> Any:
+        close = getattr(self._client, "aclose", None)
+        if callable(close):
+            return await close()
+        return None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+
 async def _async_get_http_client(hass: Any) -> Any:
     """Return an HTTP client, preferring the Home Assistant helper when available."""
 
@@ -237,6 +276,12 @@ async def _async_get_http_client(hass: Any) -> Any:
             client = getter(hass, verify_ssl=True)
             if asyncio.iscoroutine(client):
                 client = await client
+            if isinstance(client, _BaseUrlAsyncClient):
+                return client
+            if httpx is not None:
+                base_url = getattr(client, "base_url", None)
+                if not base_url or str(base_url) in {"", "/"}:
+                    return _BaseUrlAsyncClient(client, API_BASE_URL)
             return client
 
     return _create_http_client()
@@ -369,39 +414,6 @@ def _get_flow_init_callable(hass: Any) -> Any:
         msg = "Config flow helper unavailable"
         raise TypeError(msg)
     return flow
-
-
-def _schedule_token_refresh(hass: Any, entry: Any, auth: Any, entry_state: dict[str, Any]) -> Any:
-    """Periodically refresh access tokens via Home Assistant's event loop."""
-
-    loop = getattr(hass, "loop", None) or asyncio.get_event_loop()
-    handle: asyncio.TimerHandle | None = None
-
-    async def _refresh() -> None:
-        try:
-            await auth.async_get_access_token()
-        except Exception as exc:  # pragma: no cover - defensive, surfaced via services
-            if _is_http_error(exc):
-                await _async_perform_reauth(hass, entry, auth, entry_state)
-        finally:
-            _arm()
-
-    def _arm() -> None:
-        nonlocal handle
-        handle = loop.call_later(TOKEN_REFRESH_INTERVAL, _tick)
-
-    def _tick() -> None:
-        hass.async_create_task(_refresh())
-
-    _arm()
-
-    def _cancel() -> None:
-        nonlocal handle
-        if handle is not None:
-            handle.cancel()
-            handle = None
-
-    return _cancel
 
 
 _REGISTRY_STUB = _RegistryStub()

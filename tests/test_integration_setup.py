@@ -346,15 +346,14 @@ async def test_async_setup_entry_uses_httpx_helper(
         raising=False,
     )
 
-    monkeypatch.setattr(
-        integration, "_get_auth_class", lambda: FakeAuth, raising=False
-    )
+    monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
     monkeypatch.setattr(
         integration, "_get_device_client_class", lambda: FakeApiClient, raising=False
     )
     monkeypatch.setattr(
         integration, "_get_coordinator_class", lambda: FakeCoordinator, raising=False
     )
+
     async def _prepare_iot(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
         return None, False, False, False
 
@@ -452,15 +451,14 @@ async def test_async_setup_entry_requests_tokens_when_missing(
         async def async_config_entry_first_refresh(self) -> None:
             pass
 
-    monkeypatch.setattr(
-        integration, "_get_auth_class", lambda: FakeAuth, raising=False
-    )
+    monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
     monkeypatch.setattr(
         integration, "_get_device_client_class", lambda: FakeApiClient, raising=False
     )
     monkeypatch.setattr(
         integration, "_get_coordinator_class", lambda: FakeCoordinator, raising=False
     )
+
     async def _prepare_iot(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
         return None, False, False, False
 
@@ -472,7 +470,10 @@ async def test_async_setup_entry_requests_tokens_when_missing(
     )
 
     hass.flow_results.append(
-        {"type": "create_entry", "data": {"email": "user@example.com", "password": "secret"}}
+        {
+            "type": "create_entry",
+            "data": {"email": "user@example.com", "password": "secret"},
+        }
     )
 
     assert await integration.async_setup_entry(hass, entry) is True
@@ -536,15 +537,14 @@ async def test_async_setup_entry_schedules_token_refresh(
         async def async_config_entry_first_refresh(self) -> None:
             pass
 
-    monkeypatch.setattr(
-        integration, "_get_auth_class", lambda: FakeAuth, raising=False
-    )
+    monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
     monkeypatch.setattr(
         integration, "_get_device_client_class", lambda: FakeApiClient, raising=False
     )
     monkeypatch.setattr(
         integration, "_get_coordinator_class", lambda: FakeCoordinator, raising=False
     )
+
     async def _prepare_iot(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
         return None, False, False, False
 
@@ -555,33 +555,21 @@ async def test_async_setup_entry_schedules_token_refresh(
         raising=False,
     )
 
-    scheduled: list[dict[str, Any]] = []
-
-    def _fake_call_later(delay: float, callback: Any, *args: Any) -> Any:
-        handle = SimpleNamespace(cancelled=False)
-
-        def _cancel() -> None:
-            handle.cancelled = True
-
-        handle.cancel = _cancel  # type: ignore[attr-defined]
-        scheduled.append({"delay": delay, "callback": callback, "args": args, "handle": handle})
-        return handle
-
-    monkeypatch.setattr(hass.loop, "call_later", _fake_call_later, raising=False)
-
     assert await integration.async_setup_entry(hass, entry) is True
     stored = hass.data[DOMAIN][entry.entry_id]
-    cancel_refresh = stored.get("token_refresh_cancel")
+    cancel_refresh = stored.get("refresh_unsub")
     assert callable(cancel_refresh)
-    assert scheduled and scheduled[0]["delay"] == integration.TOKEN_REFRESH_INTERVAL
+    tracked = hass.tracked_interval
+    assert tracked is not None
+    refresh_action, interval = tracked
+    assert interval == integration.TOKEN_REFRESH_INTERVAL
 
-    scheduled[0]["callback"](*scheduled[0]["args"])
-    await asyncio.sleep(0)
+    await refresh_action(None)
     assert stored["auth"].access_calls == 1
-    assert len(scheduled) >= 2
+    assert hass.tracked_interval is not None
 
     await integration.async_unload_entry(hass, entry)
-    assert scheduled[-1]["handle"].cancelled is True
+    assert hass.tracked_interval is None
 
 
 @pytest.mark.asyncio
@@ -635,15 +623,14 @@ async def test_async_setup_entry_registers_reauth_service(
         async def async_config_entry_first_refresh(self) -> None:
             pass
 
-    monkeypatch.setattr(
-        integration, "_get_auth_class", lambda: FakeAuth, raising=False
-    )
+    monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
     monkeypatch.setattr(
         integration, "_get_device_client_class", lambda: FakeApiClient, raising=False
     )
     monkeypatch.setattr(
         integration, "_get_coordinator_class", lambda: FakeCoordinator, raising=False
     )
+
     async def _prepare_iot(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
         return None, False, False, False
 
@@ -659,7 +646,10 @@ async def test_async_setup_entry_registers_reauth_service(
     assert (DOMAIN, service_name) in hass.registered_services
 
     hass.flow_results.append(
-        {"type": "create_entry", "data": {"email": "service@example.com", "password": "servpass"}}
+        {
+            "type": "create_entry",
+            "data": {"email": "service@example.com", "password": "servpass"},
+        }
     )
 
     await hass.services.async_call(
@@ -717,9 +707,7 @@ async def test_async_setup_entry_skips_credentials_when_tokens_attr_missing(
     monkeypatch.setattr(
         integration, "httpx", SimpleNamespace(AsyncClient=FakeClient), raising=False
     )
-    monkeypatch.setattr(
-        integration, "_get_auth_class", lambda: FakeAuth, raising=False
-    )
+    monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
     monkeypatch.setattr(
         integration, "_get_device_client_class", lambda: FakeApiClient, raising=False
     )
@@ -816,15 +804,14 @@ async def test_token_refresh_http_error_triggers_reauth(
         async def async_config_entry_first_refresh(self) -> None:
             pass
 
-    monkeypatch.setattr(
-        integration, "_get_auth_class", lambda: FakeAuth, raising=False
-    )
+    monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
     monkeypatch.setattr(
         integration, "_get_device_client_class", lambda: FakeApiClient, raising=False
     )
     monkeypatch.setattr(
         integration, "_get_coordinator_class", lambda: FakeCoordinator, raising=False
     )
+
     async def _prepare_iot(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
         return None, False, False, False
 
@@ -835,29 +822,23 @@ async def test_token_refresh_http_error_triggers_reauth(
         raising=False,
     )
 
-    scheduled: list[dict[str, Any]] = []
-
-    def _fake_call_later(delay: float, callback: Any, *args: Any) -> Any:
-        handle = SimpleNamespace(cancelled=False)
-
-        def _cancel() -> None:
-            handle.cancelled = True
-
-        handle.cancel = _cancel  # type: ignore[attr-defined]
-        scheduled.append({"delay": delay, "callback": callback, "args": args, "handle": handle})
-        return handle
-
-    monkeypatch.setattr(hass.loop, "call_later", _fake_call_later, raising=False)
-
     hass.flow_results.append(
-        {"type": "create_entry", "data": {"email": "refresh@example.com", "password": "newpass"}}
+        {
+            "type": "create_entry",
+            "data": {"email": "refresh@example.com", "password": "newpass"},
+        }
     )
 
     assert await integration.async_setup_entry(hass, entry) is True
     stored = hass.data[DOMAIN][entry.entry_id]
 
-    scheduled[0]["callback"](*scheduled[0]["args"])
-    await asyncio.sleep(0)
+    tracked = hass.tracked_interval
+    assert tracked is not None
+    refresh_action, interval = tracked
+    assert interval == integration.TOKEN_REFRESH_INTERVAL
+
+    with pytest.raises(FakeHTTPError):
+        await refresh_action(None)
 
     assert stored["auth"].login_calls == [("refresh@example.com", "newpass")]
     assert stored["tokens"] is reissued_tokens
