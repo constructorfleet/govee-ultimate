@@ -61,6 +61,7 @@ from custom_components.govee_ultimate.coordinator import (
 )
 from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
+from custom_components.govee_ultimate.device_types.hygrometer import HygrometerDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 
 
@@ -272,6 +273,32 @@ def test_resolve_factory_matches_air_quality_model_prefix() -> None:
     factory = coordinator._resolve_factory(metadata)
 
     assert factory is AirQualityDevice
+
+
+def test_resolve_factory_matches_hygrometer_model_prefix() -> None:
+    """Hygrometer model prefixes should map to HygrometerDevice."""
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=FakeAPIClient([]),
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    metadata = DeviceMetadata(
+        device_id="hg-1",
+        model="H5075",
+        sku="H5075",
+        category="Thermo-Hygrometer",
+        category_group="Thermo-Hygrometers",
+        device_name="Smart Hygrometer",
+        manufacturer="Govee",
+        channels={},
+    )
+
+    factory = coordinator._resolve_factory(metadata)
+
+    assert factory is HygrometerDevice
 
 
 @pytest.mark.asyncio
