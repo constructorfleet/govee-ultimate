@@ -3,7 +3,11 @@
     {
       "name": "power_on",
       "opcode": "0x01",
-      "identifiers": [51, 1, 1],
+      "identifiers": [
+        51,
+        1,
+        1
+      ],
       "payload_hex": "01",
       "extra_payload_hex": "",
       "vectors": {
@@ -15,7 +19,11 @@
     {
       "name": "power_off",
       "opcode": "0x01",
-      "identifiers": [51, 1, 1],
+      "identifiers": [
+        51,
+        1,
+        1
+      ],
       "payload_hex": "00",
       "extra_payload_hex": "",
       "vectors": {
@@ -27,7 +35,11 @@
     {
       "name": "brightness_75",
       "opcode": "0x04",
-      "identifiers": [51, 4, 1],
+      "identifiers": [
+        51,
+        4,
+        1
+      ],
       "payload_hex": "4B",
       "extra_payload_hex": "00",
       "vectors": {
@@ -35,6 +47,66 @@
         "iot": "MwQBSwAAAAAAAAAAAAAAAAAAAH0="
       },
       "description": "Brightness command targeting 75%."
+    },
+    {
+      "name": "ice_maker_nugget_large",
+      "opcode": "0x33",
+      "identifiers": [
+        51,
+        5
+      ],
+      "payload_hex": "01",
+      "extra_payload_hex": "",
+      "description": "Select the large nugget size option.",
+      "vectors": {
+        "ble": "MwUBAAAAAAAAAAAAAAAAAAAAADc=",
+        "iot": "AQ=="
+      }
+    },
+    {
+      "name": "ice_maker_status_making",
+      "opcode": "0x33",
+      "identifiers": [
+        51,
+        25
+      ],
+      "payload_hex": "01",
+      "extra_payload_hex": "",
+      "description": "Request the ice maker enter MAKING_ICE state.",
+      "vectors": {
+        "ble": "MxkBAAAAAAAAAAAAAAAAAAAAACs=",
+        "iot": "AQ=="
+      }
+    },
+    {
+      "name": "ice_maker_schedule_enable_sample",
+      "opcode": "0x33",
+      "identifiers": [
+        51,
+        35
+      ],
+      "payload_hex": "01003C6592B75002",
+      "extra_payload_hex": "",
+      "description": "Example scheduled start payload (60 minute delay, medium nugget).",
+      "vectors": {
+        "ble": "MyMBADxlkrdQAgAAAAAAAAAAAD8=",
+        "iot": "AQA8ZZK3UAI="
+      }
+    },
+    {
+      "name": "ice_maker_schedule_disable",
+      "opcode": "0x33",
+      "identifiers": [
+        51,
+        35
+      ],
+      "payload_hex": "00",
+      "extra_payload_hex": "",
+      "description": "Cancel the scheduled start timer.",
+      "vectors": {
+        "ble": "MyMAAAAAAAAAAAAAAAAAAAAAABA=",
+        "iot": "AA=="
+      }
     }
   ]
 }

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 from collections.abc import Mapping
 from functools import cache
 from typing import Any
+from collections.abc import Callable
 
 from .. import opcodes
 from collections.abc import Sequence
@@ -775,6 +778,360 @@ class WaterShortageState(DeviceOpState[bool | None]):
             else:
                 normalised[key.upper()] = bool(value)
         return normalised
+
+
+_NUGGET_SIZE_CODES = {
+    "SMALL": 0x03,
+    "MEDIUM": 0x02,
+    "LARGE": 0x01,
+}
+_NUGGET_SIZE_NAMES = {code: name for name, code in _NUGGET_SIZE_CODES.items()}
+
+_ICE_MAKER_STATUS_CODES = {
+    "STANDBY": 0x00,
+    "MAKING_ICE": 0x01,
+    "FULL": 0x02,
+    "WASHING": 0x03,
+    "FINISHED_WASHING": 0x04,
+    "SCHEDULED": 0x05,
+}
+_ICE_MAKER_STATUS_NAMES = {code: name for name, code in _ICE_MAKER_STATUS_CODES.items()}
+
+
+def _normalise_choice(value: Any, mapping: Mapping[str, int]) -> tuple[str, int] | None:
+    if isinstance(value, str):
+        key = value.strip().upper()
+    else:
+        key = str(value).strip().upper()
+    code = mapping.get(key)
+    if code is None:
+        return None
+    return key, code
+
+
+class IceMakerNuggetSizeState(DeviceOpState[str | None]):
+    """Track the selected nugget size reported by an ice maker."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the nugget size state."""
+        entry = _state_entry("ice_maker_nugget_size")
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": [0x05]},
+            device=device,
+            name="nuggetSize",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+        self._command_template = entry.command_templates[0]
+        self._default = entry.parse_options.get("default", "SMALL")
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Update the stored nugget size based on opcode payloads."""
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        value = _NUGGET_SIZE_NAMES.get(payload[0], self._default)
+        self._update_state(value)
+
+    def _state_to_command(self, next_state: Any):
+        choice = _normalise_choice(next_state, _NUGGET_SIZE_CODES)
+        if choice is None:
+            return None
+        name, code = choice
+        command, payload_bytes = _command_payload(
+            self._command_template, {"code": code}
+        )
+        status_sequence = [_REPORT_OPCODE, 0x05, payload_bytes[-1]]
+        return {
+            "command": command,
+            "status": _status_payload("nuggetSize", name, status_sequence),
+        }
+
+
+class _IceMakerBinaryAlarmState(DeviceOpState[bool | None]):
+    """Base helper for boolean ice maker alarms keyed by payload id."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        name: str,
+        identifier: int,
+        property_id: int,
+    ) -> None:
+        """Initialise a boolean alarm state for the ice maker."""
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": [identifier]},
+            device=device,
+            name=name,
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+        )
+        self._property_id = property_id
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) <= 1:
+            return
+        if payload[0] != self._property_id:
+            return
+        self._update_state(payload[1] == 0x01)
+
+
+class IceMakerBasketFullState(_IceMakerBinaryAlarmState):
+    """Expose the basket full alarm reported by the ice maker."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the basket full alarm state."""
+        super().__init__(
+            device=device, name="basketFull", identifier=0x17, property_id=0x01
+        )
+
+
+class IceMakerWaterEmptyState(_IceMakerBinaryAlarmState):
+    """Expose the water shortage alarm reported by the ice maker."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the water shortage alarm state."""
+        super().__init__(
+            device=device, name="waterShortage", identifier=0x17, property_id=0x02
+        )
+
+
+class IceMakerStatusState(DeviceOpState[str | None]):
+    """Track the operational status of the ice maker."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the status tracker for the ice maker."""
+        entry = _state_entry("ice_maker_status")
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": [0x19]},
+            device=device,
+            name="iceMakerStatus",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+        self._command_template = entry.command_templates[0]
+        self._default = entry.parse_options.get("default", "STANDBY")
+        self._listeners: list[Callable[[str | None], None]] = []
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Update the stored status using an opcode payload."""
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        value = _ICE_MAKER_STATUS_NAMES.get(payload[0], self._default)
+        self._update_state(value)
+
+    def register_listener(self, callback: Callable[[str | None], None]) -> None:
+        """Register a listener for status updates."""
+        self._listeners.append(callback)
+
+    def _notify_listeners(self, value: str | None) -> None:
+        for listener in list(self._listeners):
+            listener(value)
+
+    def _update_state(self, value: str | None) -> None:  # type: ignore[override]
+        super()._update_state(value)
+        self._notify_listeners(value)
+
+    def _state_to_command(self, next_state: Any):
+        choice = _normalise_choice(next_state, _ICE_MAKER_STATUS_CODES)
+        if choice is None:
+            return None
+        name, code = choice
+        command, payload_bytes = _command_payload(
+            self._command_template, {"code": code}
+        )
+        status_sequence = [_REPORT_OPCODE, 0x19, payload_bytes[-1]]
+        return {
+            "command": command,
+            "status": _status_payload("iceMakerStatus", name, status_sequence),
+        }
+
+
+class IceMakerScheduledStartState(DeviceOpState[dict[str, Any]]):
+    """Manage scheduled start configuration for an ice maker."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the scheduled start state."""
+        entry = _state_entry("ice_maker_scheduled_start")
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": [0x23]},
+            device=device,
+            name="scheduledStart",
+            initial_value={},
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+        self._command_template = entry.command_templates[0]
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Parse a scheduled start payload emitted by the device."""
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        if payload[0] == 0x00:
+            self._update_state(
+                {
+                    "enabled": False,
+                    "hourStart": None,
+                    "minuteStart": None,
+                    "nuggetSize": None,
+                }
+            )
+            return
+        if len(payload) < 8:
+            return
+        timestamp = int.from_bytes(payload[3:7], "big")
+        start_time = dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc)
+        nugget = _NUGGET_SIZE_NAMES.get(payload[7], "SMALL")
+        self._update_state(
+            {
+                "enabled": payload[0] == 0x01,
+                "hourStart": start_time.hour,
+                "minuteStart": start_time.minute,
+                "nuggetSize": nugget,
+            }
+        )
+
+    def _state_to_command(self, next_state: dict[str, Any]) -> dict[str, Any] | None:
+        enabled = next_state.get("enabled")
+        if enabled is None:
+            return None
+        if not enabled:
+            command, payload_bytes = _command_payload(
+                self._command_template, {"payload": "00"}
+            )
+            status_sequence = [_REPORT_OPCODE, 0x23, payload_bytes[-1]]
+            state_value = {
+                "enabled": False,
+                "hourStart": None,
+                "minuteStart": None,
+                "nuggetSize": None,
+            }
+            return {
+                "command": command,
+                "status": _status_payload(
+                    "scheduledStart", state_value, status_sequence
+                ),
+            }
+
+        hour = next_state.get("hourStart")
+        minute = next_state.get("minuteStart")
+        choice = _normalise_choice(next_state.get("nuggetSize"), _NUGGET_SIZE_CODES)
+        if not isinstance(hour, int) or not isinstance(minute, int) or choice is None:
+            return None
+        name, code = choice
+        start_time = self._resolve_start_time(hour, minute)
+        minutes_delta = round((start_time - self._now()).total_seconds() / 60)
+        if minutes_delta < 0:
+            minutes_delta = 0
+        minutes_bytes = minutes_delta.to_bytes(2, "big", signed=False)
+        timestamp_bytes = int(start_time.timestamp()).to_bytes(4, "big", signed=False)
+        payload_bytes = [0x01, *minutes_bytes, *timestamp_bytes, code]
+        payload_hex = "".join(f"{byte:02X}" for byte in payload_bytes)
+        command, _ = _command_payload(self._command_template, {"payload": payload_hex})
+        status_sequence = [_REPORT_OPCODE, 0x23, *payload_bytes]
+        state_value = {
+            "enabled": True,
+            "hourStart": start_time.hour,
+            "minuteStart": start_time.minute,
+            "nuggetSize": name,
+        }
+        return {
+            "command": command,
+            "status": _status_payload("scheduledStart", state_value, status_sequence),
+        }
+
+    def _resolve_start_time(self, hour: int, minute: int) -> dt.datetime:
+        now = self._now()
+        target = now.replace(
+            hour=hour % 24, minute=minute % 60, second=0, microsecond=0
+        )
+        if target <= now:
+            target += dt.timedelta(days=1)
+        return target
+
+    def _now(self) -> dt.datetime:
+        return dt.datetime.now(dt.timezone.utc)
+
+
+class IceMakerMakingIceState(DeviceOpState[bool | None]):
+    """Boolean view of whether the ice maker is actively producing ice."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        status_state: IceMakerStatusState,
+    ) -> None:
+        """Initialise the derived making-ice state."""
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": [0x19]},
+            device=device,
+            name="makeIce",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+        )
+        self._status_state = status_state
+        status_state.register_listener(self._handle_status_update)
+        self._handle_status_update(status_state.value)
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Mirror status opcode payloads to update the derived state."""
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        status = _ICE_MAKER_STATUS_NAMES.get(payload[0])
+        self._handle_status_update(status)
+
+    def set_state(self, next_state: bool | None) -> list[str]:
+        """Proxy state changes to the underlying status handler."""
+        if next_state is None:
+            return []
+        target = "MAKING_ICE" if next_state else "STANDBY"
+        return self._status_state.set_state(target)
+
+    def _handle_status_update(self, status: str | None) -> None:
+        """Apply ``status`` updates to the boolean representation."""
+        if status is None:
+            return
+        self._update_state(status == "MAKING_ICE")
+
+
+class IceMakerTemperatureState(TemperatureState):
+    """Temperature state using the ice maker specific opcode payload."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the ice maker temperature state."""
+        super().__init__(
+            device=device,
+            op_type=_REPORT_OPCODE,
+            identifier=[0x10],
+            parse_option=ParseOption.OP_CODE,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Decode temperature readings encoded in opcode payloads."""
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) < 3:
+            return
+        raw_value = int.from_bytes(payload[:3], "big", signed=False)
+        sign_bit = 1 << 23
+        magnitude = raw_value & (sign_bit - 1)
+        current = magnitude / 10000.0
+        if raw_value & sign_bit:
+            current = -current
+        self._update_state(
+            {
+                "current": current,
+                "range": {"min": -20, "max": 60},
+                "unit": "C",
+            }
+        )
 
 
 class DisplayScheduleState(DeviceOpState[dict[str, Any]]):

@@ -17,6 +17,7 @@ from . import DOMAIN
 from .device_types.air_quality import AirQualityDevice
 from .device_types.base import BaseDevice
 from .device_types.humidifier import HumidifierDevice
+from .device_types.ice_maker import IceMakerDevice
 from .device_types.presence import PresenceDevice
 from .device_types.purifier import PurifierDevice
 from .device_types.rgb_light import RGBLightDevice
@@ -245,6 +246,9 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 
         group = metadata.category_group.lower()
         category = metadata.category.lower()
+        name = metadata.device_name.lower()
+        if category == "home appliances" and group == "kitchen" and "ice maker" in name:
+            return IceMakerDevice
         if _category_matches(group, category, ("presence",)):
             return PresenceDevice
         if _category_matches(group, category, ("air quality",)):
@@ -498,6 +502,7 @@ _MODEL_PREFIX_FACTORIES: tuple[tuple[str, type[BaseDevice]], ...] = (
     ("H660", AirQualityDevice),
     ("H714", HumidifierDevice),
     ("H712", PurifierDevice),
+    ("H717", IceMakerDevice),
     ("H600", RGBLightDevice),
     ("H51", PresenceDevice),
     ("H5", HygrometerDevice),
