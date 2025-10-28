@@ -2,6 +2,12 @@
 
 from .humidifier import HumidifierDevice
 from .purifier import PurifierDevice
+from .rgb_light import RGBLightDevice
 from .rgbic_light import RGBICLightDevice
 
-__all__ = ["RGBICLightDevice", "HumidifierDevice", "PurifierDevice"]
+__all__ = [
+    "RGBLightDevice",
+    "RGBICLightDevice",
+    "HumidifierDevice",
+    "PurifierDevice",
+]

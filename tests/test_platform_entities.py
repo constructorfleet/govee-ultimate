@@ -44,6 +44,7 @@ from custom_components.govee_ultimate import DOMAIN
 from custom_components.govee_ultimate.coordinator import DeviceMetadata
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
+from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
 from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
 
 
@@ -225,6 +226,36 @@ def rgbic_device(fake_device_metadata: DeviceMetadata) -> RGBICLightDevice:
 
 
 @pytest.fixture
+def rgb_light_metadata() -> DeviceMetadata:
+    """Return metadata for a standard RGB light."""
+
+    return DeviceMetadata(
+        device_id="rgb-light-1",
+        model="H6003",
+        sku="H6003",
+        category="LED Strip Light",
+        category_group="RGB Strip Lights",
+        device_name="RGB Light",
+        manufacturer="Govee",
+        channels={"iot": {"topic": "state"}},
+    )
+
+
+@pytest.fixture
+def rgb_light_device(rgb_light_metadata: DeviceMetadata) -> RGBLightDevice:
+    """Return a configured RGB light device."""
+
+    model = SimpleNamespace(
+        model=rgb_light_metadata.model,
+        sku=rgb_light_metadata.sku,
+        category=rgb_light_metadata.category,
+        category_group=rgb_light_metadata.category_group,
+        model_name=rgb_light_metadata.device_name,
+    )
+    return RGBLightDevice(model)
+
+
+@pytest.fixture
 def humidifier_metadata() -> DeviceMetadata:
     """Return device metadata for humidifier platform tests."""
 
@@ -356,19 +387,31 @@ async def _async_setup_platform(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("metadata_fixture", "device_fixture", "entry_id"),
+    [
+        ("fake_device_metadata", "rgbic_device", "entry-1"),
+        ("rgb_light_metadata", "rgb_light_device", "entry-1-rgb"),
+    ],
+)
 async def test_light_entity_updates_and_publishes_commands(
+    request: pytest.FixtureRequest,
     setup_platform_stubs: Callable[[], None],
-    fake_device_metadata: DeviceMetadata,
-    rgbic_device: RGBICLightDevice,
+    metadata_fixture: str,
+    device_fixture: str,
+    entry_id: str,
 ) -> None:
     """The light platform should mirror state updates and publish commands."""
 
+    metadata: DeviceMetadata = request.getfixturevalue(metadata_fixture)
+    device: RGBICLightDevice | RGBLightDevice = request.getfixturevalue(device_fixture)
+
     teardown = setup_platform_stubs
     hass = FakeHass()
-    entry = FakeConfigEntry(entry_id="entry-1")
+    entry = FakeConfigEntry(entry_id=entry_id)
     coordinator = FakeCoordinator(
-        {fake_device_metadata.device_id: rgbic_device},
-        {fake_device_metadata.device_id: fake_device_metadata},
+        {metadata.device_id: device},
+        {metadata.device_id: metadata},
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
 
@@ -385,12 +428,13 @@ async def test_light_entity_updates_and_publishes_commands(
     finally:
         teardown()
 
-    assert any(entity.unique_id == "device-1-power" for entity in added_entities)
+    unique_id = f"{metadata.device_id}-power"
+    assert any(entity.unique_id == unique_id for entity in added_entities)
 
     power_entity = next(
-        entity for entity in added_entities if entity.unique_id == "device-1-power"
+        entity for entity in added_entities if entity.unique_id == unique_id
     )
-    power_state = rgbic_device.states["power"]
+    power_state = device.states["power"]
     power_state._update_state(True)
     coordinator.notify_listeners()
 

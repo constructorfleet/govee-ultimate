@@ -1439,6 +1439,37 @@ class SegmentColorState(DeviceState[list[int] | None]):
         return [self.name]
 
 
+class SceneModeState(DeviceOpState[dict[str, int]]):
+    """Track the currently active scene identifiers for RGB lights."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        op_type: int = _REPORT_OPCODE,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the scene mode opcode state handler."""
+
+        identifiers = [0x05, 0x04] if identifier is None else list(identifier)
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="sceneMode",
+            initial_value={"sceneId": None, "sceneParamId": None},
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Decode the reported scene identifier and parameters."""
+
+        payload = op_command[3:]
+        if len(payload) < 4:
+            return
+        scene_id = int.from_bytes(payload[0:2], "big")
+        scene_param_id = int.from_bytes(payload[2:4], "big")
+        self._update_state({"sceneId": scene_id, "sceneParamId": scene_param_id})
+
+
 class _IdentifierStringState(DeviceState[str | None]):
     """Base class for identifier-backed string states."""
 
