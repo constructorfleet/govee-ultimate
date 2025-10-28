@@ -8,16 +8,21 @@ from custom_components.govee_ultimate.device_types.base import EntityCategory
 from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.hygrometer import HygrometerDevice
+from custom_components.govee_ultimate.device_types.presence import PresenceDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
 from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
 from custom_components.govee_ultimate.state import (
     ActiveState,
     BatteryLevelState,
+    BiologicalPresenceState,
     BrightnessState,
     ColorRGBState,
     ConnectedState,
+    DetectionSettingsState,
+    EnablePresenceState,
     HumidityState,
+    MMWavePresenceState,
     ModeState,
     PowerState,
     TemperatureState,
@@ -165,6 +170,124 @@ def hygrometer_model() -> MockDeviceModel:
         category_group="Thermo-Hygrometers",
         model_name="Smart Hygrometer",
     )
+
+
+@pytest.fixture
+def presence_sensor_model() -> MockDeviceModel:
+    """Return metadata for a presence detection sensor."""
+
+    return MockDeviceModel(
+        model="H5109",
+        sku="H5109",
+        category="Presence Sensor",
+        category_group="Presence Sensors",
+        model_name="Smart Presence Sensor",
+    )
+
+
+def test_presence_device_registers_presence_states_and_entities(
+    presence_sensor_model: MockDeviceModel,
+) -> None:
+    """Presence sensors should expose detection and tuning controls."""
+
+    device = PresenceDevice(presence_sensor_model)
+
+    states = device.states
+    assert set(states) >= {
+        "power",
+        "isConnected",
+        "presence-mmWave",
+        "presence-biological",
+        "enablePresence",
+        "detectionSettings",
+        "presenceEnable-mmWave",
+        "presenceEnable-biological",
+        "detectionDistance",
+        "absenceDuration",
+        "reportDetection",
+    }
+    assert isinstance(states["power"], PowerState)
+    assert isinstance(states["isConnected"], ConnectedState)
+    assert isinstance(states["presence-mmWave"], MMWavePresenceState)
+    assert isinstance(states["presence-biological"], BiologicalPresenceState)
+    assert isinstance(states["enablePresence"], EnablePresenceState)
+    assert isinstance(states["detectionSettings"], DetectionSettingsState)
+
+    entities = device.home_assistant_entities
+    assert entities["power"].platform == "switch"
+
+    connected_entity = entities["isConnected"]
+    assert connected_entity.platform == "binary_sensor"
+    assert connected_entity.translation_key == "connected"
+    assert connected_entity.entity_category is EntityCategory.DIAGNOSTIC
+
+    mmwave_entity = entities["presence-mmWave"]
+    assert mmwave_entity.platform == "binary_sensor"
+    assert mmwave_entity.translation_key == "presence_mmwave"
+
+    biological_entity = entities["presence-biological"]
+    assert biological_entity.platform == "binary_sensor"
+    assert biological_entity.translation_key == "presence_biological"
+
+    mmwave_enable_entity = entities["presenceEnable-mmWave"]
+    assert mmwave_enable_entity.platform == "switch"
+    assert mmwave_enable_entity.translation_key == "presence_mmwave_enabled"
+
+    biological_enable_entity = entities["presenceEnable-biological"]
+    assert biological_enable_entity.platform == "switch"
+    assert biological_enable_entity.translation_key == "presence_biological_enabled"
+
+    detection_distance = entities["detectionDistance"]
+    assert detection_distance.platform == "number"
+    assert detection_distance.translation_key == "presence_detection_distance"
+    assert detection_distance.entity_category is EntityCategory.CONFIG
+
+    absence_duration = entities["absenceDuration"]
+    assert absence_duration.platform == "number"
+    assert absence_duration.translation_key == "presence_absence_duration"
+    assert absence_duration.entity_category is EntityCategory.CONFIG
+
+    report_detection = entities["reportDetection"]
+    assert report_detection.platform == "number"
+    assert report_detection.translation_key == "presence_report_interval"
+    assert report_detection.entity_category is EntityCategory.CONFIG
+
+
+def test_presence_enable_switches_forward_commands(
+    presence_sensor_model: MockDeviceModel,
+) -> None:
+    """Proxy switches should route commands through the enable state."""
+
+    device = PresenceDevice(presence_sensor_model)
+    enable_state = device.states["enablePresence"]
+    mmwave_switch = device.states["presenceEnable-mmWave"]
+    biological_switch = device.states["presenceEnable-biological"]
+
+    enable_state._update_state(  # type: ignore[attr-defined]
+        {"biologicalEnabled": True, "mmWaveEnabled": False}
+    )
+    assert mmwave_switch.value is False
+    assert biological_switch.value is True
+
+    mmwave_commands = mmwave_switch.set_state(True)
+    assert len(mmwave_commands) == 1
+    mmwave_payload = mmwave_switch.command_queue.get_nowait()
+    assert mmwave_payload["command_id"] == mmwave_commands[0]
+    assert mmwave_payload["command"] == "multi_sync"
+    assert enable_state.command_queue.empty()
+
+    enable_state._update_state(  # type: ignore[attr-defined]
+        {"biologicalEnabled": False, "mmWaveEnabled": True}
+    )
+    assert mmwave_switch.value is True
+    assert biological_switch.value is False
+
+    biological_commands = biological_switch.set_state(True)
+    assert len(biological_commands) == 1
+    biological_payload = biological_switch.command_queue.get_nowait()
+    assert biological_payload["command_id"] == biological_commands[0]
+    assert biological_payload["command"] == "multi_sync"
+    assert enable_state.command_queue.empty()
 
 
 def test_hygrometer_registers_expected_states_and_entities(

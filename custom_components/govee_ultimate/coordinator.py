@@ -17,6 +17,7 @@ from . import DOMAIN
 from .device_types.air_quality import AirQualityDevice
 from .device_types.base import BaseDevice
 from .device_types.humidifier import HumidifierDevice
+from .device_types.presence import PresenceDevice
 from .device_types.purifier import PurifierDevice
 from .device_types.rgb_light import RGBLightDevice
 from .device_types.rgbic_light import RGBICLightDevice
@@ -35,6 +36,14 @@ def _camel_to_snake(value: str) -> str:
             result.append("_")
         result.append(char.lower())
     return "".join(result)
+
+
+def _category_matches(group: str, category: str, keywords: tuple[str, ...]) -> bool:
+    """Return True when either metadata field contains one of ``keywords``."""
+
+    return any(keyword in group for keyword in keywords) or any(
+        keyword in category for keyword in keywords
+    )
 
 
 def _resolve_payload_value(
@@ -236,19 +245,17 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 
         group = metadata.category_group.lower()
         category = metadata.category.lower()
-        if "air quality" in group or "air quality" in category:
+        if _category_matches(group, category, ("presence",)):
+            return PresenceDevice
+        if _category_matches(group, category, ("air quality",)):
             return AirQualityDevice
-        if any(keyword in group for keyword in ("hygro", "thermo")) or any(
-            keyword in category for keyword in ("hygro", "thermo")
-        ):
+        if _category_matches(group, category, ("hygro", "thermo")):
             return HygrometerDevice
-        if "rgbic" in group or "rgbic" in category:
+        if _category_matches(group, category, ("rgbic",)):
             return RGBICLightDevice
 
         light_keywords = ("light", "lighting", "lamp")
-        if any(keyword in group for keyword in light_keywords) or any(
-            keyword in category for keyword in light_keywords
-        ):
+        if _category_matches(group, category, light_keywords):
             return RGBLightDevice
         return None
 
@@ -492,5 +499,6 @@ _MODEL_PREFIX_FACTORIES: tuple[tuple[str, type[BaseDevice]], ...] = (
     ("H714", HumidifierDevice),
     ("H712", PurifierDevice),
     ("H600", RGBLightDevice),
+    ("H51", PresenceDevice),
     ("H5", HygrometerDevice),
 )
