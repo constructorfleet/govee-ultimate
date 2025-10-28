@@ -197,9 +197,23 @@ class ControlLockState(DeviceOpState[bool | None]):
             device=device,
             name="controlLock",
             initial_value=None,
-            parse_option=ParseOption.OP_CODE,
+            parse_option=ParseOption.OP_CODE | ParseOption.STATE,
             state_to_command=self._state_to_command,
         )
+        self._state_keys = ("controlLock", "control_lock")
+
+    def parse_state(self, data: dict[str, Any]) -> None:
+        """Capture control lock flags from nested state payloads."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return
+        for key in self._state_keys:
+            value = state_section.get(key)
+            boolean = _bool_from_value(value)
+            if boolean is not None:
+                self._update_state(boolean)
+                return
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Interpret opcode payloads as boolean lock flags."""

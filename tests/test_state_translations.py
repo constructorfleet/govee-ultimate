@@ -8,6 +8,7 @@ import pytest
 
 from custom_components.govee_ultimate.state.states import (
     BatteryLevelState,
+    ControlLockState,
     TimerState,
     WaterShortageState,
 )
@@ -76,3 +77,20 @@ def test_timer_state_parses_and_generates_command(device: DummyDevice) -> None:
     queued = _next_command(state)
     frame = queued["data"]["command"][0]
     assert frame[:6] == [0x33, 0x0A, 0x0B, 0x00, 0x02, 0x58]
+
+
+def test_control_lock_state_parses_and_emits_command(device: DummyDevice) -> None:
+    """Control lock state should parse booleans and emit toggle commands."""
+
+    state = ControlLockState(device=device, identifier=[0x0A])
+
+    state.parse({"state": {"controlLock": True}})
+    assert state.value is True
+
+    command_ids = state.set_state(False)
+    assert command_ids
+
+    queued = _next_command(state)
+    assert queued["command"] == "multi_sync"
+    frame = queued["data"]["command"][0]
+    assert frame[:3] == [0x33, 0x0A, 0x00]
