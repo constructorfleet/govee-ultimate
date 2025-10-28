@@ -59,6 +59,7 @@ from custom_components.govee_ultimate.coordinator import (
     DeviceMetadata,
     GoveeDataUpdateCoordinator,
 )
+from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 
@@ -219,6 +220,58 @@ async def test_update_data_discovers_devices_from_typescript_payload() -> None:
     assert payload["identifiers"] == {(DOMAIN, "ts-device-1")}
     assert payload["manufacturer"] == "Govee"
     assert payload["model"] == "H7141"
+
+
+def test_resolve_factory_selects_air_quality_by_category() -> None:
+    """Air quality category group should map to the AirQualityDevice factory."""
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=FakeAPIClient([]),
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    metadata = DeviceMetadata(
+        device_id="aq-1",
+        model="H6601",
+        sku="H6601",
+        category="Air Quality Monitor",
+        category_group="Air Quality",
+        device_name="Air Quality Monitor",
+        manufacturer="Govee",
+        channels={},
+    )
+
+    factory = coordinator._resolve_factory(metadata)
+
+    assert factory is AirQualityDevice
+
+
+def test_resolve_factory_matches_air_quality_model_prefix() -> None:
+    """Specific air quality model prefixes should map to AirQualityDevice."""
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=FakeAPIClient([]),
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    metadata = DeviceMetadata(
+        device_id="aq-2",
+        model="H6609",
+        sku="H6609",
+        category="Unknown",
+        category_group="",
+        device_name="AQ Sensor",
+        manufacturer="Govee",
+        channels={},
+    )
+
+    factory = coordinator._resolve_factory(metadata)
+
+    assert factory is AirQualityDevice
 
 
 @pytest.mark.asyncio

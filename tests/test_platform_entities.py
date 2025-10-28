@@ -42,6 +42,7 @@ if "homeassistant.helpers.update_coordinator" not in sys.modules:
 
 from custom_components.govee_ultimate import DOMAIN
 from custom_components.govee_ultimate.coordinator import DeviceMetadata
+from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
@@ -313,6 +314,36 @@ def purifier_device(purifier_metadata: DeviceMetadata) -> PurifierDevice:
         model_name=purifier_metadata.device_name,
     )
     return PurifierDevice(model)
+
+
+@pytest.fixture
+def air_quality_metadata() -> DeviceMetadata:
+    """Return metadata for air quality platform tests."""
+
+    return DeviceMetadata(
+        device_id="air-quality-1",
+        model="H6601",
+        sku="H6601",
+        category="Air Quality Monitor",
+        category_group="Air Quality",
+        device_name="Air Quality Monitor",
+        manufacturer="Govee",
+        channels={"iot": {"topic": "state"}},
+    )
+
+
+@pytest.fixture
+def air_quality_device(air_quality_metadata: DeviceMetadata) -> AirQualityDevice:
+    """Return a configured air quality device."""
+
+    model = SimpleNamespace(
+        model=air_quality_metadata.model,
+        sku=air_quality_metadata.sku,
+        category=air_quality_metadata.category,
+        category_group=air_quality_metadata.category_group,
+        model_name=air_quality_metadata.device_name,
+    )
+    return AirQualityDevice(model)
 
 
 @dataclass
@@ -613,6 +644,69 @@ async def test_sensor_entity_tracks_state_updates(
     humidity_state._update_state(55)
 
     assert humidity_entity.native_value == 55
+
+
+@pytest.mark.asyncio
+async def test_air_quality_sensors_register_measurement_entities(
+    setup_platform_stubs: Callable[[], None],
+    air_quality_metadata: DeviceMetadata,
+    air_quality_device: AirQualityDevice,
+) -> None:
+    """Air quality monitors should expose temperature, humidity, and PM2.5 sensors."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-air-quality")
+    coordinator = FakeCoordinator(
+        {air_quality_metadata.device_id: air_quality_device},
+        {air_quality_metadata.device_id: air_quality_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "sensor",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    unique_ids = {entity.unique_id for entity in added_entities}
+    expected_ids = {
+        f"{air_quality_metadata.device_id}-temperature",
+        f"{air_quality_metadata.device_id}-humidity",
+        f"{air_quality_metadata.device_id}-pm25",
+    }
+    assert expected_ids <= unique_ids
+
+    temperature_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{air_quality_metadata.device_id}-temperature"
+    )
+    humidity_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{air_quality_metadata.device_id}-humidity"
+    )
+    pm25_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{air_quality_metadata.device_id}-pm25"
+    )
+
+    air_quality_device.states["temperature"]._update_state({"current": 21.5})
+    air_quality_device.states["humidity"]._update_state({"current": 45})
+    air_quality_device.states["pm25"]._update_state({"current": 8})
+
+    assert temperature_entity.native_value == {"current": 21.5}
+    assert humidity_entity.native_value == {"current": 45}
+    assert pm25_entity.native_value == {"current": 8}
 
 
 @pytest.mark.asyncio

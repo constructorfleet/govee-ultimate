@@ -360,6 +360,179 @@ class TemperatureState(DeviceOpState[dict[str, Any]]):
         return numeric
 
 
+class _AirQualityMeasurementState(DeviceState[dict[str, Any] | None]):
+    """Base class for air quality measurement parsing."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        name: str,
+        state_key: str | None = None,
+    ) -> None:
+        """Initialise the measurement state."""
+
+        super().__init__(device=device, name=name, initial_value=None)
+        self._state_key = state_key or name
+
+    def parse(self, data: dict[str, Any]) -> None:
+        """Delegate to :meth:`parse_state` for compatibility."""
+
+        self.parse_state(data)
+
+    def parse_state(self, data: dict[str, Any]) -> None:
+        """Parse structured measurement payloads."""
+
+        measurement = self._extract_measurement(data)
+        if measurement is None:
+            return
+        parsed = self._normalise_measurement(measurement)
+        if parsed is not None:
+            self._update_state(parsed)
+
+    def _extract_measurement(self, data: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Return the measurement mapping from ``data`` when present."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return None
+        measurement = state_section.get(self._state_key)
+        if not isinstance(measurement, Mapping):
+            return None
+        return measurement
+
+    def _normalise_measurement(
+        self, measurement: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        """Normalise the measurement payload."""
+
+        raise NotImplementedError
+
+    @staticmethod
+    def _range_mapping(
+        minimum: float | int | None, maximum: float | int | None
+    ) -> dict[str, float | int] | None:
+        """Build a range mapping when either bound is present."""
+
+        range_payload: dict[str, float | int] = {}
+        if minimum is not None:
+            range_payload["min"] = minimum
+        if maximum is not None:
+            range_payload["max"] = maximum
+        return range_payload or None
+
+    @staticmethod
+    def _numeric_value(value: Any) -> float | int | None:
+        """Return numeric values preserving integers when possible."""
+
+        numeric = _float_from_value(value)
+        if numeric is None:
+            return None
+        if numeric.is_integer():
+            return int(numeric)
+        return numeric
+
+
+class AirQualityTemperatureState(_AirQualityMeasurementState):
+    """Expose calibrated air quality temperature readings."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the air quality temperature state."""
+
+        super().__init__(device=device, name="temperature")
+
+    def _normalise_measurement(
+        self, measurement: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        current = self._scaled_value(measurement.get("current"))
+        if current is None:
+            return None
+
+        calibration = self._scaled_value(
+            measurement.get("calibration"), scale_small=True
+        )
+        minimum = self._scaled_value(measurement.get("min"), scale_small=True)
+        maximum = self._scaled_value(measurement.get("max"), scale_small=True)
+
+        raw = current - calibration if calibration is not None else current
+        payload: dict[str, Any] = {"current": current, "raw": raw}
+        if calibration is not None:
+            payload["calibration"] = calibration
+
+        range_mapping = self._range_mapping(minimum, maximum)
+        if range_mapping is not None:
+            payload["range"] = range_mapping
+
+        return payload
+
+    def _scaled_value(self, value: Any, *, scale_small: bool = False) -> float | None:
+        numeric = _float_from_value(value)
+        if numeric is None:
+            return None
+        if scale_small or abs(numeric) >= 100:
+            numeric /= 100
+        return numeric
+
+
+class AirQualityHumidityState(_AirQualityMeasurementState):
+    """Expose relative humidity measurements for air quality sensors."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the humidity state."""
+
+        super().__init__(device=device, name="humidity")
+
+    def _normalise_measurement(
+        self, measurement: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        current = self._numeric_value(measurement.get("current"))
+        if current is None:
+            return None
+
+        minimum = self._numeric_value(measurement.get("min"))
+        maximum = self._numeric_value(measurement.get("max"))
+
+        payload: dict[str, Any] = {"current": current}
+        range_mapping = self._range_mapping(minimum, maximum)
+        if range_mapping is not None:
+            payload["range"] = range_mapping
+
+        return payload
+
+
+class AirQualityPM25State(_AirQualityMeasurementState):
+    """Expose particulate matter readings with warning flags."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the PM2.5 state."""
+
+        super().__init__(device=device, name="pm25")
+
+    def _normalise_measurement(
+        self, measurement: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        current = self._numeric_value(measurement.get("current"))
+        if current is None:
+            return None
+
+        warning = measurement.get("warning")
+        if warning is not None:
+            warning = bool(warning)
+
+        minimum = self._numeric_value(measurement.get("min"))
+        maximum = self._numeric_value(measurement.get("max"))
+
+        payload: dict[str, Any] = {"current": current}
+        if warning is not None:
+            payload["warning"] = warning
+
+        range_mapping = self._range_mapping(minimum, maximum)
+        if range_mapping is not None:
+            payload["range"] = range_mapping
+
+        return payload
+
+
 class TimerState(DeviceOpState[bool | None]):
     """Represent the configured countdown timer for supported devices."""
 

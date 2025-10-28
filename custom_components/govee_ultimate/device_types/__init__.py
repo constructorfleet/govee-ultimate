@@ -1,5 +1,6 @@
 """Device type implementations for the Govee Ultimate component."""
 
+from .air_quality import AirQualityDevice
 from .humidifier import HumidifierDevice
 from .purifier import PurifierDevice
 from .rgb_light import RGBLightDevice
@@ -10,4 +11,5 @@ __all__ = [
     "RGBICLightDevice",
     "HumidifierDevice",
     "PurifierDevice",
+    "AirQualityDevice",
 ]

@@ -680,6 +680,65 @@
         }
       ],
       "command_templates": []
+    },
+    {
+      "state_name": "air_quality_temperature",
+      "op_type": "environment",
+      "identifiers": {},
+      "parse_options": {
+        "measurement": {
+          "fields": [
+            "current",
+            "calibration",
+            "min",
+            "max"
+          ],
+          "scaling": "hundredths",
+          "unit": "celsius"
+        }
+      },
+      "status_templates": [],
+      "command_templates": []
+    },
+    {
+      "state_name": "air_quality_humidity",
+      "op_type": "environment",
+      "identifiers": {},
+      "parse_options": {
+        "measurement": {
+          "fields": [
+            "current",
+            "min",
+            "max"
+          ],
+          "unit": "percent",
+          "range": {
+            "min": 0,
+            "max": 100
+          }
+        }
+      },
+      "status_templates": [],
+      "command_templates": []
+    },
+    {
+      "state_name": "air_quality_pm25",
+      "op_type": "environment",
+      "identifiers": {},
+      "parse_options": {
+        "measurement": {
+          "fields": [
+            "current",
+            "warning",
+            "min",
+            "max"
+          ],
+          "unit": "µg/m³",
+          "warning_flag": "warning"
+        }
+      },
+      "status_templates": [],
+      "command_templates": []
     }
   ]
 }

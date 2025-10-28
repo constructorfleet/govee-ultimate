@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import DOMAIN
 
+from .device_types.air_quality import AirQualityDevice
 from .device_types.base import BaseDevice
 from .device_types.humidifier import HumidifierDevice
 from .device_types.purifier import PurifierDevice
@@ -234,6 +235,8 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 
         group = metadata.category_group.lower()
         category = metadata.category.lower()
+        if "air quality" in group or "air quality" in category:
+            return AirQualityDevice
         if "rgbic" in group or "rgbic" in category:
             return RGBICLightDevice
 
@@ -480,6 +483,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 
 
 _MODEL_PREFIX_FACTORIES: tuple[tuple[str, type[BaseDevice]], ...] = (
+    ("H660", AirQualityDevice),
     ("H714", HumidifierDevice),
     ("H712", PurifierDevice),
     ("H600", RGBLightDevice),
