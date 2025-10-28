@@ -6,11 +6,15 @@ from typing import Any
 
 from custom_components.govee_ultimate.state import (
     ActiveState,
+    ControlLockState,
     DeviceState,
+    DisplayScheduleState,
     ModeState,
+    NightLightState,
     ParseOption,
     PowerState,
 )
+from custom_components.govee_ultimate.state.states import HumidityState
 
 from .base import BaseDevice, EntityCategory, HumidifierEntities
 
@@ -35,7 +39,15 @@ class _BooleanState(DeviceState[bool | None]):
 class _NumericState(DeviceState[int | None]):
     """Numeric state helper with simple range enforcement."""
 
-    def __init__(self, device: Any, name: str, *, minimum: int, maximum: int) -> None:
+    def __init__(
+        self,
+        device: Any,
+        name: str,
+        *,
+        minimum: int,
+        maximum: int,
+        command_name: str | None = None,
+    ) -> None:
         super().__init__(
             device=device,
             name=name,
@@ -44,6 +56,7 @@ class _NumericState(DeviceState[int | None]):
         )
         self._minimum = minimum
         self._maximum = maximum
+        self._command_name = command_name or name
 
     def _coerce(self, value: Any) -> int | None:
         try:
@@ -59,7 +72,7 @@ class _NumericState(DeviceState[int | None]):
         if value is None:
             return []
         self._update_state(value)
-        return [self.name]
+        return [self._command_name]
 
 
 class _ModeOptionState(DeviceState[str]):
@@ -102,7 +115,13 @@ class MistLevelState(_NumericState):
     def __init__(self, device: Any, active_state: HumidifierActiveState) -> None:
         """Create the mist level controller bound to ``active_state``."""
 
-        super().__init__(device, "mist_level", minimum=0, maximum=100)
+        super().__init__(
+            device,
+            "mistLevel",
+            minimum=0,
+            maximum=100,
+            command_name="mist_level",
+        )
         self._active_state = active_state
 
     def set_state(self, next_state: Any) -> list[str]:
@@ -120,7 +139,13 @@ class TargetHumidityState(_NumericState):
     def __init__(self, device: Any, active_state: HumidifierActiveState) -> None:
         """Create the target humidity controller bound to ``active_state``."""
 
-        super().__init__(device, "target_humidity", minimum=30, maximum=80)
+        super().__init__(
+            device,
+            "targetHumidity",
+            minimum=30,
+            maximum=80,
+            command_name="target_humidity",
+        )
         self._active_state = active_state
 
     def set_state(self, next_state: Any) -> list[str]:
@@ -136,14 +161,14 @@ class HumidifierDevice(BaseDevice):
     """Python mirror of the TypeScript humidifier implementation."""
 
     _MODEL_FEATURES = {
-        "H7141": ("night_light", "control_lock"),
-        "H7142": ("night_light", "display_schedule", "uvc", "humidity"),
+        "H7141": ("nightLight", "controlLock"),
+        "H7142": ("nightLight", "controlLock", "displaySchedule", "uvc", "humidity"),
     }
 
     _FEATURE_PLATFORMS = {
-        "night_light": ("light", None),
-        "control_lock": ("switch", EntityCategory.CONFIG),
-        "display_schedule": ("switch", EntityCategory.CONFIG),
+        "nightLight": ("light", None),
+        "controlLock": ("switch", EntityCategory.CONFIG),
+        "displaySchedule": ("switch", EntityCategory.CONFIG),
         "uvc": ("switch", EntityCategory.CONFIG),
         "humidity": ("sensor", EntityCategory.DIAGNOSTIC),
     }
@@ -162,7 +187,9 @@ class HumidifierDevice(BaseDevice):
             entity_category=EntityCategory.DIAGNOSTIC,
         )
 
-        shortage = self.add_state(_BooleanState(device_model, "water_shortage"))
+        shortage = self.add_state(_BooleanState(device_model, "waterShortage"))
+        # Maintain backwards compatibility with snake_case update payloads.
+        self.alias_state("water_shortage", shortage)
         self.expose_entity(
             platform="binary_sensor",
             state=shortage,
@@ -196,18 +223,19 @@ class HumidifierDevice(BaseDevice):
         self.expose_entity(platform="number", state=self._target_state)
 
         for feature in self._MODEL_FEATURES.get(device_model.model, ()):  # type: ignore[attr-defined]
-            if feature in {"uvc", "humidity"}:
-                state: DeviceState[Any]
-                if feature == "humidity":
-                    state = _NumericState(
-                        device_model, "humidity", minimum=0, maximum=100
-                    )
-                else:
-                    state = _BooleanState(device_model, feature)
+            platform, category = self._FEATURE_PLATFORMS.get(feature, ("sensor", None))
+            state: DeviceState[Any]
+            if feature == "nightLight":
+                state = NightLightState(device=device_model, identifier=[0x40])
+            elif feature == "displaySchedule":
+                state = DisplayScheduleState(device=device_model, identifier=[0x30])
+            elif feature == "controlLock":
+                state = ControlLockState(device=device_model, identifier=[0x0A])
+            elif feature == "humidity":
+                state = HumidityState(device=device_model)
             else:
                 state = _BooleanState(device_model, feature)
             registered = self.add_state(state)
-            platform, category = self._FEATURE_PLATFORMS.get(feature, ("sensor", None))
             self.expose_entity(
                 platform=platform,
                 state=registered,

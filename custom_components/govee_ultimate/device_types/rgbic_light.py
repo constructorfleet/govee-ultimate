@@ -7,11 +7,16 @@ from typing import Any
 from custom_components.govee_ultimate.state import (
     ActiveState,
     BrightnessState,
+    ColorTemperatureState,
     ColorRGBState,
     DeviceState,
+    DiyModeState,
+    LightEffectState,
+    MicModeState,
     ModeState,
     ParseOption,
     PowerState,
+    SegmentColorState,
 )
 
 from .base import BaseDevice, LightEntities
@@ -48,6 +53,27 @@ class RGBICLightDevice(BaseDevice):
         color = self.add_state(ColorRGBState(device_model))
         self.expose_entity(platform="light", state=color)
 
+        color_temperature = self.add_state(
+            ColorTemperatureState(device=device_model, identifier=[0x2B])
+        )
+        self.expose_entity(platform="light", state=color_temperature)
+
+        segment_color = self.add_state(
+            SegmentColorState(device=device_model, identifier=[0x41])
+        )
+        self.expose_entity(platform="light", state=segment_color)
+
+        light_effect = self.add_state(
+            LightEffectState(device=device_model, identifier=[0x31])
+        )
+        self.expose_entity(platform="select", state=light_effect)
+
+        mic_mode = self.add_state(MicModeState(device=device_model, identifier=[0x32]))
+        self.expose_entity(platform="select", state=mic_mode)
+
+        diy_mode = self.add_state(DiyModeState(device=device_model, identifier=[0x33]))
+        self.expose_entity(platform="select", state=diy_mode)
+
         mode_states = self._register_mode_states(
             "color_whole",
             "color_segment",
@@ -63,7 +89,7 @@ class RGBICLightDevice(BaseDevice):
 
         self._light_entities = LightEntities(
             primary=power,
-            supporting=(brightness, color),
+            supporting=(brightness, color, color_temperature, segment_color),
         )
 
     @property

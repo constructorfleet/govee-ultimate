@@ -13,6 +13,20 @@ from custom_components.govee_ultimate.state import (
     ModeState,
     PowerState,
 )
+from custom_components.govee_ultimate.state.states import (
+    ColorTemperatureState,
+    ControlLockState,
+    DisplayScheduleState,
+    DiyModeState,
+    FilterExpiredState,
+    FilterLifeState,
+    HumidityState,
+    LightEffectState,
+    MicModeState,
+    NightLightState,
+    SegmentColorState,
+    TimerState,
+)
 
 
 class MockDeviceModel:
@@ -109,10 +123,25 @@ def test_rgbic_light_registers_expected_states(
     device = RGBICLightDevice(rgbic_device_model)
 
     states = device.states
-    assert set(states) >= {"power", "active", "brightness", "color"}
+    assert set(states) >= {
+        "power",
+        "active",
+        "brightness",
+        "color",
+        "colorTemperature",
+        "segmentColor",
+        "lightEffect",
+        "micMode",
+        "diyMode",
+    }
     assert isinstance(states["power"], PowerState)
     assert isinstance(states["brightness"], BrightnessState)
     assert isinstance(states["color"], ColorRGBState)
+    assert isinstance(states["colorTemperature"], ColorTemperatureState)
+    assert isinstance(states["segmentColor"], SegmentColorState)
+    assert isinstance(states["lightEffect"], LightEffectState)
+    assert isinstance(states["micMode"], MicModeState)
+    assert isinstance(states["diyMode"], DiyModeState)
 
     mode_state = device.mode_state
     assert isinstance(mode_state, ModeState)
@@ -130,6 +159,8 @@ def test_rgbic_light_registers_expected_states(
     assert set(light_entities.supporting) == {
         states["brightness"],
         states["color"],
+        states["colorTemperature"],
+        states["segmentColor"],
     }
 
 
@@ -145,27 +176,66 @@ def test_device_states_expose_home_assistant_entities(
     purifier_device = PurifierDevice(purifier_model_h7126)
 
     light_entities = light_device.home_assistant_entities
-    assert {"power", "brightness", "color", "mode"} <= set(light_entities)
+    assert {
+        "power",
+        "brightness",
+        "color",
+        "colorTemperature",
+        "segmentColor",
+        "mode",
+        "lightEffect",
+        "micMode",
+        "diyMode",
+    } <= set(light_entities)
     assert light_entities["power"].platform == "light"
     assert light_entities["power"].state is light_device.states["power"]
+    assert light_entities["brightness"].platform == "light"
+    assert light_entities["colorTemperature"].platform == "light"
+    assert light_entities["segmentColor"].platform == "light"
     assert light_entities["mode"].platform == "select"
+    assert light_entities["lightEffect"].platform == "select"
+    assert light_entities["micMode"].platform == "select"
+    assert light_entities["diyMode"].platform == "select"
 
     humidifier_entities = humidifier_device.home_assistant_entities
-    assert {"power", "mist_level", "target_humidity", "night_light", "uvc"} <= set(
-        humidifier_entities
-    )
+    assert {
+        "power",
+        "mistLevel",
+        "targetHumidity",
+        "nightLight",
+        "uvc",
+        "displaySchedule",
+        "controlLock",
+        "humidity",
+    } <= set(humidifier_entities)
     assert humidifier_entities["power"].platform == "humidifier"
-    assert humidifier_entities["mist_level"].platform == "number"
-    assert humidifier_entities["night_light"].platform == "light"
+    assert humidifier_entities["mistLevel"].platform == "number"
+    assert humidifier_entities["targetHumidity"].platform == "number"
+    assert humidifier_entities["nightLight"].platform == "light"
+    assert humidifier_entities["displaySchedule"].platform == "switch"
+    assert humidifier_entities["controlLock"].platform == "switch"
     assert humidifier_entities["uvc"].platform == "switch"
     assert humidifier_entities["humidity"].platform == "sensor"
 
     purifier_entities = purifier_device.home_assistant_entities
-    assert {"power", "fan_speed", "mode", "filter_life"} <= set(purifier_entities)
+    assert {
+        "power",
+        "fanSpeed",
+        "mode",
+        "displaySchedule",
+        "controlLock",
+        "timer",
+        "filterLife",
+        "filterExpired",
+    } <= set(purifier_entities)
     assert purifier_entities["power"].platform == "fan"
     assert purifier_entities["mode"].platform == "select"
-    assert purifier_entities["fan_speed"].platform == "number"
-    assert purifier_entities["filter_life"].platform == "sensor"
+    assert purifier_entities["fanSpeed"].platform == "number"
+    assert purifier_entities["displaySchedule"].platform == "switch"
+    assert purifier_entities["controlLock"].platform == "switch"
+    assert purifier_entities["timer"].platform == "switch"
+    assert purifier_entities["filterLife"].platform == "sensor"
+    assert purifier_entities["filterExpired"].platform == "binary_sensor"
 
 
 def test_humidifier_includes_model_specific_states(
@@ -177,12 +247,26 @@ def test_humidifier_includes_model_specific_states(
     device_h7141 = HumidifierDevice(humidifier_model_h7141)
     device_h7142 = HumidifierDevice(humidifier_model_h7142)
 
-    assert {"night_light", "control_lock"} <= set(device_h7141.states)
+    assert {"nightLight", "controlLock"} <= set(device_h7141.states)
     assert "uvc" not in device_h7141.states
 
-    assert {"night_light", "display_schedule", "uvc", "humidity"} <= set(
+    assert {"nightLight", "displaySchedule", "uvc", "humidity"} <= set(
         device_h7142.states
     )
+
+
+def test_humidifier_registers_catalog_state_types(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Humidifiers should wire catalog-backed state implementations."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    states = device.states
+    assert isinstance(states["nightLight"], NightLightState)
+    assert isinstance(states["displaySchedule"], DisplayScheduleState)
+    assert isinstance(states["controlLock"], ControlLockState)
+    assert isinstance(states["humidity"], HumidityState)
 
 
 def test_humidifier_mode_interlocks_gate_mist_levels(
@@ -192,8 +276,8 @@ def test_humidifier_mode_interlocks_gate_mist_levels(
 
     device = HumidifierDevice(humidifier_model_h7142)
 
-    mist_state = device.states["mist_level"]
-    target_state = device.states["target_humidity"]
+    mist_state = device.states["mistLevel"]
+    target_state = device.states["targetHumidity"]
 
     device.mode_state.activate("manual_mode")
     assert mist_state.set_state(40) == ["mist_level"]
@@ -214,13 +298,33 @@ def test_purifier_model_specific_states(
     default_device = PurifierDevice(purifier_model_default)
     h7126_device = PurifierDevice(purifier_model_h7126)
 
-    assert {"fan_speed", "night_light", "control_lock"} <= set(default_device.states)
-    assert "filter_life" not in default_device.states
+    assert {"fanSpeed", "nightLight", "controlLock"} <= set(default_device.states)
+    assert "filterLife" not in default_device.states
 
-    assert {"manual_mode", "custom_mode", "filter_life", "timer"} <= set(
-        h7126_device.states
-    )
-    assert "fan_speed" in h7126_device.states
+    assert {
+        "manual_mode",
+        "custom_mode",
+        "filterLife",
+        "timer",
+        "displaySchedule",
+        "filterExpired",
+    } <= set(h7126_device.states)
+    assert "fanSpeed" in h7126_device.states
+
+
+def test_purifier_registers_catalog_state_types(
+    purifier_model_h7126: MockDeviceModel,
+) -> None:
+    """Purifiers should wire catalog-backed control states."""
+
+    device = PurifierDevice(purifier_model_h7126)
+    states = device.states
+
+    assert isinstance(states["displaySchedule"], DisplayScheduleState)
+    assert isinstance(states["controlLock"], ControlLockState)
+    assert isinstance(states["timer"], TimerState)
+    assert isinstance(states["filterLife"], FilterLifeState)
+    assert isinstance(states["filterExpired"], FilterExpiredState)
 
 
 def test_purifier_fan_speed_respects_active_modes(
@@ -229,7 +333,7 @@ def test_purifier_fan_speed_respects_active_modes(
     """Fan speed adjustments should be locked unless manual/custom are active."""
 
     device = PurifierDevice(purifier_model_h7126)
-    fan_speed = device.states["fan_speed"]
+    fan_speed = device.states["fanSpeed"]
 
     device.mode_state.activate("manual_mode")
     assert fan_speed.set_state(3) == ["fan_speed"]

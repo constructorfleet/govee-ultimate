@@ -6,35 +6,33 @@ from typing import Any
 
 from custom_components.govee_ultimate.state import (
     ActiveState,
+    ControlLockState,
     DeviceState,
+    DisplayScheduleState,
+    FilterExpiredState,
+    FilterLifeState,
     ModeState,
+    NightLightState,
     ParseOption,
     PowerState,
+    TimerState,
 )
 
 from .base import BaseDevice, EntityCategory, PurifierEntities
 
 
-class _BooleanState(DeviceState[bool | None]):
-    """Boolean state helper."""
-
-    def __init__(self, device: Any, name: str) -> None:
-        super().__init__(
-            device=device,
-            name=name,
-            initial_value=None,
-            parse_option=ParseOption.NONE,
-        )
-
-    def set_state(self, next_state: Any) -> list[str]:
-        self._update_state(bool(next_state))
-        return [self.name]
-
-
 class _NumericState(DeviceState[int | None]):
     """Numeric state with bounded values."""
 
-    def __init__(self, device: Any, name: str, *, minimum: int, maximum: int) -> None:
+    def __init__(
+        self,
+        device: Any,
+        name: str,
+        *,
+        minimum: int,
+        maximum: int,
+        command_name: str | None = None,
+    ) -> None:
         super().__init__(
             device=device,
             name=name,
@@ -43,6 +41,7 @@ class _NumericState(DeviceState[int | None]):
         )
         self._minimum = minimum
         self._maximum = maximum
+        self._command_name = command_name or name
 
     def set_state(self, next_state: Any) -> list[str]:
         try:
@@ -52,7 +51,7 @@ class _NumericState(DeviceState[int | None]):
         if numeric < self._minimum or numeric > self._maximum:
             return []
         self._update_state(numeric)
-        return [self.name]
+        return [self._command_name]
 
 
 class _ModeOptionState(DeviceState[str]):
@@ -95,7 +94,13 @@ class PurifierFanSpeedState(_NumericState):
     def __init__(self, device: Any, mode_state: PurifierActiveState) -> None:
         """Initialise the fan speed state bound to ``mode_state``."""
 
-        super().__init__(device, "fan_speed", minimum=1, maximum=6)
+        super().__init__(
+            device,
+            "fanSpeed",
+            minimum=1,
+            maximum=6,
+            command_name="fan_speed",
+        )
         self._mode_state = mode_state
 
     def set_state(self, next_state: Any) -> list[str]:
@@ -112,14 +117,31 @@ class PurifierFanSpeedState(_NumericState):
 class PurifierDevice(BaseDevice):
     """Simplified purifier port matching the TypeScript factory."""
 
-    _DEFAULT_FEATURES = ("night_light", "timer", "control_lock")
+    _BASE_FEATURES = ("nightLight", "controlLock", "timer")
+    _MODEL_FEATURES = {
+        "H7126": ("displaySchedule", "filterLife", "filterExpired"),
+    }
     _FEATURE_PLATFORMS = {
-        "night_light": ("light", None),
+        "nightLight": ("light", None),
         "timer": ("switch", EntityCategory.CONFIG),
-        "control_lock": ("switch", EntityCategory.CONFIG),
-        "display_schedule": ("switch", EntityCategory.CONFIG),
-        "filter_expired": ("binary_sensor", EntityCategory.DIAGNOSTIC),
-        "filter_life": ("sensor", EntityCategory.DIAGNOSTIC),
+        "controlLock": ("switch", EntityCategory.CONFIG),
+        "displaySchedule": ("switch", EntityCategory.CONFIG),
+        "filterExpired": ("binary_sensor", EntityCategory.DIAGNOSTIC),
+        "filterLife": ("sensor", EntityCategory.DIAGNOSTIC),
+    }
+    _FEATURE_TRANSLATIONS = {
+        "nightLight": "night_light",
+        "controlLock": "control_lock",
+        "displaySchedule": "display_schedule",
+        "timer": "timer",
+    }
+    _FEATURE_SPEC = {
+        "nightLight": (NightLightState, {"identifier": [0x40]}),
+        "controlLock": (ControlLockState, {"identifier": [0x0A]}),
+        "displaySchedule": (DisplayScheduleState, {"identifier": [0x30]}),
+        "timer": (TimerState, {"identifier": [0x32]}),
+        "filterLife": (FilterLifeState, {}),
+        "filterExpired": (FilterExpiredState, {}),
     }
 
     def __init__(self, device_model: Any) -> None:
@@ -136,16 +158,6 @@ class PurifierDevice(BaseDevice):
             state=active,
             entity_category=EntityCategory.DIAGNOSTIC,
         )
-
-        display_schedule = self.add_state(
-            _BooleanState(device_model, "display_schedule")
-        )
-        self._register_feature_entity(
-            "display_schedule", display_schedule, translation_key="display_schedule"
-        )
-
-        filter_expired = self.add_state(_BooleanState(device_model, "filter_expired"))
-        self._register_feature_entity("filter_expired", filter_expired)
 
         mode_states: list[_ModeOptionState] = []
         if model_id == "H7126":
@@ -167,19 +179,19 @@ class PurifierDevice(BaseDevice):
         self.expose_entity(platform="number", state=self._fan_state)
 
         extras: list[DeviceState[Any]] = []
-        if model_id == "H7126":
-            timer = self.add_state(_BooleanState(device_model, "timer"))
-            self._register_feature_entity("timer", timer, translation_key="timer")
-            filter_life = self.add_state(
-                _NumericState(device_model, "filter_life", minimum=0, maximum=100)
+        features = list(self._BASE_FEATURES)
+        model_features = self._MODEL_FEATURES.get(model_id, ())
+        for feature in model_features:
+            if feature not in features:
+                features.append(feature)
+
+        for feature in features:
+            state = self.add_state(self._build_feature_state(device_model, feature))
+            extras.append(state)
+            translation_key = self._FEATURE_TRANSLATIONS.get(feature)
+            self._register_feature_entity(
+                feature, state, translation_key=translation_key
             )
-            self._register_feature_entity("filter_life", filter_life)
-            extras.append(filter_life)
-        else:
-            for feature in self._DEFAULT_FEATURES:
-                state = self.add_state(_BooleanState(device_model, feature))
-                self._register_feature_entity(feature, state, translation_key=feature)
-                extras.append(state)
 
         self._entities = PurifierEntities(
             primary=power,
@@ -199,6 +211,17 @@ class PurifierDevice(BaseDevice):
         """Return entity metadata for the purifier platform."""
 
         return self._entities
+
+    def _build_feature_state(self, device_model: Any, feature: str) -> DeviceState[Any]:
+        """Create the device state matching ``feature``."""
+
+        try:
+            factory, extra_kwargs = self._FEATURE_SPEC[feature]
+        except KeyError as exc:  # pragma: no cover - defensive guard
+            raise KeyError(feature) from exc
+        kwargs = {"device": device_model}
+        kwargs.update(extra_kwargs)
+        return factory(**kwargs)
 
     def _register_feature_entity(
         self,

@@ -71,6 +71,11 @@ class BaseDevice:
         self._states[state.name] = state
         return state
 
+    def alias_state(self, alias: str, state: DeviceState[Any]) -> None:
+        """Expose ``state`` under an additional key for update compatibility."""
+
+        self._states[alias] = state
+
     def expose_entity(
         self,
         *,
