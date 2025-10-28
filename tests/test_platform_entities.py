@@ -751,6 +751,64 @@ async def test_binary_sensor_entity_tracks_state(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("metadata_fixture", "device_fixture", "entry_id"),
+    [
+        ("humidifier_metadata", "humidifier_device", "entry-connected-humidifier"),
+        ("purifier_metadata", "purifier_device", "entry-connected-purifier"),
+        ("fake_device_metadata", "rgbic_device", "entry-connected-rgbic"),
+    ],
+)
+async def test_connected_binary_sensor_tracks_state(
+    request: pytest.FixtureRequest,
+    setup_platform_stubs: Callable[[], None],
+    metadata_fixture: str,
+    device_fixture: str,
+    entry_id: str,
+) -> None:
+    """Connectivity binary sensors should mirror connectivity state changes."""
+
+    metadata: DeviceMetadata = request.getfixturevalue(metadata_fixture)
+    device = request.getfixturevalue(device_fixture)
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id=entry_id)
+    coordinator = FakeCoordinator(
+        {metadata.device_id: device},
+        {metadata.device_id: metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "binary_sensor",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    unique_id = f"{metadata.device_id}-isConnected"
+    connected_entity = next(
+        entity for entity in added_entities if entity.unique_id == unique_id
+    )
+
+    connected_state = device.states["isConnected"]
+    connected_state._update_state(True)
+    coordinator.notify_listeners()
+    assert connected_entity.is_on is True
+
+    connected_state._update_state(False)
+    coordinator.notify_listeners()
+    assert connected_entity.is_on is False
+
+
+@pytest.mark.asyncio
 async def test_fan_entity_updates_and_publishes_commands(
     setup_platform_stubs: Callable[[], None],
     purifier_metadata: DeviceMetadata,

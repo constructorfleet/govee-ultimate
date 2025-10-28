@@ -152,6 +152,8 @@ class PurifierDevice(BaseDevice):
         power = self.add_state(PowerState(device_model))
         self.expose_entity(platform="fan", state=power)
 
+        self._register_connected_state(device_model)
+
         active = self.add_state(ActiveState(device_model))
         self.expose_entity(
             platform="binary_sensor",
