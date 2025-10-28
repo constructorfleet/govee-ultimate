@@ -412,6 +412,7 @@ def test_rgbic_light_registers_expected_states(
     states = device.states
     assert set(states) >= {
         "power",
+        "isConnected",
         "active",
         "brightness",
         "color",
@@ -422,6 +423,7 @@ def test_rgbic_light_registers_expected_states(
         "diyMode",
     }
     assert isinstance(states["power"], PowerState)
+    assert isinstance(states["isConnected"], ConnectedState)
     assert isinstance(states["brightness"], BrightnessState)
     assert isinstance(states["color"], ColorRGBState)
     assert isinstance(states["colorTemperature"], ColorTemperatureState)
@@ -507,6 +509,7 @@ def test_device_states_expose_home_assistant_entities(
     light_entities = light_device.home_assistant_entities
     assert {
         "power",
+        "isConnected",
         "brightness",
         "color",
         "colorTemperature",
@@ -521,6 +524,9 @@ def test_device_states_expose_home_assistant_entities(
     assert light_entities["brightness"].platform == "light"
     assert light_entities["colorTemperature"].platform == "light"
     assert light_entities["segmentColor"].platform == "light"
+    assert light_entities["isConnected"].platform == "binary_sensor"
+    assert light_entities["isConnected"].translation_key == "connected"
+    assert light_entities["isConnected"].entity_category is EntityCategory.DIAGNOSTIC
     assert light_entities["mode"].platform == "select"
     assert light_entities["lightEffect"].platform == "select"
     assert light_entities["micMode"].platform == "select"
@@ -529,6 +535,7 @@ def test_device_states_expose_home_assistant_entities(
     humidifier_entities = humidifier_device.home_assistant_entities
     assert {
         "power",
+        "isConnected",
         "mistLevel",
         "targetHumidity",
         "nightLight",
@@ -538,6 +545,11 @@ def test_device_states_expose_home_assistant_entities(
         "humidity",
     } <= set(humidifier_entities)
     assert humidifier_entities["power"].platform == "humidifier"
+    assert humidifier_entities["isConnected"].platform == "binary_sensor"
+    assert humidifier_entities["isConnected"].translation_key == "connected"
+    assert (
+        humidifier_entities["isConnected"].entity_category is EntityCategory.DIAGNOSTIC
+    )
     assert humidifier_entities["mistLevel"].platform == "number"
     assert humidifier_entities["targetHumidity"].platform == "number"
     assert humidifier_entities["nightLight"].platform == "light"
@@ -549,6 +561,7 @@ def test_device_states_expose_home_assistant_entities(
     purifier_entities = purifier_device.home_assistant_entities
     assert {
         "power",
+        "isConnected",
         "fanSpeed",
         "mode",
         "displaySchedule",
@@ -558,6 +571,9 @@ def test_device_states_expose_home_assistant_entities(
         "filterExpired",
     } <= set(purifier_entities)
     assert purifier_entities["power"].platform == "fan"
+    assert purifier_entities["isConnected"].platform == "binary_sensor"
+    assert purifier_entities["isConnected"].translation_key == "connected"
+    assert purifier_entities["isConnected"].entity_category is EntityCategory.DIAGNOSTIC
     assert purifier_entities["mode"].platform == "select"
     assert purifier_entities["fanSpeed"].platform == "number"
     assert purifier_entities["displaySchedule"].platform == "switch"

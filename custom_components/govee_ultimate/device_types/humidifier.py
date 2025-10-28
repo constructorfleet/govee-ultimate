@@ -182,6 +182,8 @@ class HumidifierDevice(BaseDevice):
         power = self.add_state(PowerState(device_model))
         self.expose_entity(platform="humidifier", state=power)
 
+        self._register_connected_state(device_model)
+
         active = self.add_state(ActiveState(device_model))
         self.expose_entity(
             platform="binary_sensor",

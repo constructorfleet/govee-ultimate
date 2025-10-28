@@ -7,7 +7,11 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any
 
-from custom_components.govee_ultimate.state import DeviceState, ModeState
+from custom_components.govee_ultimate.state import (
+    ConnectedState,
+    DeviceState,
+    ModeState,
+)
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,18 @@ class BaseDevice:
         )
         self._ha_entities[state.name] = entity
         return entity
+
+    def _register_connected_state(self, device_model: Any) -> ConnectedState:
+        """Add a diagnostic connected state and expose its entity."""
+
+        connected = self.add_state(ConnectedState(device=device_model))
+        self.expose_entity(
+            platform="binary_sensor",
+            state=connected,
+            translation_key="connected",
+            entity_category=EntityCategory.DIAGNOSTIC,
+        )
+        return connected
 
     @property
     def states(self) -> dict[str, DeviceState[Any]]:
