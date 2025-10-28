@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+
+import contextlib
 
 try:  # pragma: no cover - prefer voluptuous when available
     import voluptuous as vol
@@ -132,6 +135,19 @@ except ImportError:  # pragma: no cover - exercised in unit tests via stubs
 
 from . import DOMAIN
 
+try:  # pragma: no cover - import Home Assistant exceptions when available
+    from homeassistant.exceptions import HomeAssistantError
+except ImportError:  # pragma: no cover - fallback for tests
+    HomeAssistantError = Exception
+
+
+class CannotConnect(HomeAssistantError):
+    """Raised when the integration cannot reach the upstream service."""
+
+
+class InvalidAuth(HomeAssistantError):
+    """Raised when provided credentials are rejected by the API."""
+
 
 TITLE = "Govee Ultimate"
 
@@ -167,10 +183,81 @@ _IOT_OPTION_FIELD_TYPES: dict[str, type[Any]] = {
 }
 
 
+def _build_reauth_schema(default_email: str) -> Any:
+    """Construct the schema used for reauthentication steps."""
+
+    return vol.Schema(
+        {
+            vol.Optional("email", default=default_email): str,
+            vol.Required("password"): str,
+        }
+    )
+
+
+async def _async_validate_credentials(
+    hass: Any | None, email: str, password: str
+) -> None:
+    """Validate credentials by performing a login request."""
+
+    if hass is None:
+        raise CannotConnect("Missing Home Assistant instance")
+
+    from . import HTTP_ERROR  # local import to avoid circular dependency
+    from . import __init__ as integration  # pragma: no cover - thin wrapper
+    from .auth import GoveeAuthManager
+
+    http_client = await integration._async_get_http_client(hass)
+    auth = GoveeAuthManager(hass, http_client)
+
+    try:
+        await auth.async_login(email, password)
+    except HTTP_ERROR as exc:
+        status = getattr(exc, "response", None)
+        status_code = getattr(status, "status_code", None)
+        if status_code in {401, 403}:
+            raise InvalidAuth from exc
+        raise CannotConnect from exc
+
+
+async def _async_update_reauth_entry(
+    hass: Any, entry: Any, data: dict[str, Any]
+) -> None:
+    """Update credentials on the entry and trigger a reload."""
+
+    updater = getattr(hass.config_entries, "async_update_entry", None)
+    if updater is not None:
+        result = updater(entry, data=data)
+        if asyncio.iscoroutine(result):
+            await result
+
+    reloader = getattr(hass.config_entries, "async_reload", None)
+    if reloader is not None:
+        await reloader(getattr(entry, "entry_id", None))
+
+
+async def _async_flow_abort(flow: Any, *, reason: str) -> FlowResult:
+    """Abort the flow using Home Assistant's helper when available."""
+
+    abort = getattr(flow, "async_abort", None)
+    if callable(abort):
+        return await abort(reason=reason)
+    return {
+        "type": "abort",
+        "reason": reason,
+        "description_placeholders": {},
+    }
+
+
 class GoveeUltimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the configuration workflow for the integration."""
 
     VERSION = 1
+
+    def __init__(self) -> None:
+        """Store transient state for config and reauthentication flows."""
+
+        super().__init__()
+        self._reauth_entry: Any | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -186,7 +273,83 @@ class GoveeUltimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data["enable_iot_commands"] = False
             data["enable_iot_refresh"] = False
 
+        errors: dict[str, str] = {}
+        try:
+            await _async_validate_credentials(
+                getattr(self, "hass", None), data["email"], data["password"]
+            )
+        except InvalidAuth:
+            errors["base"] = "invalid_auth"
+        except CannotConnect:
+            errors["base"] = "cannot_connect"
+
+        if errors:
+            return await self.async_show_form(
+                step_id="user", data_schema=_USER_SCHEMA, errors=errors
+            )
+
+        if self._reauth_entry is not None:
+            await _async_update_reauth_entry(self.hass, self._reauth_entry, data)
+            return await _async_flow_abort(self, reason="reauth_successful")
+
         return await self.async_create_entry(title=TITLE, data=data)
+
+    async def async_step_reauth(
+        self,
+        user_input: dict[str, Any] | None = None,
+        entry: Any | None = None,
+        **kwargs: Any,
+    ) -> FlowResult:
+        """Perform a reauthentication workflow when credentials expire."""
+
+        if entry is None:
+            entry = kwargs.get("entry")
+        if entry is None:
+            with contextlib.suppress(Exception):
+                entry_id = kwargs.get("entry_id")
+                if entry_id and hasattr(self.hass.config_entries, "async_get_entry"):
+                    entry = self.hass.config_entries.async_get_entry(entry_id)
+
+        if entry is not None:
+            self._reauth_entry = entry
+
+        if self._reauth_entry is None:
+            return await _async_flow_abort(self, reason="reauth_failed")
+
+        if user_input is None:
+            schema = _build_reauth_schema(self._reauth_entry.data.get("email", ""))
+            return await self.async_show_form(
+                step_id="reauth_confirm",
+                data_schema=schema,
+                errors={},
+            )
+
+        submission = dict(user_input)
+        submission.setdefault("email", self._reauth_entry.data.get("email", ""))
+
+        errors: dict[str, str] = {}
+        try:
+            await _async_validate_credentials(
+                getattr(self, "hass", None), submission["email"], submission["password"]
+            )
+        except InvalidAuth:
+            errors["base"] = "invalid_auth"
+        except CannotConnect:
+            errors["base"] = "cannot_connect"
+
+        if errors:
+            schema = _build_reauth_schema(submission["email"])
+            return await self.async_show_form(
+                step_id="reauth_confirm",
+                data_schema=schema,
+                errors=errors,
+            )
+
+        updated = dict(self._reauth_entry.data)
+        updated.update(submission)
+        await _async_update_reauth_entry(self.hass, self._reauth_entry, updated)
+
+        return await _async_flow_abort(self, reason="reauth_successful")
 
 
 def _options_defaults(entry: Any) -> dict[str, Any]:
