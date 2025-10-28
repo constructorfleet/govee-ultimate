@@ -299,6 +299,8 @@ class FakeIoTClient:
         self.commands: list[tuple[str, dict[str, Any]]] = []
         self.refreshes: list[str] = []
         self.update_callback: Callable[[tuple[str, dict[str, Any]]], Any] | None = None
+        self.expiry_batches: list[list[str]] = []
+        self.pending_commands: dict[str, float] = {}
 
     async def async_start(self, device_ids: list[str]) -> None:
         """Record a start request for ``device_ids``."""
@@ -324,6 +326,13 @@ class FakeIoTClient:
         """Register the update callback invoked by state messages."""
 
         self.update_callback = callback
+
+    def expire_pending_commands(self) -> list[str]:
+        """Return the next batch of expired command identifiers."""
+
+        if self.expiry_batches:
+            return self.expiry_batches.pop(0)
+        return []
 
 
 def test_coordinator_inherits_home_assistant_data_update_coordinator() -> None:
@@ -574,6 +583,57 @@ async def test_iot_state_updates_flow_to_devices() -> None:
 
     device = coordinator.devices["device-iot"]
     assert device.states["power"].value is True
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_commands_clears_state_operations() -> None:
+    """Expired IoT commands should clear pending operations on device states."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-iot",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Humidifier",
+                "channels": {
+                    "iot": {
+                        "state_topic": "state/device-iot",
+                        "command_topic": "command/device-iot",
+                        "refresh_topic": "refresh/device-iot",
+                    }
+                },
+            }
+        ]
+    )
+    iot_client = FakeIoTClient()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=iot_client,
+        iot_state_enabled=True,
+        iot_command_enabled=True,
+    )
+
+    await coordinator.async_discover_devices()
+    device = coordinator.devices["device-iot"]
+    power_state = device.states["power"]
+    command_ids = power_state.set_state(True)
+    assert command_ids
+    expired_id = command_ids[0]
+    iot_client.expiry_batches.append([expired_id])
+
+    await coordinator._handle_iot_update(("device-iot", {"power": True}))
+    # simulate expiry routine invocation
+    coordinator._expire_pending_commands()
+
+    cleared = power_state.clear_queue.get_nowait()
+    assert cleared["command_id"] == expired_id
 
 
 @pytest.mark.asyncio

@@ -201,6 +201,13 @@ class DeviceState(Generic[T]):
         self._pending_commands.pop(command_id, None)
         self._emit_clear_event(command_id)
 
+    def expire_pending_commands(self, command_ids: Sequence[str]) -> None:
+        """Remove ``command_ids`` from pending tracking and emit clear events."""
+
+        for command_id in command_ids:
+            if command_id in self._pending_commands:
+                self._clear_pending(command_id)
+
     def parse_state(
         self, data: dict[str, object]
     ) -> None:  # pragma: no cover - override hook

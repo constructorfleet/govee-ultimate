@@ -81,6 +81,12 @@ TOKEN_REFRESH_INTERVAL = timedelta(minutes=5)
 _REAUTH_SERVICE_REGISTERED = False
 _SERVICES_KEY = f"{DOMAIN}_services_registered"
 
+_DEFAULT_IOT_TOPICS: dict[str, str] = {
+    "iot_state_topic": "govee/{device_id}/state",
+    "iot_command_topic": "govee/{device_id}/command",
+    "iot_refresh_topic": "govee/{device_id}/refresh",
+}
+
 if httpx is not None:  # pragma: no branch - defined when httpx is available
     HTTP_ERROR = httpx.HTTPError
 else:  # pragma: no cover - stubbed during unit tests
@@ -439,13 +445,20 @@ async def _async_prepare_iot_runtime(
     """Create the IoT client when enabled in the configuration entry."""
 
     data = getattr(entry, "data", {})
+    options = getattr(entry, "options", {}) or {}
     enable_iot = _config_flag(data, "enable_iot")
-    state_enabled = enable_iot and _config_flag(data, "enable_iot_state_updates")
-    command_enabled = enable_iot and _config_flag(data, "enable_iot_commands")
-    refresh_enabled = enable_iot and _config_flag(data, "enable_iot_refresh")
 
     if not enable_iot:
         return None, False, False, False
+
+    def _flag(option_key: str, fallback_key: str) -> bool:
+        if option_key in options:
+            return bool(options[option_key])
+        return _config_flag(data, fallback_key)
+
+    state_enabled = _flag("iot_state_enabled", "enable_iot_state_updates")
+    command_enabled = _flag("iot_command_enabled", "enable_iot_commands")
+    refresh_enabled = _flag("iot_refresh_enabled", "enable_iot_refresh")
 
     try:
         from .iot_client import IoTClient, IoTClientConfig
@@ -456,11 +469,19 @@ async def _async_prepare_iot_runtime(
     if mqtt_client is None:
         return None, False, False, False
 
+    state_topic = options.get("iot_state_topic", _DEFAULT_IOT_TOPICS["iot_state_topic"])
+    command_topic = options.get(
+        "iot_command_topic", _DEFAULT_IOT_TOPICS["iot_command_topic"]
+    )
+    refresh_topic = options.get(
+        "iot_refresh_topic", _DEFAULT_IOT_TOPICS["iot_refresh_topic"]
+    )
+
     config = IoTClientConfig(
-        enabled=True,
-        state_topic="govee/{device_id}/state",
-        command_topic="govee/{device_id}/command",
-        refresh_topic="govee/{device_id}/refresh",
+        enabled=state_enabled or command_enabled or refresh_enabled,
+        state_topic=state_topic,
+        command_topic=command_topic,
+        refresh_topic=refresh_topic,
     )
 
     iot_client = IoTClient(

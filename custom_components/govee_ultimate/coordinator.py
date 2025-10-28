@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import timedelta
@@ -164,6 +165,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         self._iot_state_enabled = iot_state_enabled
         self._iot_command_enabled = iot_command_enabled
         self._iot_refresh_enabled = iot_refresh_enabled
+        self._iot_expiry_handle: asyncio.TimerHandle | None = None
         if self._iot_client:
             setter = getattr(self._iot_client, "set_update_callback", None)
             if callable(setter):
@@ -211,6 +213,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             iot_devices = self._iot_device_ids()
             if iot_devices:
                 await self._iot_client.async_start(iot_devices)
+        self._schedule_command_expiry()
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Refresh metadata and expose a snapshot for Home Assistant entities."""
@@ -261,6 +264,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         if self._refresh_task is not None:
             self._refresh_task.cancel()
             self._refresh_task = None
+        self._cancel_command_expiry()
 
     def get_command_publisher(
         self, device_id: str, *, channel: str | None = None
@@ -296,6 +300,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         if channel_name == "iot":
             if self._iot_client and self._iot_command_enabled:
                 await self._iot_client.async_publish_command(device_id, command)
+                self._schedule_command_expiry()
             else:
                 await self._api_client.async_publish_iot_command(
                     device_id, channel_info, command
@@ -340,6 +345,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 
         device_id, payload = update
         await self.async_process_state_update(device_id, payload)
+        self._schedule_command_expiry()
 
     async def async_process_state_update(
         self, device_id: str, updates: dict[str, Any]
@@ -358,18 +364,82 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             changed.extend(self._apply_state_update(name, state, value))
         return changed
 
-    @staticmethod
-    def _apply_state_update(name: str, state: Any, value: Any) -> list[str]:
+    def _apply_state_update(self, name: str, state: Any, value: Any) -> list[str]:
         """Apply ``value`` to ``state`` using any custom hooks available."""
 
         update_handler = getattr(state, "apply_channel_update", None)
         if callable(update_handler):
             return update_handler(value)
+        if isinstance(value, dict) and self._invoke_state_parse(state, value):
+            return [name]
         update_method = getattr(state, "_update_state", None)
         if callable(update_method):
             update_method(value)
             return [name]
         return []
+
+    @staticmethod
+    def _invoke_state_parse(state: Any, value: dict[str, Any]) -> bool:
+        """Invoke the state parse hook when available."""
+
+        parse_method = getattr(state, "parse", None)
+        if callable(parse_method):
+            parse_method(value)
+            return True
+        return False
+
+    def _schedule_command_expiry(self) -> None:
+        """Schedule the next IoT command expiry sweep if required."""
+
+        if not (self._iot_client and self._iot_command_enabled):
+            self._cancel_command_expiry()
+            return
+
+        pending = self._iot_pending_commands()
+        if not pending:
+            self._cancel_command_expiry()
+            return
+
+        now = time.monotonic()
+        next_expiry = min(pending.values())
+        delay = max(0.0, next_expiry - now)
+        if self._iot_expiry_handle is not None:
+            self._iot_expiry_handle.cancel()
+        self._iot_expiry_handle = self._loop.call_later(
+            delay, self._expire_pending_commands
+        )
+
+    def _cancel_command_expiry(self) -> None:
+        """Cancel any scheduled IoT command expiry callbacks."""
+
+        if self._iot_expiry_handle is not None:
+            self._iot_expiry_handle.cancel()
+            self._iot_expiry_handle = None
+
+    def _expire_pending_commands(self) -> None:
+        """Expire pending IoT commands and notify device states."""
+
+        if not self._iot_client:
+            return
+
+        expired = self._iot_client.expire_pending_commands()
+        if expired:
+            for device in self.devices.values():
+                for state in device.states.values():
+                    expire = getattr(state, "expire_pending_commands", None)
+                    if callable(expire):
+                        expire(expired)
+        self._schedule_command_expiry()
+
+    def _iot_pending_commands(self) -> dict[str, float]:
+        """Return a mapping of pending IoT command expirations."""
+
+        if not self._iot_client:
+            return {}
+        pending = getattr(self._iot_client, "pending_commands", None)
+        if isinstance(pending, dict):
+            return dict(pending)
+        return {}
 
     async def _register_entities(
         self, metadata: DeviceMetadata, device: BaseDevice, device_entry_id: str
