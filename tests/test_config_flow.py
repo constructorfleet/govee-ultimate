@@ -112,3 +112,44 @@ async def test_user_flow_creates_entry_with_credentials_and_flags() -> None:
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "Govee Ultimate"
     assert result["data"] == user_input
+
+
+@pytest.mark.asyncio
+async def test_options_flow_allows_configuring_iot_topics() -> None:
+    """Options flow should surface IoT toggles and topic templates."""
+
+    entry = config_entries.ConfigEntry(data={"enable_iot": True})
+    entry.options = {
+        "iot_state_enabled": True,
+        "iot_command_enabled": False,
+        "iot_refresh_enabled": True,
+        "iot_state_topic": "custom/state/{device_id}",
+        "iot_command_topic": "custom/command/{device_id}",
+        "iot_refresh_topic": "custom/refresh/{device_id}",
+    }
+
+    flow = config_flow.GoveeUltimateOptionsFlowHandler(entry)
+
+    result = await flow.async_step_init(user_input=None)
+    assert result["type"] == FlowResultType.FORM
+    schema = result["data_schema"]
+    defaults = schema({})
+    assert defaults["iot_state_enabled"] is True
+    assert defaults["iot_command_enabled"] is False
+    assert defaults["iot_refresh_enabled"] is True
+    assert defaults["iot_state_topic"] == "custom/state/{device_id}"
+    assert defaults["iot_command_topic"] == "custom/command/{device_id}"
+    assert defaults["iot_refresh_topic"] == "custom/refresh/{device_id}"
+
+    new_options = {
+        "iot_state_enabled": False,
+        "iot_command_enabled": True,
+        "iot_refresh_enabled": False,
+        "iot_state_topic": "next/state/{device_id}",
+        "iot_command_topic": "next/command/{device_id}",
+        "iot_refresh_topic": "next/refresh/{device_id}",
+    }
+
+    result = await flow.async_step_init(user_input=new_options)
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"] == new_options

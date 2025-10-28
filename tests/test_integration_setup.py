@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 import sys
 from types import ModuleType, SimpleNamespace
@@ -82,6 +83,15 @@ if "homeassistant.helpers.update_coordinator" not in sys.modules:
             self.logger = logger
             self.name = name
             self.update_interval = update_interval
+            self.data: Any | None = None
+
+        async def async_config_entry_first_refresh(self) -> None:
+            update = getattr(self, "_async_update_data", None)
+            if callable(update):
+                self.data = await update()
+
+        async def async_request_refresh(self) -> None:
+            await self.async_config_entry_first_refresh()
 
     coordinator_module.DataUpdateCoordinator = _DataUpdateCoordinator
     helpers_module.update_coordinator = coordinator_module
@@ -1271,6 +1281,205 @@ async def test_async_setup_entry_enables_iot_client_when_requested(
     assert coordinator.kwargs["iot_state_enabled"] is True
     assert coordinator.kwargs["iot_command_enabled"] is True
     assert coordinator.kwargs["iot_refresh_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_async_prepare_iot_runtime_uses_options(
+    tmp_path, tmp_path_factory, request, monkeypatch
+) -> None:
+    """IoT runtime preparation should honour entry options for topics and flags."""
+
+    hass = FakeHass(config_dir=str(tmp_path))
+    entry = FakeConfigEntry(
+        entry_id="iot-options",
+        data={
+            "email": "iot@example.com",
+            "password": "secret",
+            "enable_iot": True,
+            "enable_iot_state_updates": True,
+            "enable_iot_commands": True,
+            "enable_iot_refresh": True,
+        },
+    )
+    entry.options = {
+        "iot_state_enabled": False,
+        "iot_command_enabled": True,
+        "iot_refresh_enabled": False,
+        "iot_state_topic": "state/{device_id}",
+        "iot_command_topic": "command/{device_id}",
+        "iot_refresh_topic": "refresh/{device_id}",
+    }
+
+    fake_mqtt = SimpleNamespace(published=[])
+
+    async def fake_get_mqtt(hass: Any) -> Any:
+        return fake_mqtt
+
+    monkeypatch.setattr(
+        integration, "_async_get_mqtt_client", fake_get_mqtt, raising=False
+    )
+
+    iot_client, state_enabled, command_enabled, refresh_enabled = (
+        await integration._async_prepare_iot_runtime(hass, entry)
+    )
+
+    assert state_enabled is False
+    assert command_enabled is True
+    assert refresh_enabled is False
+
+    config = getattr(iot_client, "_config")
+    assert config.state_topic == "state/{device_id}"
+    assert config.command_topic == "command/{device_id}"
+    assert config.refresh_topic == "refresh/{device_id}"
+
+
+@pytest.mark.asyncio
+async def test_mqtt_flow_updates_state_and_publishes_commands(
+    tmp_path, tmp_path_factory, request, monkeypatch
+) -> None:
+    """End-to-end MQTT flow should update device state and publish commands."""
+
+    hass = FakeHass(config_dir=str(tmp_path))
+    entry = FakeConfigEntry(
+        entry_id="iot-entry",
+        data={
+            "email": "iot@example.com",
+            "password": "secret",
+            "enable_iot": True,
+            "enable_iot_state_updates": True,
+            "enable_iot_commands": True,
+            "enable_iot_refresh": False,
+        },
+    )
+    entry.options = {
+        "iot_state_enabled": True,
+        "iot_command_enabled": True,
+        "iot_refresh_enabled": False,
+    }
+
+    class FakeClient:
+        async def aclose(self) -> None:
+            pass
+
+    class FakeAuth:
+        def __init__(self, hass: Any, client: Any) -> None:
+            self.tokens: Any | None = SimpleNamespace(
+                access_token="token", should_refresh=lambda *_: False
+            )
+
+        async def async_initialize(self) -> None:
+            pass
+
+    class FakeApiClient:
+        def __init__(self, hass: Any, client: Any, auth: Any) -> None:
+            self.hass = hass
+
+        async def async_get_devices(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "device_id": "device-iot",
+                    "model": "H7142",
+                    "sku": "H7142",
+                    "category": "Home Appliances",
+                    "category_group": "Air Treatment",
+                    "device_name": "Humidifier",
+                    "channels": {
+                        "iot": {
+                            "state_topic": "state/device-iot",
+                            "command_topic": "command/device-iot",
+                            "refresh_topic": "refresh/device-iot",
+                        }
+                    },
+                }
+            ]
+
+    class FakeDeviceRegistry:
+        def __init__(self) -> None:
+            self.counter = 0
+
+        async def async_get_or_create(self, **kwargs: Any) -> Any:
+            self.counter += 1
+            return SimpleNamespace(id=f"device-entry-{self.counter}")
+
+    class FakeEntityRegistry:
+        async def async_get_or_create(self, *args: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace()
+
+    class FakeMQTT:
+        def __init__(self) -> None:
+            self.subscriptions: list[tuple[str, Callable[..., Any], int]] = []
+            self.published: list[tuple[str, str, int, bool]] = []
+
+        async def async_subscribe(
+            self, topic: str, callback: Callable[[str, Any], Any], qos: int = 0
+        ) -> Callable[[], None]:
+            self.subscriptions.append((topic, callback, qos))
+            return lambda: None
+
+        async def async_publish(
+            self, topic: str, payload: str, qos: int = 0, retain: bool = False
+        ) -> None:
+            self.published.append((topic, payload, qos, retain))
+
+    mqtt = FakeMQTT()
+
+    async def fake_get_mqtt(hass: Any) -> Any:
+        return mqtt
+
+    async def fake_get_async_client(
+        hass: Any, *, verify_ssl: bool = True
+    ) -> FakeClient:
+        return FakeClient()
+
+    monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
+    monkeypatch.setattr(
+        integration, "_get_device_client_class", lambda: FakeApiClient, raising=False
+    )
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers.httpx_client"],
+        "get_async_client",
+        fake_get_async_client,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration, "_async_get_mqtt_client", fake_get_mqtt, raising=False
+    )
+    monkeypatch.setattr(
+        integration,
+        "_get_device_registry",
+        lambda hass: FakeDeviceRegistry(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "_get_entity_registry",
+        lambda hass: FakeEntityRegistry(),
+        raising=False,
+    )
+
+    assert await integration.async_setup_entry(hass, entry) is True
+
+    stored = hass.data[DOMAIN][entry.entry_id]
+    coordinator = stored["coordinator"]
+
+    assert mqtt.subscriptions
+    topic, callback, qos = mqtt.subscriptions[0]
+    assert topic == "govee/device-iot/state"
+    assert qos == 0
+
+    callback(topic, json.dumps({"power": {"isOn": True}}))
+    await asyncio.sleep(0)
+    device = coordinator.devices["device-iot"]
+    assert device.states["power"].value is True
+
+    publisher = coordinator.get_command_publisher("device-iot", channel="iot")
+    await publisher({"command_id": "cmd-1", "payload": "value"})
+
+    assert mqtt.published
+    published_topic, payload, qos, retain = mqtt.published[0]
+    assert published_topic == "govee/device-iot/command"
+    assert qos == 0
+    assert retain is False
 
 
 @pytest.mark.asyncio

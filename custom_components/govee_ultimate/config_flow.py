@@ -74,6 +74,13 @@ try:  # pragma: no cover - executed within Home Assistant
 except ImportError:  # pragma: no cover - exercised in unit tests via stubs
     from types import SimpleNamespace
 
+    class _ConfigEntry:
+        """Minimal stub of Home Assistant config entry for tests."""
+
+        def __init__(self, *, data: dict[str, Any]) -> None:
+            self.data = data
+            self.options: dict[str, Any] = {}
+
     class _ConfigFlow:  # type: ignore[too-few-public-methods]
         """Fallback base class used during unit tests."""
 
@@ -113,8 +120,15 @@ except ImportError:  # pragma: no cover - exercised in unit tests via stubs
         FORM = "form"
         CREATE_ENTRY = "create_entry"
 
+    class _OptionsFlow(_ConfigFlow):
+        """Fallback options flow base class used during unit tests."""
+
     FlowResult = dict[str, Any]
-    config_entries = SimpleNamespace(ConfigFlow=_ConfigFlow)
+    config_entries = SimpleNamespace(
+        ConfigFlow=_ConfigFlow,
+        OptionsFlow=_OptionsFlow,
+        ConfigEntry=_ConfigEntry,
+    )
 
 from . import DOMAIN
 
@@ -132,6 +146,25 @@ _USER_SCHEMA = vol.Schema(
         vol.Optional("enable_iot_refresh", default=False): bool,
     }
 )
+
+
+_DEFAULT_IOT_OPTIONS: dict[str, Any] = {
+    "iot_state_enabled": True,
+    "iot_command_enabled": False,
+    "iot_refresh_enabled": False,
+    "iot_state_topic": "govee/{device_id}/state",
+    "iot_command_topic": "govee/{device_id}/command",
+    "iot_refresh_topic": "govee/{device_id}/refresh",
+}
+
+_IOT_OPTION_FIELD_TYPES: dict[str, type[Any]] = {
+    "iot_state_enabled": bool,
+    "iot_command_enabled": bool,
+    "iot_refresh_enabled": bool,
+    "iot_state_topic": str,
+    "iot_command_topic": str,
+    "iot_refresh_topic": str,
+}
 
 
 class GoveeUltimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -154,3 +187,75 @@ class GoveeUltimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data["enable_iot_refresh"] = False
 
         return await self.async_create_entry(title=TITLE, data=data)
+
+
+def _options_defaults(entry: Any) -> dict[str, Any]:
+    """Return IoT option defaults using entry options or fallback values."""
+
+    options = dict(_DEFAULT_IOT_OPTIONS)
+    options.update(getattr(entry, "options", {}) or {})
+
+    data = getattr(entry, "data", {})
+    if data.get("enable_iot"):
+        options.setdefault(
+            "iot_state_enabled",
+            data.get("enable_iot_state_updates", options["iot_state_enabled"]),
+        )
+        options.setdefault(
+            "iot_command_enabled",
+            data.get("enable_iot_commands", options["iot_command_enabled"]),
+        )
+        options.setdefault(
+            "iot_refresh_enabled",
+            data.get("enable_iot_refresh", options["iot_refresh_enabled"]),
+        )
+    else:
+        options.setdefault("iot_state_enabled", False)
+        options.setdefault("iot_command_enabled", False)
+        options.setdefault("iot_refresh_enabled", False)
+    return options
+
+
+def _build_options_schema(defaults: dict[str, Any]) -> Any:
+    """Construct the options schema using ``defaults`` values."""
+
+    schema: dict[Any, type[Any]] = {}
+    for key, field_type in _IOT_OPTION_FIELD_TYPES.items():
+        schema[vol.Optional(key, default=defaults[key])] = field_type
+    return vol.Schema(schema)
+
+
+class GoveeUltimateOptionsFlowHandler(config_entries.OptionsFlow):
+    """Allow configuring IoT behaviour post-setup."""
+
+    def __init__(self, entry: Any) -> None:
+        """Store the config entry providing default option values."""
+        self._entry = entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Render the options form and persist submitted values."""
+        defaults = _options_defaults(self._entry)
+        schema = _build_options_schema(defaults)
+
+        if user_input is None:
+            return {
+                "type": FlowResultType.FORM,
+                "step_id": "init",
+                "data_schema": schema,
+                "errors": {},
+            }
+
+        options = schema(user_input)
+        return {
+            "type": FlowResultType.CREATE_ENTRY,
+            "title": TITLE,
+            "data": options,
+        }
+
+
+async def async_get_options_flow(entry: Any) -> GoveeUltimateOptionsFlowHandler:
+    """Return the options flow handler for Home Assistant."""
+
+    return GoveeUltimateOptionsFlowHandler(entry)
