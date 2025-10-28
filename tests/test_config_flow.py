@@ -305,11 +305,12 @@ async def test_reauth_flow_updates_entry_and_aborts_on_success(
     result = await flow.async_step_reauth(user_input=None, entry=entry)
 
     assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == config_flow.REAUTH_CONFIRM_STEP
     defaults = result["data_schema"]({"password": ""})
     assert defaults["email"] == "user@example.com"
 
     user_input = {"password": "new-secret"}
-    result = await flow.async_step_reauth(user_input=user_input, entry=entry)
+    result = await flow.async_step_reauth_confirm(user_input=user_input)
 
     assert result["type"] == "abort"
     assert result["reason"] == "reauth_successful"

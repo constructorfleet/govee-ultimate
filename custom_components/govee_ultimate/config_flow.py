@@ -135,6 +135,9 @@ except ImportError:  # pragma: no cover - exercised in unit tests via stubs
 
 from . import DOMAIN
 
+
+REAUTH_CONFIRM_STEP = "reauth_confirm"
+
 try:  # pragma: no cover - import Home Assistant exceptions when available
     from homeassistant.exceptions import HomeAssistantError
 except ImportError:  # pragma: no cover - fallback for tests
@@ -319,7 +322,7 @@ class GoveeUltimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is None:
             schema = _build_reauth_schema(self._reauth_entry.data.get("email", ""))
             return await self.async_show_form(
-                step_id="reauth_confirm",
+                step_id=REAUTH_CONFIRM_STEP,
                 data_schema=schema,
                 errors={},
             )
@@ -340,7 +343,7 @@ class GoveeUltimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if errors:
             schema = _build_reauth_schema(submission["email"])
             return await self.async_show_form(
-                step_id="reauth_confirm",
+                step_id=REAUTH_CONFIRM_STEP,
                 data_schema=schema,
                 errors=errors,
             )
@@ -350,6 +353,13 @@ class GoveeUltimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         await _async_update_reauth_entry(self.hass, self._reauth_entry, updated)
 
         return await _async_flow_abort(self, reason="reauth_successful")
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the submission from the reauthentication confirmation step."""
+
+        return await self.async_step_reauth(user_input=user_input)
 
 
 def _options_defaults(entry: Any) -> dict[str, Any]:
