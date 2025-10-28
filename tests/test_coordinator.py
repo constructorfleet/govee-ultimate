@@ -302,7 +302,11 @@ async def test_discovery_registers_home_assistant_entities() -> None:
     unique_ids = {entry["unique_id"] for entry in entity_registry.created}
     assert {"device-1-power", "device-1-mist_level"} <= unique_ids
 
-    power_entry = next(entry for entry in entity_registry.created if entry["unique_id"] == "device-1-power")
+    power_entry = next(
+        entry
+        for entry in entity_registry.created
+        if entry["unique_id"] == "device-1-power"
+    )
     assert power_entry["domain"] == "humidifier"
     assert power_entry["platform"] == "govee_ultimate"
     assert power_entry["device_id"] == device_entry.id

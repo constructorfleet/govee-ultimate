@@ -265,9 +265,7 @@ class EnablePresenceState(DeviceOpState[dict[str, bool | None]]):
             },
             "status": {
                 "op": {
-                    "command": [
-                        [_REPORT_OPCODE, *self._identifier, bio_flag, mm_flag]
-                    ]
+                    "command": [[_REPORT_OPCODE, *self._identifier, bio_flag, mm_flag]]
                 },
             },
         }
@@ -328,7 +326,9 @@ class DetectionSettingsState(DeviceOpState[dict[str, Any]]):
         report_bytes = _int_to_bytes(report)
         command_frames = [
             _opcode_frame(0x33, 0x05, 0x00, 0x01),
-            _opcode_frame(0x33, 0x05, 0x01, *distance_bytes, *absence_bytes, *report_bytes),
+            _opcode_frame(
+                0x33, 0x05, 0x01, *distance_bytes, *absence_bytes, *report_bytes
+            ),
         ]
         status_payload = distance_bytes + absence_bytes + report_bytes
         return {
@@ -338,9 +338,7 @@ class DetectionSettingsState(DeviceOpState[dict[str, Any]]):
             },
             "status": {
                 "op": {
-                    "command": [
-                        [_REPORT_OPCODE, *self._identifier, *status_payload]
-                    ]
+                    "command": [[_REPORT_OPCODE, *self._identifier, *status_payload]]
                 }
             },
         }
@@ -363,7 +361,9 @@ class DetectionSettingsState(DeviceOpState[dict[str, Any]]):
         unit = candidate.get("unit", "s")
         return _to_seconds(value, unit)
 
-    def _select_field(self, next_state: dict[str, Any], key: str) -> Mapping[str, Any] | None:
+    def _select_field(
+        self, next_state: dict[str, Any], key: str
+    ) -> Mapping[str, Any] | None:
         candidate = next_state.get(key)
         if isinstance(candidate, Mapping):
             return candidate
@@ -452,7 +452,9 @@ def _hex_to_bytes(hex_string: str) -> bytes:
     return bytes.fromhex(text)
 
 
-def _command_payload(template: CommandTemplate, context: Mapping[str, Any]) -> tuple[dict[str, Any], list[int]]:
+def _command_payload(
+    template: CommandTemplate, context: Mapping[str, Any]
+) -> tuple[dict[str, Any], list[int]]:
     """Render a command payload and assemble transport metadata."""
 
     payload_hex = _render_payload(template, context)
@@ -472,7 +474,9 @@ def _command_payload(template: CommandTemplate, context: Mapping[str, Any]) -> t
     )
 
 
-def _status_payload(state_key: str, value: Any, status_sequence: list[int]) -> list[dict[str, Any]]:
+def _status_payload(
+    state_key: str, value: Any, status_sequence: list[int]
+) -> list[dict[str, Any]]:
     return [
         {"state": {state_key: value}},
         {"op": {"command": [status_sequence]}},
@@ -558,7 +562,9 @@ class PowerState(DeviceOpState[bool | None]):
         value = _bool_from_value(next_state)
         if value is None:
             return None
-        command, payload_bytes = _command_payload(self._command_template, {"value": value})
+        command, payload_bytes = _command_payload(
+            self._command_template, {"value": value}
+        )
         status_sequence = [_REPORT_OPCODE, self._status_opcode, payload_bytes[-1]]
         return {
             "command": command,
@@ -606,7 +612,9 @@ class ActiveState(DeviceOpState[bool | None]):
         value = _bool_from_value(next_state)
         if value is None:
             return None
-        command, payload_bytes = _command_payload(self._command_template, {"value": value})
+        command, payload_bytes = _command_payload(
+            self._command_template, {"value": value}
+        )
         status_sequence = [_REPORT_OPCODE, self._status_opcode, payload_bytes[-1]]
         return {
             "command": command,
@@ -684,7 +692,9 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
         self._command_template = entry.command_templates[0]
         self._status_opcode = status_opcode
 
-    def _validate_channels(self, channels: Mapping[str, Any] | None) -> dict[str, int] | None:
+    def _validate_channels(
+        self, channels: Mapping[str, Any] | None
+    ) -> dict[str, int] | None:
         if channels is None:
             return None
         red = _int_from_value(channels.get("red"))
@@ -714,7 +724,9 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
 
     def _state_to_command(self, next_state: Mapping[str, Any] | None):
         """Convert RGB mappings into command payloads."""
-        channels = self._validate_channels(next_state if isinstance(next_state, Mapping) else None)
+        channels = self._validate_channels(
+            next_state if isinstance(next_state, Mapping) else None
+        )
         if channels is None:
             return None
         command, payload_bytes = _command_payload(self._command_template, channels)
@@ -729,4 +741,3 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
             "command": command,
             "status": _status_payload("color", channels, status_sequence),
         }
-

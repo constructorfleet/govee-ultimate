@@ -201,7 +201,9 @@ class DeviceState(Generic[T]):
         self._pending_commands.pop(command_id, None)
         self._emit_clear_event(command_id)
 
-    def parse_state(self, data: dict[str, object]) -> None:  # pragma: no cover - override hook
+    def parse_state(
+        self, data: dict[str, object]
+    ) -> None:  # pragma: no cover - override hook
         """Parse state payloads for subclasses."""
 
     def parse(self, data: dict[str, object]) -> None:
@@ -209,7 +211,9 @@ class DeviceState(Generic[T]):
 
         if data.get("cmd") and data.get("cmd") != "status":
             return
-        command_id = self._find_matching_command(data) if self._pending_commands else None
+        command_id = (
+            self._find_matching_command(data) if self._pending_commands else None
+        )
         if self.parse_option.has_flag(ParseOption.STATE):
             self.parse_state(data)
         if command_id is not None:
@@ -240,12 +244,18 @@ class DeviceOpState(DeviceState[T]):
         )
         self._op_type: int | None = op_identifier.get("op_type")
         identifier = op_identifier.get("identifier")
-        self._identifier: list[int] | None = list(identifier) if identifier is not None else None
+        self._identifier: list[int] | None = (
+            list(identifier) if identifier is not None else None
+        )
 
-    def parse_op_command(self, op_command: list[int]) -> None:  # pragma: no cover - hook
+    def parse_op_command(
+        self, op_command: list[int]
+    ) -> None:  # pragma: no cover - hook
         """Handle a single opcode command."""
 
-    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:  # pragma: no cover
+    def parse_multi_op_command(
+        self, op_commands: list[list[int]]
+    ) -> None:  # pragma: no cover
         """Handle multiple opcode commands."""
 
     def parse(self, data: dict[str, Any]) -> None:
@@ -319,7 +329,9 @@ class DeviceOpState(DeviceState[T]):
         if len(actual) < len(expected):
             return False
         for idx, expected_value in enumerate(expected):
-            if expected_value is None or (isinstance(expected_value, int) and expected_value < 0):
+            if expected_value is None or (
+                isinstance(expected_value, int) and expected_value < 0
+            ):
                 continue
             if actual[idx] != expected_value:
                 return False

@@ -101,7 +101,9 @@ def purifier_model_h7126() -> MockDeviceModel:
     )
 
 
-def test_rgbic_light_registers_expected_states(rgbic_device_model: MockDeviceModel) -> None:
+def test_rgbic_light_registers_expected_states(
+    rgbic_device_model: MockDeviceModel,
+) -> None:
     """RGBIC devices should expose the expected core light states."""
 
     device = RGBICLightDevice(rgbic_device_model)
@@ -164,6 +166,7 @@ def test_device_states_expose_home_assistant_entities(
     assert purifier_entities["mode"].platform == "select"
     assert purifier_entities["fan_speed"].platform == "number"
     assert purifier_entities["filter_life"].platform == "sensor"
+
 
 def test_humidifier_includes_model_specific_states(
     humidifier_model_h7141: MockDeviceModel,

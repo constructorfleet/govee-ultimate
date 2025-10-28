@@ -151,14 +151,20 @@ class DeviceListClient:
 
         try:
             payload = await self._request_payload()
-            devices = [self._normalize_device(item) for item in payload.get("devices", [])]
-            await self._store.async_save({"devices": [device.as_storage() for device in devices]})
+            devices = [
+                self._normalize_device(item) for item in payload.get("devices", [])
+            ]
+            await self._store.async_save(
+                {"devices": [device.as_storage() for device in devices]}
+            )
             return devices
         except (httpx.HTTPError, DeviceListError):
             cached = await self._store.async_load()
             if not cached:
                 raise
-            return [GoveeDevice.from_storage(item) for item in cached.get("devices", [])]
+            return [
+                GoveeDevice.from_storage(item) for item in cached.get("devices", [])
+            ]
 
     async def _request_payload(self) -> dict[str, Any]:
         """Request the raw JSON payload from the REST API."""
@@ -220,7 +226,9 @@ class DeviceListClient:
             return None
         return BluetoothInfo(name=settings["bleName"], mac=settings["address"])
 
-    def _parse_state(self, settings: dict[str, Any], data: dict[str, Any]) -> DeviceState:
+    def _parse_state(
+        self, settings: dict[str, Any], data: dict[str, Any]
+    ) -> DeviceState:
         return DeviceState(
             online=_coerce_bool(data.get("online")),
             is_on=_coerce_bool(data.get("isOnOff")),

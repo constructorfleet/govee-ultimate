@@ -108,7 +108,6 @@ class IoTClient:
             self._unsubscribe_device(device_id)
             await self._subscribe_device(device_id)
 
-
     async def async_publish_command(
         self, device_id: str, payload: dict[str, Any], *, retain: bool = False
     ) -> str:

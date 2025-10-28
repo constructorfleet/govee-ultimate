@@ -186,7 +186,9 @@ class HumidifierDevice(BaseDevice):
         )
         self.expose_entity(platform="select", state=self._mode_state)
 
-        self._mist_state = self.add_state(MistLevelState(device_model, self._mode_state))
+        self._mist_state = self.add_state(
+            MistLevelState(device_model, self._mode_state)
+        )
         self.expose_entity(platform="number", state=self._mist_state)
         self._target_state = self.add_state(
             TargetHumidityState(device_model, self._mode_state)
@@ -197,7 +199,9 @@ class HumidifierDevice(BaseDevice):
             if feature in {"uvc", "humidity"}:
                 state: DeviceState[Any]
                 if feature == "humidity":
-                    state = _NumericState(device_model, "humidity", minimum=0, maximum=100)
+                    state = _NumericState(
+                        device_model, "humidity", minimum=0, maximum=100
+                    )
                 else:
                     state = _BooleanState(device_model, feature)
             else:
