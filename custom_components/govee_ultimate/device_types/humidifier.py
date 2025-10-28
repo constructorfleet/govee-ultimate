@@ -13,6 +13,8 @@ from custom_components.govee_ultimate.state import (
     NightLightState,
     ParseOption,
     PowerState,
+    TimerState,
+    WaterShortageState,
 )
 from custom_components.govee_ultimate.state.states import HumidityState
 
@@ -187,16 +189,17 @@ class HumidifierDevice(BaseDevice):
             entity_category=EntityCategory.DIAGNOSTIC,
         )
 
-        shortage = self.add_state(_BooleanState(device_model, "waterShortage"))
+        shortage = self.add_state(WaterShortageState(device=device_model))
         # Maintain backwards compatibility with snake_case update payloads.
         self.alias_state("water_shortage", shortage)
         self.expose_entity(
             platform="binary_sensor",
             state=shortage,
+            translation_key="water_shortage",
             entity_category=EntityCategory.DIAGNOSTIC,
         )
 
-        timer = self.add_state(_BooleanState(device_model, "timer"))
+        timer = self.add_state(TimerState(device=device_model, identifier=[0x0A, 0x0B]))
         self.expose_entity(
             platform="switch",
             state=timer,

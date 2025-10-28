@@ -149,6 +149,36 @@ class ConnectedState(DeviceState[bool | None]):
                 return
 
 
+class BatteryLevelState(DeviceState[int | None]):
+    """Expose battery percentages reported by supported devices."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the battery state wrapper."""
+
+        super().__init__(device=device, name="batteryLevel", initial_value=None)
+
+    def parse_state(self, data: dict[str, Any]) -> None:
+        """Parse battery values from top-level or nested payloads."""
+
+        for mapping in self._candidate_mappings(data):
+            value = mapping.get("battery")
+            percentage = _int_from_value(value)
+            if percentage is None:
+                continue
+            if 0 <= percentage <= 100:
+                self._update_state(percentage)
+                return
+
+    def _candidate_mappings(self, data: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        candidates: list[Mapping[str, Any]] = []
+        if isinstance(data, Mapping):
+            candidates.append(data)
+            state_section = data.get("state")
+            if isinstance(state_section, Mapping):
+                candidates.append(state_section)
+        return candidates
+
+
 class ControlLockState(DeviceOpState[bool | None]):
     """Enable or disable on-device control buttons."""
 
@@ -167,9 +197,23 @@ class ControlLockState(DeviceOpState[bool | None]):
             device=device,
             name="controlLock",
             initial_value=None,
-            parse_option=ParseOption.OP_CODE,
+            parse_option=ParseOption.OP_CODE | ParseOption.STATE,
             state_to_command=self._state_to_command,
         )
+        self._state_keys = ("controlLock", "control_lock")
+
+    def parse_state(self, data: dict[str, Any]) -> None:
+        """Capture control lock flags from nested state payloads."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return
+        for key in self._state_keys:
+            value = state_section.get(key)
+            boolean = _bool_from_value(value)
+            if boolean is not None:
+                self._update_state(boolean)
+                return
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Interpret opcode payloads as boolean lock flags."""
@@ -234,7 +278,7 @@ class HumidityState(DeviceState[int | None]):
 
 
 class TimerState(DeviceOpState[bool | None]):
-    """Toggle the purifier timer on or off via opcode commands."""
+    """Represent the configured countdown timer for supported devices."""
 
     def __init__(
         self,
@@ -243,9 +287,13 @@ class TimerState(DeviceOpState[bool | None]):
         identifier: Sequence[int] | None = None,
         op_type: int = _REPORT_OPCODE,
     ) -> None:
-        """Initialise the timer handler with optional opcode metadata."""
+        """Initialise the timer handler using catalogue metadata."""
 
-        identifiers = list(identifier) if identifier is not None else []
+        entry = _state_entry("timer")
+        default_identifier = list(
+            _hex_to_bytes(entry.identifiers["status"].get("payload", ""))
+        )
+        identifiers = list(identifier) if identifier is not None else default_identifier
         super().__init__(
             op_identifier={"op_type": op_type, "identifier": identifiers},
             device=device,
@@ -254,40 +302,91 @@ class TimerState(DeviceOpState[bool | None]):
             parse_option=ParseOption.OP_CODE,
             state_to_command=self._state_to_command,
         )
+        self._status_identifier = list(identifiers)
+        options = entry.parse_options or {}
+        self._enabled_index = int(options.get("byte_index", 0))
+        duration_indexes = options.get("duration_bytes", [1, 2])
+        self._duration_indexes = (
+            int(duration_indexes[0]),
+            (
+                int(duration_indexes[1])
+                if len(duration_indexes) > 1
+                else int(duration_indexes[0]) + 1
+            ),
+        )
+        self._duration: int | None = None
 
     def parse_op_command(self, op_command: list[int]) -> None:
-        """Interpret opcode payloads as timer toggles."""
+        """Decode opcode payloads into enabled flag and remaining seconds."""
 
         payload = _strip_op_header(op_command, self._op_type, self._identifier)
-        if not payload:
+        required_index = max(self._enabled_index, *self._duration_indexes)
+        if len(payload) <= required_index:
             return
-        flag = payload[0]
-        if flag in (0x00, 0x01):
-            self._update_state(flag == 0x01)
+        enabled_flag = payload[self._enabled_index] == 0x01
+        hi_index, lo_index = self._duration_indexes
+        duration = (payload[hi_index] << 8) | payload[lo_index]
+        self._duration = duration
+        self._update_state(enabled_flag)
 
-    def _state_to_command(self, next_state: bool | None):
+    @property
+    def duration(self) -> int | None:
+        """Return the last known timer duration in seconds."""
+
+        return self._duration
+
+    def _state_to_command(self, next_state: Mapping[str, Any] | bool | None):
         """Translate timer requests into multi-sync commands."""
 
-        value = _bool_from_value(next_state)
-        if value is None:
+        if not self._status_identifier:
             return None
-        if not self._identifier:
+        enabled, duration = self._normalise_request(next_state)
+        if enabled is None:
             return None
-        byte_value = 0x01 if value else 0x00
-        frame = _opcode_frame(0x33, *self._identifier, byte_value)
+        if duration is None:
+            duration = self._duration
+        if duration is None:
+            duration = 0
+        if duration < 0 or duration > 0xFFFF:
+            return None
+        self._duration = duration
+        enabled_byte = 0x01 if enabled else 0x00
+        duration_high = (duration >> 8) & 0xFF
+        duration_low = duration & 0xFF
+        frame = _opcode_frame(
+            0x33,
+            *self._status_identifier,
+            enabled_byte,
+            duration_high,
+            duration_low,
+        )
+        status_sequence = [
+            _REPORT_OPCODE,
+            *self._status_identifier,
+            enabled_byte,
+            duration_high,
+            duration_low,
+        ]
         return {
             "command": {
                 "command": "multi_sync",
                 "data": {"command": [frame]},
             },
-            "status": {
-                "op": {
-                    "command": [
-                        [_REPORT_OPCODE, *self._identifier, byte_value],
-                    ]
-                }
-            },
+            "status": [
+                {"op": {"command": [status_sequence]}},
+                {"state": {"timer": {"enabled": enabled, "duration": duration}}},
+            ],
         }
+
+    def _normalise_request(
+        self, next_state: Mapping[str, Any] | bool | None
+    ) -> tuple[bool | None, int | None]:
+        if isinstance(next_state, Mapping):
+            return (
+                _bool_from_value(next_state.get("enabled")),
+                _int_from_value(next_state.get("duration")),
+            )
+        return _bool_from_value(next_state), None
 
 
 class FilterLifeState(DeviceState[int | None]):
@@ -334,6 +433,80 @@ class FilterExpiredState(DeviceState[bool | None]):
         flag = _bool_from_value(value)
         if flag is not None:
             self._update_state(flag)
+
+
+class WaterShortageState(DeviceOpState[bool | None]):
+    """Report low-water status from humidifiers."""
+
+    def __init__(self, *, device: object) -> None:
+        """Initialise the shortage tracker using catalogue metadata."""
+
+        entry = _state_entry("water_shortage")
+        payload_hex = entry.identifiers["status"].get("payload", "")
+        identifier = list(_hex_to_bytes(payload_hex))
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": identifier},
+            device=device,
+            name="waterShortage",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE | ParseOption.STATE,
+        )
+        value_map = entry.parse_options.get("value_map", {})
+        self._value_map = self._normalise_value_map(value_map)
+
+    def parse_state(self, data: dict[str, Any]) -> None:
+        """Parse boolean shortage flags from structured payloads."""
+
+        state_section = data.get("state")
+        if not isinstance(state_section, Mapping):
+            return
+        shortage = state_section.get("waterShortage")
+        flag = _bool_from_value(shortage)
+        if flag is not None:
+            self._update_state(flag)
+            return
+        sta_section = state_section.get("sta")
+        if not isinstance(sta_section, Mapping):
+            return
+        stc = sta_section.get("stc")
+        if not isinstance(stc, Sequence) or len(stc) < 2:
+            return
+        try:
+            code = int(stc[0])
+            value = int(stc[1])
+        except (TypeError, ValueError):
+            return
+        if code == 0x06:
+            self._update_state(value != 0)
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Interpret opcode payloads describing water shortage state."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        key = f"{payload[0]:02X}"
+        mapped = self._value_map.get(key)
+        if mapped is not None:
+            self._update_state(mapped)
+            return
+        self._update_state(payload[0] != 0x00)
+
+    @staticmethod
+    def _normalise_value_map(value_map: Mapping[str, Any]) -> dict[str, bool]:
+        normalised: dict[str, bool] = {}
+        for key, value in value_map.items():
+            if isinstance(value, str):
+                lowered = value.lower()
+                normalised[key.upper()] = lowered not in {
+                    "ok",
+                    "clear",
+                    "normal",
+                    "off",
+                }
+            else:
+                normalised[key.upper()] = bool(value)
+        return normalised
 
 
 class DisplayScheduleState(DeviceOpState[dict[str, Any]]):
