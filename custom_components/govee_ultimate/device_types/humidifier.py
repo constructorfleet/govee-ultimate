@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
+from collections.abc import Callable
 
 from custom_components.govee_ultimate.state import (
     ActiveState,
@@ -104,6 +106,7 @@ class HumidifierActiveState(ModeState):
             catalog_name="humidifier_mode",
         )
         self._by_name = {mode.name: mode for mode in modes}
+        self._listeners: list[Callable[[DeviceState[str] | None], None]] = []
 
     def activate(self, mode_name: str) -> None:
         """Set the active mode via human-readable name."""
@@ -115,6 +118,23 @@ class HumidifierActiveState(ModeState):
         if not identifier:
             identifier = [0x00]
         self._set_active_identifier(identifier)
+
+    def register_listener(
+        self, callback: Callable[[DeviceState[str] | None], None]
+    ) -> None:
+        """Register a listener invoked when the active mode changes."""
+
+        self._listeners.append(callback)
+
+    def _notify_listeners(self, mode: DeviceState[str] | None) -> None:
+        for listener in list(self._listeners):
+            listener(mode)
+
+    def _update_state(  # type: ignore[override]
+        self, value: DeviceState[str] | None
+    ) -> None:
+        super()._update_state(value)
+        self._notify_listeners(value)
 
 
 class MistLevelState(_NumericState):
@@ -155,14 +175,71 @@ class TargetHumidityState(_NumericState):
             command_name="target_humidity",
         )
         self._active_state = active_state
+        self._humidity_state: HumidityState | None = None
+        self._auto_active = False
+        self._auto_mode_name = "auto_mode"
+        self._active_state.register_listener(self._handle_active_mode)
+        self._handle_active_mode(self._active_state.active_mode)
+
+    def bind_humidity_state(self, humidity_state: HumidityState) -> None:
+        """Bind the humidity sensor for range-aware clamping."""
+
+        self._humidity_state = humidity_state
 
     def set_state(self, next_state: Any) -> list[str]:
         """Set target humidity when the humidifier supports it."""
 
-        active = self._active_state.active_mode
-        if active is None or active.name not in {"auto_mode", "custom_mode"}:
+        if not self._auto_active:
+            self._active_state.activate(self._auto_mode_name)
             return []
-        return super().set_state(next_state)
+
+        value = self._coerce(next_state)
+        if value is None:
+            return []
+
+        clamped = self._clamp_to_humidity_range(value)
+        self._update_state(clamped)
+        return [self._command_name]
+
+    def _handle_active_mode(self, mode: DeviceState[str] | None) -> None:
+        name = getattr(mode, "name", None)
+        self._auto_active = name == self._auto_mode_name
+        if not self._auto_active and self.value is not None:
+            self._update_state(None)
+
+    def _clamp_to_humidity_range(self, value: int) -> int:
+        minimum, maximum = self._humidity_bounds()
+        clamped = value
+        if minimum is not None and clamped < minimum:
+            clamped = minimum
+        if maximum is not None and clamped > maximum:
+            clamped = maximum
+        if clamped < self._minimum:
+            clamped = self._minimum
+        if clamped > self._maximum:
+            clamped = self._maximum
+        return clamped
+
+    def _humidity_bounds(self) -> tuple[int | None, int | None]:
+        state = self._humidity_state.value if self._humidity_state is not None else None
+        if not isinstance(state, Mapping):
+            return (None, None)
+        range_value = state.get("range")
+        if not isinstance(range_value, Mapping):
+            return (None, None)
+        return (
+            self._bound_value(range_value.get("min")),
+            self._bound_value(range_value.get("max")),
+        )
+
+    @staticmethod
+    def _bound_value(value: Any) -> int | None:
+        if isinstance(value, int | float):
+            return int(value)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class HumidifierDevice(BaseDevice):
@@ -282,6 +359,8 @@ class HumidifierDevice(BaseDevice):
             else:
                 state = _BooleanState(device_model, feature)
             registered = self.add_state(state)
+            if feature == "humidity":
+                self._target_state.bind_humidity_state(registered)
             entity_kwargs: dict[str, Any] = {
                 "platform": platform,
                 "state": registered,

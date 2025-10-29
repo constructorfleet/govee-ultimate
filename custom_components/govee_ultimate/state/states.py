@@ -683,8 +683,8 @@ class HumidifierUVCState(DeviceOpState[bool | None]):
         }
 
 
-class HumidityState(DeviceState[int | None]):
-    """Report the current ambient humidity percentage."""
+class HumidityState(DeviceState[dict[str, Any] | None]):
+    """Report the current ambient humidity percentage with calibration data."""
 
     def __init__(self, *, device: object) -> None:
         """Initialise the humidity sensor state handler."""
@@ -697,18 +697,134 @@ class HumidityState(DeviceState[int | None]):
         state_section = data.get("state")
         if not isinstance(state_section, Mapping):
             return
-        candidates = [state_section]
-        inner = state_section.get("state")
-        if isinstance(inner, Mapping):
-            candidates.append(inner)
-        for mapping in candidates:
-            value = mapping.get("humidity")
-            humidity = _int_from_value(value)
-            if humidity is None:
-                continue
-            if 0 <= humidity <= 100:
-                self._update_state(humidity)
+
+        measurement = state_section.get("humidity")
+        parsed = self._parse_measurement(measurement)
+        if parsed is not None:
+            self._update_state(parsed)
+
+        status_section = state_section.get("status")
+        if isinstance(status_section, Mapping):
+            self._parse_status_code(status_section.get("code"))
+
+    def _parse_measurement(self, measurement: Any) -> dict[str, Any] | None:
+        previous = self.value if isinstance(self.value, Mapping) else {}
+        previous_range = previous.get("range")
+        prev_min = (
+            previous_range.get("min") if isinstance(previous_range, Mapping) else None
+        )
+        prev_max = (
+            previous_range.get("max") if isinstance(previous_range, Mapping) else None
+        )
+        prev_calibration = previous.get("calibration")
+        prev_current = previous.get("current")
+
+        if isinstance(measurement, Mapping):
+            calibration = self._scaled_value(
+                measurement.get("calibration"), prev_calibration
+            )
+            current = self._scaled_value(measurement.get("current"), prev_current)
+            min_value = self._numeric_value(measurement.get("min"))
+            max_value = self._numeric_value(measurement.get("max"))
+        else:
+            calibration = self._scaled_value(None, prev_calibration)
+            current = self._scaled_value(measurement, prev_current)
+            min_value = self._numeric_value(prev_min)
+            max_value = self._numeric_value(prev_max)
+
+        if current is None:
+            return None
+
+        minimum = self._coalesce_bound(min_value, prev_min)
+        maximum = self._coalesce_bound(max_value, prev_max)
+
+        if minimum is not None and current < minimum:
+            return None
+        if maximum is not None and current > maximum:
+            return None
+
+        payload: dict[str, Any] = {"current": current}
+        raw = current - calibration if calibration is not None else current
+        payload["raw"] = raw
+        if calibration is not None:
+            payload["calibration"] = calibration
+
+        range_payload = self._range_payload(minimum, maximum)
+        if range_payload is not None:
+            payload["range"] = range_payload
+
+        return payload
+
+    def _parse_status_code(self, code: Any) -> None:
+        if not isinstance(code, str) or not code.strip():
             return
+        try:
+            codes = list(_hex_to_bytes(code))
+        except ValueError:
+            return
+        if len(codes) < 3:
+            return
+
+        raw = codes[2]
+        previous = self.value if isinstance(self.value, Mapping) else {}
+        calibration = previous.get("calibration")
+        if calibration is None:
+            calibration = 0
+        current = raw + calibration
+
+        payload: dict[str, Any] = {
+            "current": current,
+            "raw": raw,
+        }
+        payload["calibration"] = calibration
+        range_value = previous.get("range")
+        if isinstance(range_value, Mapping):
+            payload["range"] = range_value
+        self._update_state(payload)
+
+    def _scaled_value(
+        self, candidate: Any, previous: float | int | None
+    ) -> float | int | None:
+        numeric = _float_from_value(candidate)
+        if numeric is None:
+            if isinstance(previous, int | float):
+                return previous
+            return None
+        if numeric > 100:
+            numeric /= 100
+        if float(numeric).is_integer():
+            return int(numeric)
+        return numeric
+
+    def _numeric_value(self, candidate: Any) -> float | int | None:
+        numeric = _float_from_value(candidate)
+        if numeric is None:
+            return None
+        if float(numeric).is_integer():
+            return int(numeric)
+        return numeric
+
+    def _coalesce_bound(
+        self, candidate: float | int | None, fallback: Any
+    ) -> float | int | None:
+        if candidate is not None:
+            return candidate
+        if isinstance(fallback, int | float):
+            return fallback
+        return None
+
+    @staticmethod
+    def _range_payload(
+        minimum: float | int | None, maximum: float | int | None
+    ) -> dict[str, float | int] | None:
+        if minimum is None and maximum is None:
+            return None
+        payload: dict[str, float | int] = {}
+        if minimum is not None:
+            payload["min"] = minimum
+        if maximum is not None:
+            payload["max"] = maximum
+        return payload or None
 
 
 class TemperatureState(DeviceOpState[dict[str, Any]]):
