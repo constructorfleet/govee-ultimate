@@ -189,8 +189,7 @@ class TargetHumidityState(_NumericState):
     def set_state(self, next_state: Any) -> list[str]:
         """Set target humidity when the humidifier supports it."""
 
-        if not self._auto_active:
-            self._active_state.activate(self._auto_mode_name)
+        if not self._ensure_auto_mode():
             return []
 
         value = self._coerce(next_state)
@@ -219,6 +218,14 @@ class TargetHumidityState(_NumericState):
         if clamped > self._maximum:
             clamped = self._maximum
         return clamped
+
+    def _ensure_auto_mode(self) -> bool:
+        if self._auto_active:
+            return True
+        if self._active_state.is_commandable:
+            self._active_state.set_state(self._auto_mode_name)
+        self._active_state.activate(self._auto_mode_name)
+        return False
 
     def _humidity_bounds(self) -> tuple[int | None, int | None]:
         state = self._humidity_state.value if self._humidity_state is not None else None

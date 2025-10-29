@@ -810,6 +810,24 @@ def test_target_humidity_switches_to_auto_and_clamps_range(
     assert target_state.value == 35
 
 
+def test_target_humidity_auto_activation_queues_mode_command(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Auto activation should enqueue a mode change command before clamping."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    target_state = device.states["targetHumidity"]
+
+    device.mode_state.activate("manual_mode")
+
+    assert target_state.set_state(55) == []
+
+    auto_payload = device.mode_state.command_queue.get_nowait()
+    assert auto_payload["name"] == "set_humidifier_mode"
+    assert auto_payload["payload_hex"] == "2001"
+
+
 def test_purifier_model_specific_states(
     purifier_model_default: MockDeviceModel,
     purifier_model_h7126: MockDeviceModel,
