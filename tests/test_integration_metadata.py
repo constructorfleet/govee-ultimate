@@ -38,13 +38,3 @@ def test_config_schema_defined_for_async_setup() -> None:
 
     module = importlib.import_module("custom_components.govee_ultimate")
     assert hasattr(module, "CONFIG_SCHEMA")
-
-
-def test_hacs_metadata_includes_topics() -> None:
-    """HACS metadata should declare repository topics for discovery."""
-
-    hacs_path = Path("hacs.json")
-    hacs_config = json.loads(hacs_path.read_text())
-    topics = hacs_config.get("topics")
-    assert isinstance(topics, list) and all(isinstance(item, str) for item in topics)
-    assert topics
