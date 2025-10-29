@@ -1,0 +1,10 @@
+# Describes Home Assistant services provided by the Govee Ultimate integration.
+reauthenticate:
+  name: Reauthenticate integration
+  description: Trigger a reauthentication flow for a configured entry.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Unique identifier of the config entry to reauthenticate.
+      required: false
+      example: entry-1234

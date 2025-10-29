@@ -1,4 +1,6 @@
 {
+  "domain": "govee_ultimate",
+  "name": "Govee Ultimate",
   "codeowners": [
     "@constructorfleet"
   ],
@@ -7,10 +9,9 @@
     "mqtt"
   ],
   "documentation": "https://github.com/constructorfleet/govee-ultimate",
-  "domain": "govee_ultimate",
   "integration_type": "hub",
   "iot_class": "cloud_push",
-  "name": "Govee Ultimate",
+  "issue_tracker": "https://github.com/constructorfleet/govee-ultimate/issues",
   "requirements": [
     "httpx",
     "pydantic"
