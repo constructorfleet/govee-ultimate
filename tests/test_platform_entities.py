@@ -627,6 +627,47 @@ async def test_humidifier_select_entity_dispatches_mode_command(
 
 
 @pytest.mark.asyncio
+async def test_purifier_select_entity_does_not_publish_humidifier_command(
+    setup_platform_stubs: Callable[[], None],
+    purifier_metadata: DeviceMetadata,
+    purifier_device: PurifierDevice,
+) -> None:
+    """Purifier mode selects should not reuse humidifier opcode payloads."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-select-purifier")
+    coordinator = FakeCoordinator(
+        {purifier_metadata.device_id: purifier_device},
+        {purifier_metadata.device_id: purifier_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "select",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    mode_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{purifier_metadata.device_id}-mode"
+    )
+
+    await mode_entity.async_select_option("manual_mode")
+
+    assert coordinator.command_publisher_calls == []
+
+
+@pytest.mark.asyncio
 async def test_switch_entity_updates_and_publishes_commands(
     setup_platform_stubs: Callable[[], None],
     humidifier_metadata: DeviceMetadata,
