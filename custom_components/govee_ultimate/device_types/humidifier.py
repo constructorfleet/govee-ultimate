@@ -168,9 +168,18 @@ class TargetHumidityState(_NumericState):
 class HumidifierDevice(BaseDevice):
     """Python mirror of the TypeScript humidifier implementation."""
 
-    _MODEL_FEATURES = {
-        "H7141": ("nightLight", "controlLock"),
-        "H7142": ("nightLight", "controlLock", "displaySchedule", "uvc", "humidity"),
+    _MODEL_FEATURES: dict[str, tuple[Any, ...]] = {
+        "H7141": (
+            ("nightLight", {"identifier": [0x18]}),
+            ("controlLock", {"identifier": [0x0A]}),
+        ),
+        "H7142": (
+            ("nightLight", {"identifier": [0x1B]}),
+            ("controlLock", {"identifier": [0x0A]}),
+            ("displaySchedule", {"identifier": [0x1B]}),
+            "uvc",
+            "humidity",
+        ),
     }
 
     _FEATURE_PLATFORMS = {
@@ -233,15 +242,39 @@ class HumidifierDevice(BaseDevice):
         )
         self.expose_entity(platform="number", state=self._target_state)
 
-        for feature in self._MODEL_FEATURES.get(device_model.model, ()):  # type: ignore[attr-defined]
+        for feature_entry in self._MODEL_FEATURES.get(device_model.model, ()):  # type: ignore[attr-defined]
+            if isinstance(feature_entry, tuple):
+                feature, feature_config = feature_entry
+            else:
+                feature = feature_entry
+                feature_config = {}
             platform, category = self._FEATURE_PLATFORMS.get(feature, ("sensor", None))
             state: DeviceState[Any]
+            identifier = (
+                feature_config.get("identifier")
+                if isinstance(feature_config, dict)
+                else None
+            )
+            op_type = (
+                feature_config.get("op_type")
+                if isinstance(feature_config, dict)
+                else None
+            )
+
+            def _build_kwargs(*, include_op_type: bool = True) -> dict[str, Any]:
+                kwargs: dict[str, Any] = {"device": device_model}
+                if identifier is not None:
+                    kwargs["identifier"] = identifier
+                if include_op_type and op_type is not None:
+                    kwargs["op_type"] = op_type
+                return kwargs
+
             if feature == "nightLight":
-                state = NightLightState(device=device_model, identifier=[0x40])
+                state = NightLightState(**_build_kwargs())
             elif feature == "displaySchedule":
-                state = DisplayScheduleState(device=device_model, identifier=[0x30])
+                state = DisplayScheduleState(**_build_kwargs())
             elif feature == "controlLock":
-                state = ControlLockState(device=device_model, identifier=[0x0A])
+                state = ControlLockState(**_build_kwargs(include_op_type=False))
             elif feature == "uvc":
                 state = HumidifierUVCState(device=device_model)
             elif feature == "humidity":
