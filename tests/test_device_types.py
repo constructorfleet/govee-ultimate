@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 
 from custom_components.govee_ultimate.device_types.base import EntityCategory
@@ -88,6 +91,67 @@ class MockDeviceModel:
         self.category = category
         self.category_group = category_group
         self.model_name = model_name
+
+
+class _DummyManualModeState:
+    """Stub manual mode state capturing mist level commands."""
+
+    name = "manual_mode"
+
+    def __init__(self) -> None:
+        self.value: int | None = None
+        self._listeners: list[Callable[[int | None], None]] = []
+        self.commands: list[list[str]] = []
+
+    def register_listener(self, callback: Callable[[int | None], None]) -> None:
+        self._listeners.append(callback)
+
+    def emit(self, value: int | None) -> None:
+        self.value = value
+        for listener in list(self._listeners):
+            listener(value)
+
+    def set_state(self, next_state: Any) -> list[str]:
+        if not isinstance(next_state, int | float):
+            raise TypeError(f"Unexpected manual payload: {next_state!r}")
+        level = int(next_state)
+        if level < 0:
+            level = 0
+        if level > 9:
+            level = 9
+        self.commands.append(["manual"])
+        self.emit(level)
+        return ["manual"]
+
+
+class _DummyCustomModeState:
+    """Stub custom mode state wiring mist level into program payloads."""
+
+    name = "custom_mode"
+
+    def __init__(self) -> None:
+        self.value: dict[str, Any] | None = None
+        self._listeners: list[Callable[[dict[str, Any] | None], None]] = []
+        self.commands: list[list[str]] = []
+
+    def register_listener(
+        self, callback: Callable[[dict[str, Any] | None], None]
+    ) -> None:
+        self._listeners.append(callback)
+
+    def emit(self, value: dict[str, Any] | None) -> None:
+        self.value = value
+        for listener in list(self._listeners):
+            listener(value)
+
+    def set_state(self, payload: Any) -> list[str]:
+        assert isinstance(payload, dict)
+        assert "mistLevel" in payload
+        self.commands.append(["custom"])
+        merged = dict(self.value or {})
+        merged.update(payload)
+        self.emit(merged)
+        return ["custom"]
 
 
 @pytest.fixture
@@ -762,8 +826,68 @@ def test_humidifier_mode_interlocks_gate_mist_levels(
     assert target_state.set_state(55) == []
 
     device.mode_state.activate("auto_mode")
-    assert mist_state.set_state(20) == []
+    assert mist_state.set_state(20) == ["mist_level"]
+    assert device.mode_state.active_mode is not None
+    assert device.mode_state.active_mode.name == "manual_mode"
+    assert mist_state.value == 20
+    assert target_state.set_state(60) == []
+    assert device.mode_state.active_mode is not None
+    assert device.mode_state.active_mode.name == "auto_mode"
     assert target_state.set_state(60) == ["target_humidity"]
+
+
+def test_mist_level_state_tracks_mode_and_delegates(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Mist level should mirror manual/custom delegates and switch from auto."""
+
+    manual_delegate = _DummyManualModeState()
+    custom_delegate = _DummyCustomModeState()
+    humidifier_model_h7142.manual_mode_state = manual_delegate
+    humidifier_model_h7142.custom_mode_state = custom_delegate
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    mist_state = device.states["mistLevel"]
+    mode_state = device.mode_state
+
+    mode_state.activate("manual_mode")
+    manual_delegate.emit(4)
+    assert mist_state.value == 4
+
+    manual_delegate.commands.clear()
+    assert mist_state.set_state(5) == ["manual"]
+    assert manual_delegate.commands == [["manual"]]
+    assert mist_state.value == 5
+
+    mode_state.activate("custom_mode")
+    custom_delegate.emit({"mistLevel": 45})
+    assert mist_state.value == 45
+
+    custom_delegate.commands.clear()
+    assert mist_state.set_state(50) == ["custom"]
+    assert custom_delegate.commands == [["custom"]]
+    assert mist_state.value == 50
+
+    assert mist_state.set_state("invalid") == []
+    assert custom_delegate.commands == [["custom"]]
+    assert mist_state.value == 50
+
+    mode_state.activate("auto_mode")
+    assert mist_state.value is None
+
+    manual_delegate.commands.clear()
+    assert mist_state.set_state(6) == ["manual"]
+    assert manual_delegate.commands == [["manual"]]
+    assert mode_state.active_mode is not None
+    assert mode_state.active_mode.name == "manual_mode"
+    assert mist_state.value == 6
+
+    manual_delegate.commands.clear()
+    assert mist_state.set_state(15) == ["manual"]
+    assert manual_delegate.commands == [["manual"]]
+    assert manual_delegate.value == 9
+    assert mist_state.value == 9
 
 
 def test_target_humidity_switches_to_auto_and_clamps_range(

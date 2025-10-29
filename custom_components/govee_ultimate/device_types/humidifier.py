@@ -83,7 +83,14 @@ class _NumericState(DeviceState[int | None]):
 class _ModeOptionState(DeviceState[str]):
     """Simple mode option carrying an identifier for ModeState mapping."""
 
-    def __init__(self, device: Any, name: str, identifier: int) -> None:
+    def __init__(
+        self,
+        device: Any,
+        name: str,
+        identifier: int,
+        *,
+        delegate: Any | None = None,
+    ) -> None:
         super().__init__(
             device=device,
             name=name,
@@ -91,6 +98,13 @@ class _ModeOptionState(DeviceState[str]):
             parse_option=ParseOption.NONE,
         )
         self._identifier = [identifier]
+        self._delegate = delegate
+
+    @property
+    def delegate_state(self) -> Any | None:
+        """Expose the backing state that handles commands when available."""
+
+        return self._delegate
 
 
 class HumidifierActiveState(ModeState):
@@ -151,14 +165,142 @@ class MistLevelState(_NumericState):
             command_name="mist_level",
         )
         self._active_state = active_state
+        self._mode_options: dict[str, DeviceState[str] | None] = {
+            "manual_mode": self._active_state.resolve_mode("manual_mode"),
+            "custom_mode": self._active_state.resolve_mode("custom_mode"),
+        }
+        self._delegates: dict[str, Any | None] = {
+            name: self._extract_delegate(option)
+            for name, option in self._mode_options.items()
+        }
+        self._delegate_callbacks: dict[str, Callable[[Any], None]] = {}
+        self._current_mode: str | None = None
+        for name, delegate in self._delegates.items():
+            self._subscribe_to_delegate(name, delegate)
+        self._active_state.register_listener(self._handle_active_mode)
+        self._handle_active_mode(self._active_state.active_mode)
 
     def set_state(self, next_state: Any) -> list[str]:
         """Set mist level when the humidifier is in a valid mode."""
 
-        active = self._active_state.active_mode
-        if active is None or active.name not in {"manual_mode", "custom_mode"}:
+        value = self._coerce(next_state)
+        if value is None:
             return []
-        return super().set_state(next_state)
+
+        active = self._active_state.active_mode
+        mode_name = getattr(active, "name", None)
+        if mode_name == "manual_mode":
+            return self._set_manual_level(value)
+        if mode_name == "custom_mode":
+            return self._set_custom_level(value)
+        if mode_name == "auto_mode":
+            return self._set_auto_level(value)
+        return []
+
+    def _set_manual_level(self, value: int) -> list[str]:
+        result = self._dispatch_delegate("manual_mode", value, ensure_manual=True)
+        if result is not None:
+            return result
+        self._ensure_manual_activation()
+        return super().set_state(value)
+
+    def _set_custom_level(self, value: int) -> list[str]:
+        result = self._dispatch_delegate("custom_mode", {"mistLevel": value})
+        if result is not None:
+            return result
+        return super().set_state(value)
+
+    def _set_auto_level(self, value: int) -> list[str]:
+        result = self._dispatch_delegate("manual_mode", value, ensure_manual=True)
+        if result is not None:
+            return result
+        if self._active_state.is_commandable:
+            self._active_state.set_state("manual_mode")
+        self._ensure_manual_activation()
+        return super().set_state(value)
+
+    def _extract_delegate(self, option: DeviceState[str] | None) -> Any | None:
+        if option is None:
+            return None
+        delegate = getattr(option, "delegate_state", None)
+        if delegate is not None:
+            return delegate
+        if getattr(option, "is_commandable", False) and hasattr(option, "set_state"):
+            return option
+        return None
+
+    def _subscribe_to_delegate(self, mode_name: str, delegate: Any | None) -> None:
+        if delegate is None or mode_name in self._delegate_callbacks:
+            return
+        register = getattr(delegate, "register_listener", None)
+        if not callable(register):
+            return
+
+        def _listener(value: Any) -> None:
+            self._handle_delegate_update(mode_name, value)
+
+        register(_listener)
+        self._delegate_callbacks[mode_name] = _listener
+
+    def _handle_delegate_update(self, mode_name: str, value: Any) -> None:
+        level = self._extract_level(mode_name, value)
+        if mode_name == self._current_mode:
+            if level is None:
+                if self.value is not None:
+                    self._update_state(None)
+            else:
+                self._update_state(level)
+
+    def _extract_level(self, mode_name: str, value: Any) -> int | None:
+        if mode_name == "custom_mode":
+            if isinstance(value, Mapping):
+                level = value.get("mistLevel")
+            else:
+                return None
+        else:
+            level = value
+        return self._coerce(level)
+
+    def _handle_active_mode(self, mode: DeviceState[str] | None) -> None:
+        mode_name = getattr(mode, "name", None)
+        if mode_name not in {"manual_mode", "custom_mode"}:
+            self._current_mode = None
+            if self.value is not None:
+                self._update_state(None)
+            return
+        self._current_mode = mode_name
+        delegate = self._delegates.get(mode_name)
+        self._subscribe_to_delegate(mode_name, delegate)
+        level = self._extract_level(mode_name, self._delegate_value(delegate))
+        if level is None:
+            if self.value is not None:
+                self._update_state(None)
+        else:
+            self._update_state(level)
+
+    @staticmethod
+    def _delegate_value(delegate: Any | None) -> Any:
+        return getattr(delegate, "value", None) if delegate is not None else None
+
+    def _dispatch_delegate(
+        self, mode_name: str, payload: Any, *, ensure_manual: bool = False
+    ) -> list[str] | None:
+        delegate = self._delegates.get(mode_name)
+        if delegate is None or not hasattr(delegate, "set_state"):
+            return None
+        result = delegate.set_state(payload)
+        if ensure_manual:
+            self._ensure_manual_activation()
+        if not result:
+            level = self._extract_level(mode_name, payload)
+            if level is not None:
+                self._update_state(level)
+        return result
+
+    def _ensure_manual_activation(self) -> None:
+        active = self._active_state.active_mode
+        if getattr(active, "name", None) != "manual_mode":
+            self._active_state.activate("manual_mode")
 
 
 class TargetHumidityState(_NumericState):
@@ -274,6 +416,29 @@ class HumidifierDevice(BaseDevice):
         "humidity": ("sensor", EntityCategory.DIAGNOSTIC),
     }
 
+    @staticmethod
+    def _resolve_mode_delegate(device_model: Any, mode_name: str) -> Any | None:
+        """Return a backing state for ``mode_name`` when exposed by the model."""
+
+        def _candidates(name: str) -> list[str]:
+            base = name.strip()
+            parts = base.split("_")
+            camel = parts[0] + "".join(part.capitalize() for part in parts[1:])
+            return [
+                f"{base}_state",
+                base,
+                camel,
+                f"{camel}State",
+            ]
+
+        for attribute in _candidates(mode_name):
+            if not attribute:
+                continue
+            candidate = getattr(device_model, attribute, None)
+            if candidate is not None:
+                return candidate
+        return None
+
     def __init__(self, device_model: Any) -> None:
         """Initialise humidifier states based on the device model."""
 
@@ -308,9 +473,23 @@ class HumidifierDevice(BaseDevice):
             entity_category=EntityCategory.CONFIG,
         )
 
-        manual = self.add_state(_ModeOptionState(device_model, "manual_mode", 0x00))
-        custom = self.add_state(_ModeOptionState(device_model, "custom_mode", 0x01))
-        auto = self.add_state(_ModeOptionState(device_model, "auto_mode", 0x02))
+        manual_delegate = self._resolve_mode_delegate(device_model, "manual_mode")
+        custom_delegate = self._resolve_mode_delegate(device_model, "custom_mode")
+        auto_delegate = self._resolve_mode_delegate(device_model, "auto_mode")
+
+        manual = self.add_state(
+            _ModeOptionState(
+                device_model, "manual_mode", 0x00, delegate=manual_delegate
+            )
+        )
+        custom = self.add_state(
+            _ModeOptionState(
+                device_model, "custom_mode", 0x01, delegate=custom_delegate
+            )
+        )
+        auto = self.add_state(
+            _ModeOptionState(device_model, "auto_mode", 0x02, delegate=auto_delegate)
+        )
 
         self._mode_state = self.add_state(
             HumidifierActiveState(device_model, [manual, custom, auto])
