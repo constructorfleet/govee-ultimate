@@ -15,7 +15,12 @@ from .. import opcodes
 from collections.abc import Sequence
 
 from ..state_catalog import CommandTemplate, StateEntry, load_state_catalog
-from .device_state import DeviceOpState, DeviceState, ParseOption
+from .device_state import (
+    DeviceOpState,
+    DeviceState,
+    ParseOption,
+    StateCommandAndStatus,
+)
 
 
 def _chunk(values: Sequence[int], size: int) -> list[list[int]]:
@@ -332,6 +337,15 @@ def _default_mode_identifier(state: ModeState) -> DeviceState[str] | None:
     return None
 
 
+def _normalise_mode_name(value: str) -> str:
+    """Return a canonical uppercase token for mode comparisons."""
+
+    token = value.strip().replace("-", "_").replace(" ", "_")
+    if token.lower().endswith("_mode"):
+        token = token[: -len("_mode")]
+    return token.upper()
+
+
 class ModeState(DeviceOpState[DeviceState[str] | None]):
     """Manage a collection of mode states keyed by identifier sequences."""
 
@@ -344,20 +358,41 @@ class ModeState(DeviceOpState[DeviceState[str] | None]):
         identifier: list[int] | None = None,
         inline: bool = False,
         identifier_map=_default_mode_identifier,
+        catalog_name: str | None = None,
     ) -> None:
         """Initialise the composite mode state handler."""
 
+        entry = _state_entry(catalog_name) if catalog_name else None
+        command_template = entry.command_templates[0] if entry else None
+        status_opcode = (
+            int(entry.identifiers["status"]["opcode"], 16) if entry else None
+        )
         super().__init__(
             op_identifier={"op_type": op_type, "identifier": identifier},
             device=device,
             name="mode",
             initial_value=None,
             parse_option=ParseOption.OP_CODE | ParseOption.STATE,
+            state_to_command=self._state_to_command if entry else None,
         )
         self._identifier_map = identifier_map
         self._inline = inline
         self._active_identifier: list[int] | None = None
         self._modes: list[DeviceState[str]] = []
+        self._mode_aliases: dict[str, str] = {}
+        self._mode_lookup: dict[str, DeviceState[str]] = {}
+        self._command_template = command_template
+        self._status_opcode = status_opcode
+        self._mode_payloads: dict[str, str] = {}
+        if entry is not None:
+            command_identifiers = entry.identifiers.get("command", {})
+            payloads = command_identifiers.get("payloads", {})
+            for label, payload in payloads.items():
+                normalised = _normalise_mode_name(str(label))
+                self._mode_payloads[normalised] = str(payload).upper()
+                if normalised not in self._mode_aliases:
+                    suffix = "_mode" if not str(label).endswith("_mode") else ""
+                    self._mode_aliases[normalised] = f"{label}{suffix}".strip()
         for mode in modes:
             self.register_mode(mode)
 
@@ -386,6 +421,14 @@ class ModeState(DeviceOpState[DeviceState[str] | None]):
             return
         if mode not in self._modes:
             self._modes.append(mode)
+        name = getattr(mode, "name", None)
+        if isinstance(name, str):
+            self._mode_aliases.setdefault(_normalise_mode_name(name), name)
+            self._mode_lookup.setdefault(_normalise_mode_name(name), mode)
+        value = getattr(mode, "value", None)
+        if isinstance(value, str):
+            self._mode_aliases.setdefault(_normalise_mode_name(value), value)
+            self._mode_lookup.setdefault(_normalise_mode_name(value), mode)
 
     def parse_state(self, data: dict[str, Any]) -> None:
         """Capture active mode identifiers from structured state payloads."""
@@ -417,6 +460,49 @@ class ModeState(DeviceOpState[DeviceState[str] | None]):
         self._active_identifier = identifier
         active_mode = self._identifier_map(self)
         self._update_state(active_mode)
+
+    def _resolve_mode_token(self, next_state: Any) -> str | None:
+        if isinstance(next_state, DeviceState):
+            name = getattr(next_state, "name", None)
+            if isinstance(name, str):
+                return _normalise_mode_name(name)
+            value = getattr(next_state, "value", None)
+            if isinstance(value, str):
+                return _normalise_mode_name(value)
+            return None
+        if isinstance(next_state, str):
+            if not next_state.strip():
+                return None
+            return _normalise_mode_name(next_state)
+        return None
+
+    def _state_to_command(self, next_state: Any):
+        if self._command_template is None or self._status_opcode is None:
+            return None
+        token = self._resolve_mode_token(next_state)
+        if token is None:
+            return None
+        payload_hex = self._mode_payloads.get(token)
+        if payload_hex is None:
+            return None
+        mode_code = payload_hex[2:] if len(payload_hex) > 2 else payload_hex
+        command, payload_bytes = _command_payload(
+            self._command_template, {"mode_code": mode_code}
+        )
+        status_sequence = [_REPORT_OPCODE, self._status_opcode, *payload_bytes[1:]]
+        state_value = self._mode_aliases.get(token, token.lower())
+        return {
+            "command": command,
+            "status": _status_payload(self.name, state_value, status_sequence),
+        }
+
+    def resolve_mode(self, option: Any) -> DeviceState[str] | None:
+        """Return the registered mode matching ``option`` when available."""
+
+        token = self._resolve_mode_token(option)
+        if token is None:
+            return None
+        return self._mode_lookup.get(token)
 
 
 class ConnectedState(DeviceState[bool | None]):
@@ -2309,6 +2395,8 @@ class _IdentifierStringState(DeviceState[str | None]):
         device: object,
         name: str,
         identifier: Sequence[int] | None = None,
+        options: Sequence[str] | None = None,
+        state_to_command: Callable[[Any], StateCommandAndStatus | None] | None = None,
     ) -> None:
         """Initialise the identifier-tracked string state."""
 
@@ -2317,8 +2405,10 @@ class _IdentifierStringState(DeviceState[str | None]):
             name=name,
             initial_value=None,
             parse_option=ParseOption.NONE,
+            state_to_command=state_to_command,
         )
         self._identifier = list(identifier) if identifier is not None else []
+        self.options = list(options) if options is not None else []
 
     def set_state(self, next_state: Any) -> list[str]:
         """Persist string values after normalising whitespace."""
@@ -2328,6 +2418,11 @@ class _IdentifierStringState(DeviceState[str | None]):
         value = next_state.strip()
         if not value:
             return []
+        if self.is_commandable:
+            command_ids = DeviceState.set_state(self, value)
+            if command_ids:
+                self._update_state(value)
+            return command_ids
         self._update_state(value)
         return [self.name]
 
@@ -2340,7 +2435,42 @@ class LightEffectState(_IdentifierStringState):
     ) -> None:
         """Initialise the light effect selector."""
 
-        super().__init__(device=device, name="lightEffect", identifier=identifier)
+        entry = _state_entry("scene")
+        value_map = entry.parse_options.get("value_map", {})
+        options = list(value_map.values())
+        self._scene_codes = {
+            str(value).strip().upper(): str(key).upper()
+            for key, value in value_map.items()
+        }
+        self._command_template = entry.command_templates[0]
+        status_opcode = int(entry.identifiers["status"]["opcode"], 16)
+        self._status_opcode = status_opcode
+        super().__init__(
+            device=device,
+            name="lightEffect",
+            identifier=identifier,
+            options=options,
+            state_to_command=self._state_to_command,
+        )
+
+    def _state_to_command(self, next_state: Any):
+        if not isinstance(next_state, str):
+            return None
+        token = next_state.strip()
+        if not token:
+            return None
+        key = token.upper()
+        code = self._scene_codes.get(key)
+        if code is None:
+            return None
+        command, payload_bytes = _command_payload(
+            self._command_template, {"scene_id": code}
+        )
+        status_sequence = [_REPORT_OPCODE, self._status_opcode, *payload_bytes[1:]]
+        return {
+            "command": command,
+            "status": _status_payload(self.name, token, status_sequence),
+        }
 
 
 class MicModeState(_IdentifierStringState):

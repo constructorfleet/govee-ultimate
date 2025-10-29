@@ -537,6 +537,96 @@ async def test_humidifier_entity_updates_and_publishes_commands(
 
 
 @pytest.mark.asyncio
+async def test_light_select_entity_dispatches_effect_command(
+    setup_platform_stubs: Callable[[], None],
+    fake_device_metadata: DeviceMetadata,
+    rgbic_device: RGBICLightDevice,
+) -> None:
+    """Select entities should publish light effect commands when options change."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-select-light")
+    coordinator = FakeCoordinator(
+        {fake_device_metadata.device_id: rgbic_device},
+        {fake_device_metadata.device_id: fake_device_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "select",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    light_effect_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{fake_device_metadata.device_id}-lightEffect"
+    )
+
+    await light_effect_entity.async_select_option("sunrise")
+
+    assert coordinator.command_publisher_calls
+    device_id, command = coordinator.command_publisher_calls[-1]
+    assert device_id == fake_device_metadata.device_id
+    assert command["opcode"] == "0x05"
+    assert command["payload_hex"].upper() == "050001"
+
+
+@pytest.mark.asyncio
+async def test_humidifier_select_entity_dispatches_mode_command(
+    setup_platform_stubs: Callable[[], None],
+    humidifier_metadata: DeviceMetadata,
+    humidifier_device: HumidifierDevice,
+) -> None:
+    """Humidifier mode selects should enqueue the associated opcode payload."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-select-humidifier")
+    coordinator = FakeCoordinator(
+        {humidifier_metadata.device_id: humidifier_device},
+        {humidifier_metadata.device_id: humidifier_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "select",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    mode_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{humidifier_metadata.device_id}-mode"
+    )
+
+    await mode_entity.async_select_option("manual_mode")
+
+    assert coordinator.command_publisher_calls
+    device_id, command = coordinator.command_publisher_calls[-1]
+    assert device_id == humidifier_metadata.device_id
+    assert command["opcode"] == "0x20"
+    assert command["payload_hex"].upper() == "2003"
+
+
+@pytest.mark.asyncio
 async def test_switch_entity_updates_and_publishes_commands(
     setup_platform_stubs: Callable[[], None],
     humidifier_metadata: DeviceMetadata,

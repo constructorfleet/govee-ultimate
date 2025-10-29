@@ -73,7 +73,12 @@ class PurifierActiveState(ModeState):
     def __init__(self, device: Any, modes: list[_ModeOptionState]) -> None:
         """Initialise the purifier mode tracker."""
 
-        super().__init__(device=device, modes=modes, inline=True)
+        super().__init__(
+            device=device,
+            modes=modes,
+            inline=True,
+            catalog_name="humidifier_mode",
+        )
         self._modes_by_name = {mode.name: mode for mode in modes}
 
     def activate(self, mode_name: str) -> None:
