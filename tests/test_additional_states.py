@@ -214,7 +214,7 @@ def test_humidifier_uvc_state_emits_multi_sync_command(
 def display_schedule_state(device: DummyDevice) -> DisplayScheduleState:
     """Return a display schedule state bound to a dummy device."""
 
-    return DisplayScheduleState(device=device, identifier=[0x30])
+    return DisplayScheduleState(device=device, identifier=[0x18])
 
 
 def test_display_schedule_state_parses_payload(
@@ -222,7 +222,7 @@ def test_display_schedule_state_parses_payload(
 ) -> None:
     """Display schedule payloads map to structured from/to fields."""
 
-    payload = _schedule_payload(0x30, on=True, start=(0x06, 0x2D), end=(0x07, 0x3C))
+    payload = _schedule_payload(0x18, on=True, start=(0x06, 0x2D), end=(0x07, 0x3C))
     display_schedule_state.parse({"op": {"command": [payload]}})
 
     assert display_schedule_state.value == {
@@ -249,14 +249,14 @@ def test_display_schedule_state_emits_command_and_history(
 
     queued = _next_command(display_schedule_state)
     frame = queued["data"]["command"][0]
-    assert frame[:3] == [0x33, 0x30, 0x01]
-    assert frame[3:7] == [8, 15, 20, 45]
+    assert frame[:4] == [0x33, 0xAA, 0x18, 0x01]
+    assert frame[4:8] == [8, 15, 20, 45]
 
     display_schedule_state.parse(
         {
             "op": {
                 "command": [
-                    _schedule_payload(0x30, on=True, start=(8, 15), end=(20, 45))
+                    _schedule_payload(0x18, on=True, start=(8, 15), end=(20, 45))
                 ]
             }
         }
@@ -266,7 +266,7 @@ def test_display_schedule_state_emits_command_and_history(
     display_schedule_state.parse(
         {
             "op": {
-                "command": [_schedule_payload(0x30, on=False, start=(0, 0), end=(0, 0))]
+                "command": [_schedule_payload(0x18, on=False, start=(0, 0), end=(0, 0))]
             }
         }
     )
@@ -389,14 +389,14 @@ def test_unknown_state_is_not_commandable(unknown_state: UnknownState) -> None:
 def night_light_state(device: DummyDevice) -> NightLightState:
     """Return a night light state bound to a dummy device."""
 
-    return NightLightState(device=device, identifier=[0x40])
+    return NightLightState(device=device, identifier=[0x18])
 
 
 def test_night_light_state_parses_payload(night_light_state: NightLightState) -> None:
     """Night light payloads expose on flag and brightness."""
 
     night_light_state.parse(
-        {"op": {"command": [_night_light_payload(0x40, on=True, brightness=0x20)]}}
+        {"op": {"command": [_night_light_payload(0x18, on=True, brightness=0x20)]}}
     )
 
     assert night_light_state.value == {"on": True, "brightness": 0x20}
@@ -414,15 +414,15 @@ def test_night_light_state_emits_command_and_history(
 
     queued = _next_command(night_light_state)
     frame = queued["data"]["command"][0]
-    assert frame[:4] == [0x33, 0x40, 0x01, 0x40]
+    assert frame[:5] == [0x33, 0xAA, 0x18, 0x01, 0x40]
 
     night_light_state.parse(
-        {"op": {"command": [_night_light_payload(0x40, on=True, brightness=0x40)]}}
+        {"op": {"command": [_night_light_payload(0x18, on=True, brightness=0x40)]}}
     )
     assert night_light_state.value == {"on": True, "brightness": 0x40}
 
     night_light_state.parse(
-        {"op": {"command": [_night_light_payload(0x40, on=False, brightness=0x10)]}}
+        {"op": {"command": [_night_light_payload(0x18, on=False, brightness=0x10)]}}
     )
     assert night_light_state.value["on"] is False
 

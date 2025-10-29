@@ -62,6 +62,13 @@ from custom_components.govee_ultimate.state.states import (
 )
 
 
+def _next_command_frame(state) -> list[int]:
+    """Return the next queued command frame for assertions."""
+
+    queued = state.command_queue.get_nowait()
+    return queued["data"]["command"][0]
+
+
 class MockDeviceModel:
     """Minimal device model supporting device factory tests."""
 
@@ -654,6 +661,49 @@ def test_humidifier_registers_catalog_state_types(
     shortage_entity = device.home_assistant_entities["waterShortage"]
     assert shortage_entity.translation_key == "water_shortage"
     assert shortage_entity.entity_category == EntityCategory.DIAGNOSTIC
+
+
+def test_humidifier_h7141_night_light_uses_model_identifier(
+    humidifier_model_h7141: MockDeviceModel,
+) -> None:
+    """Night light commands should include the H7141 identifier sequence."""
+
+    device = HumidifierDevice(humidifier_model_h7141)
+    night_light = device.states["nightLight"]
+
+    command_ids = night_light.set_state({"on": True, "brightness": 12})
+
+    assert command_ids
+    frame = _next_command_frame(night_light)
+
+    assert frame[:5] == [0x33, 0xAA, 0x18, 0x01, 0x0C]
+
+
+def test_humidifier_h7142_identifier_sequences(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Night light and display schedule commands should use the H7142 identifiers."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    night_light = device.states["nightLight"]
+    night_light.set_state({"on": True, "brightness": 34})
+    night_light_frame = _next_command_frame(night_light)
+
+    assert night_light_frame[:5] == [0x33, 0xAA, 0x1B, 0x01, 0x22]
+
+    schedule = device.states["displaySchedule"]
+    schedule.set_state(
+        {
+            "on": True,
+            "from": {"hour": 6, "minute": 30},
+            "to": {"hour": 22, "minute": 15},
+        }
+    )
+    schedule_frame = _next_command_frame(schedule)
+
+    assert schedule_frame[:4] == [0x33, 0xAA, 0x1B, 0x01]
+    assert schedule_frame[4:8] == [6, 30, 22, 15]
 
 
 def test_meat_thermometer_registers_probes_and_presets(

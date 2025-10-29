@@ -1702,9 +1702,11 @@ class DisplayScheduleState(DeviceOpState[dict[str, Any]]):
             if start is None or end is None:
                 return None
             segments.extend([start[0], start[1], end[0], end[1]])
-        frame = _opcode_frame(
-            0x33, *self._identifier, 0x01 if on_flag else 0x00, *segments
-        )
+        prefix: list[int] = []
+        if self._op_type is not None:
+            prefix.append(self._op_type)
+        prefix.extend(self._identifier)
+        frame = _opcode_frame(0x33, *prefix, 0x01 if on_flag else 0x00, *segments)
         return {
             "command": {
                 "command": "multi_sync",
@@ -1768,9 +1770,11 @@ class NightLightState(DeviceOpState[dict[str, Any]]):
             return None
         if not isinstance(brightness, int) or not (0 <= brightness <= 100):
             return None
-        frame = _opcode_frame(
-            0x33, *self._identifier, 0x01 if on_flag else 0x00, brightness
-        )
+        prefix: list[int] = []
+        if self._op_type is not None:
+            prefix.append(self._op_type)
+        prefix.extend(self._identifier)
+        frame = _opcode_frame(0x33, *prefix, 0x01 if on_flag else 0x00, brightness)
         return {
             "command": {
                 "command": "multi_sync",
