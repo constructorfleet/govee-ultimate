@@ -14,6 +14,7 @@ from .entity import (
     resolve_coordinator,
 )
 from .state.device_state import DeviceState
+from .state.states import ModeState
 
 
 class GoveeSelectEntity(GoveeStateEntity, SelectEntity):
@@ -75,9 +76,30 @@ class GoveeSelectEntity(GoveeStateEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Attempt to change the selected option when commandable."""
 
-        if not self._state.is_commandable:
-            raise NotImplementedError(f"State {self._state.name} is read-only")
-        await self._async_publish_state(option)
+        state = self._state
+        target: Any = option
+        if isinstance(state, ModeState):
+            target = self._resolve_mode_selection(state, option)
+            if state.is_commandable:
+                await self._async_publish_state(target)
+                return
+            activator = getattr(state, "activate", None)
+            if callable(activator):
+                activator(option)
+                return
+        if not state.is_commandable:
+            raise NotImplementedError(f"State {state.name} is read-only")
+        await self._async_publish_state(target)
+
+    def _resolve_mode_selection(
+        self, mode_state: ModeState, option: str
+    ) -> DeviceState[str] | str:
+        """Return the best matching mode entry for ``option``."""
+
+        resolved = mode_state.resolve_mode(option)
+        if resolved is not None:
+            return resolved
+        return option.strip()
 
 
 async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:
