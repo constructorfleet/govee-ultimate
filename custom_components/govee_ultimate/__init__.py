@@ -6,6 +6,8 @@ import asyncio
 from datetime import timedelta
 from typing import Any
 
+from homeassistant.helpers import config_validation as cv
+
 DOMAIN = "govee_ultimate"
 PLATFORMS: tuple[str, ...] = (
     "light",
@@ -25,6 +27,9 @@ __all__ = [
     "async_setup_entry",
     "async_unload_entry",
 ]
+
+
+CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 
 def _ensure_event_loop() -> None:

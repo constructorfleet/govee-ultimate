@@ -557,6 +557,67 @@ async def test_light_brightness_entity_scales_and_dispatches_commands(
 
 
 @pytest.mark.asyncio
+async def test_light_brightness_entity_turn_on_without_value_uses_last_level(
+    request: pytest.FixtureRequest,
+    setup_platform_stubs: Callable[[], None],
+) -> None:
+    """Turning on without a brightness should restore the last non-zero level."""
+
+    metadata: DeviceMetadata = request.getfixturevalue("rgb_light_metadata")
+    device: RGBLightDevice = request.getfixturevalue("rgb_light_device")
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-brightness-default")
+    coordinator = FakeCoordinator(
+        {metadata.device_id: device},
+        {metadata.device_id: metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    brightness_entity: Any | None = None
+
+    try:
+        await _async_setup_platform(
+            "light",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+        brightness_entity = next(
+            entity
+            for entity in added_entities
+            if entity.unique_id == f"{metadata.device_id}-brightness"
+        )
+
+        await brightness_entity.async_added_to_hass()
+    finally:
+        teardown()
+
+    assert brightness_entity is not None
+
+    brightness_state = device.states["brightness"]
+    brightness_state._update_state(42)
+    coordinator.notify_listeners()
+
+    brightness_state._update_state(0)
+    coordinator.notify_listeners()
+    coordinator.command_publisher_calls.clear()
+
+    await brightness_entity.async_turn_on()
+
+    assert coordinator.command_publisher_calls
+    _device_id, payload = coordinator.command_publisher_calls[-1]
+
+    assert payload["name"] == "set_brightness"
+    assert payload["payload_hex"].lower() == "022a00"
+    assert brightness_entity._attr_brightness == pytest.approx(int(42 * 255 / 100))
+
+
+@pytest.mark.asyncio
 async def test_humidifier_entity_updates_and_publishes_commands(
     setup_platform_stubs: Callable[[], None],
     humidifier_metadata: DeviceMetadata,

@@ -19,6 +19,12 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
 
     _BRIGHTNESS_STATE = "brightness"
 
+    def __init__(self, coordinator: Any, device_id: str, entity: Any) -> None:
+        """Initialize the light entity and track brightness history."""
+
+        super().__init__(coordinator, device_id, entity)
+        self._last_brightness_percent: int | None = None
+
     @staticmethod
     def _percent_to_brightness(percent: int) -> int:
         """Convert a device brightness percentage to Home Assistant scale."""
@@ -36,6 +42,7 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
 
         if not self._is_brightness:
             self._attr_brightness = None
+            self._last_brightness_percent = None
             return
 
         if percent is None:
@@ -43,12 +50,25 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
             return
 
         self._attr_brightness = self._percent_to_brightness(percent)
+        if percent > 0:
+            self._last_brightness_percent = percent
 
     @property
     def _is_brightness(self) -> bool:
         """Return True when the bound state tracks brightness."""
 
         return self._state.name == self._BRIGHTNESS_STATE
+
+    def _fallback_brightness_percent(self) -> int:
+        """Return the default percent when no brightness is provided."""
+
+        stored = self._last_brightness_percent
+        if stored is None and isinstance(self._state.value, int):
+            if self._state.value > 0:
+                stored = self._state.value
+        if stored is None or stored <= 0:
+            return 100
+        return stored
 
     @property
     def is_on(self) -> bool | None:
@@ -88,10 +108,10 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
                 ha_value = int(brightness)
                 percent = self._brightness_to_percent(ha_value)
                 self._attr_brightness = max(0, min(255, ha_value))
+                if percent > 0:
+                    self._last_brightness_percent = percent
             else:
-                percent = (
-                    self._state.value if isinstance(self._state.value, int) else 100
-                )
+                percent = self._fallback_brightness_percent()
                 self._set_cached_brightness_from_percent(percent)
             await self._async_publish_state(percent)
             return
