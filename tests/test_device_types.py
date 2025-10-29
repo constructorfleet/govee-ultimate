@@ -692,11 +692,86 @@ def test_humidifier_mode_interlocks_gate_mist_levels(
     device.mode_state.activate("manual_mode")
     assert mist_state.set_state(40) == ["mist_level"]
     assert mist_state.value == 40
-    assert target_state.set_state(55) == []
+    target_commands = target_state.set_state(55)
+    assert target_commands == ["humidifier_mode", "target_humidity"]
 
     device.mode_state.activate("auto_mode")
-    assert mist_state.set_state(20) == []
-    assert target_state.set_state(60) == ["target_humidity"]
+    mist_commands = mist_state.set_state(20)
+    assert mist_commands == ["humidifier_mode", "mist_level"]
+    assert target_state.set_state(60) == ["humidifier_mode", "target_humidity"]
+
+
+def test_humidifier_target_humidity_requests_auto_mode(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Adjusting target humidity should switch the humidifier to auto mode."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    target_state = device.states["targetHumidity"]
+    device.mode_state.activate("manual_mode")
+
+    commands = target_state.set_state(55)
+
+    assert "target_humidity" in commands
+    assert "humidifier_mode" in commands
+    active_mode = device.mode_state.active_mode
+    assert active_mode is not None
+    assert active_mode.name == "auto_mode"
+
+
+def test_humidifier_mist_level_requests_manual_mode(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Changing mist level should switch the humidifier to manual mode."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    mist_state = device.states["mistLevel"]
+    device.mode_state.activate("auto_mode")
+
+    commands = mist_state.set_state(45)
+
+    assert "mist_level" in commands
+    assert "humidifier_mode" in commands
+    active_mode = device.mode_state.active_mode
+    assert active_mode is not None
+    assert active_mode.name == "manual_mode"
+
+
+def test_humidifier_program_states_switch_to_program_mode(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Updating a program should activate program mode and emit commands."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    for index in range(1, 4):
+        state_name = f"program{index}"
+        assert state_name in device.states
+        program_state = device.states[state_name]
+        assert isinstance(program_state.value, dict)
+        entity = device.home_assistant_entities[state_name]
+        assert entity.platform == "number"
+        assert entity.entity_category is EntityCategory.CONFIG
+
+    device.mode_state.activate("manual_mode")
+    program_state = device.states["program1"]
+
+    commands = program_state.set_state(
+        {"mist_level": 65, "duration": 600, "remaining": 600}
+    )
+
+    assert "humidifier_mode" in commands
+    assert "humidifier_program_1" in commands
+    assert program_state.value == {
+        "mist_level": 65,
+        "duration": 600,
+        "remaining": 600,
+    }
+    active_mode = device.mode_state.active_mode
+    assert active_mode is not None
+    assert active_mode.name == "program_mode"
 
 
 def test_purifier_model_specific_states(

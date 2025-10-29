@@ -482,7 +482,8 @@
           "payloads": {
             "auto": "2001",
             "sleep": "2002",
-            "manual": "2003"
+            "manual": "2003",
+            "program": "2004"
           }
         }
       },
@@ -490,7 +491,8 @@
         "value_map": {
           "01": "auto",
           "02": "sleep",
-          "03": "manual"
+          "03": "manual",
+          "04": "program"
         },
         "byte_index": 2
       },
@@ -592,6 +594,69 @@
           "opcode": "0x22",
           "payload_template": "22{{ value | int | format('02x') }}",
           "description": "Set humidifier target humidity"
+        }
+      ]
+    },
+    {
+      "state_name": "humidifier_program_1",
+      "op_type": "struct",
+      "identifiers": {
+        "command": {
+          "opcode": "0x23",
+          "payload": "2300",
+          "description": "Configure humidifier program 1"
+        }
+      },
+      "parse_options": {},
+      "status_templates": [],
+      "command_templates": [
+        {
+          "name": "set_humidifier_program_1",
+          "opcode": "0x23",
+          "payload_template": "23{{ mist_level | int | format('02x') }}{{ duration | int | format('04x') }}{{ remaining | int | format('04x') }}",
+          "description": "Set program 1 mist level and durations"
+        }
+      ]
+    },
+    {
+      "state_name": "humidifier_program_2",
+      "op_type": "struct",
+      "identifiers": {
+        "command": {
+          "opcode": "0x24",
+          "payload": "2400",
+          "description": "Configure humidifier program 2"
+        }
+      },
+      "parse_options": {},
+      "status_templates": [],
+      "command_templates": [
+        {
+          "name": "set_humidifier_program_2",
+          "opcode": "0x24",
+          "payload_template": "24{{ mist_level | int | format('02x') }}{{ duration | int | format('04x') }}{{ remaining | int | format('04x') }}",
+          "description": "Set program 2 mist level and durations"
+        }
+      ]
+    },
+    {
+      "state_name": "humidifier_program_3",
+      "op_type": "struct",
+      "identifiers": {
+        "command": {
+          "opcode": "0x25",
+          "payload": "2500",
+          "description": "Configure humidifier program 3"
+        }
+      },
+      "parse_options": {},
+      "status_templates": [],
+      "command_templates": [
+        {
+          "name": "set_humidifier_program_3",
+          "opcode": "0x25",
+          "payload_template": "25{{ mist_level | int | format('02x') }}{{ duration | int | format('04x') }}{{ remaining | int | format('04x') }}",
+          "description": "Set program 3 mist level and durations"
         }
       ]
     },

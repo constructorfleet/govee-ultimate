@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from custom_components.govee_ultimate.state import (
@@ -19,6 +20,10 @@ from custom_components.govee_ultimate.state import (
 from custom_components.govee_ultimate.state.states import HumidityState
 
 from .base import BaseDevice, EntityCategory, HumidifierEntities
+
+
+_HUMIDIFIER_MODE_COMMAND = "humidifier_mode"
+_PROGRAM_COUNT = 3
 
 
 class _BooleanState(DeviceState[bool | None]):
@@ -110,6 +115,15 @@ class HumidifierActiveState(ModeState):
             identifier = [0x00]
         self._set_active_identifier(identifier)
 
+    def ensure_mode(self, mode_name: str) -> bool:
+        """Activate ``mode_name`` when it is not already active."""
+
+        active = self.active_mode
+        if active is not None and active.name == mode_name:
+            return False
+        self.activate(mode_name)
+        return True
+
 
 class MistLevelState(_NumericState):
     """Mist level that only applies when manual or custom modes are active."""
@@ -129,10 +143,12 @@ class MistLevelState(_NumericState):
     def set_state(self, next_state: Any) -> list[str]:
         """Set mist level when the humidifier is in a valid mode."""
 
-        active = self._active_state.active_mode
-        if active is None or active.name not in {"manual_mode", "custom_mode"}:
+        commands = super().set_state(next_state)
+        if not commands:
             return []
-        return super().set_state(next_state)
+        if self._active_state.ensure_mode("manual_mode"):
+            commands = [_HUMIDIFIER_MODE_COMMAND, *commands]
+        return commands
 
 
 class TargetHumidityState(_NumericState):
@@ -153,10 +169,123 @@ class TargetHumidityState(_NumericState):
     def set_state(self, next_state: Any) -> list[str]:
         """Set target humidity when the humidifier supports it."""
 
-        active = self._active_state.active_mode
-        if active is None or active.name not in {"auto_mode", "custom_mode"}:
+        commands = super().set_state(next_state)
+        if not commands:
             return []
-        return super().set_state(next_state)
+        if self._active_state.ensure_mode("auto_mode"):
+            commands = [_HUMIDIFIER_MODE_COMMAND, *commands]
+        return commands
+
+
+class HumidifierProgramState(DeviceState[dict[str, int]]):
+    """Track and update humidifier program configuration."""
+
+    _MIST_MIN = 0
+    _MIST_MAX = 100
+    _DURATION_MIN = 0
+    _DURATION_MAX = 0xFFFF
+
+    def __init__(
+        self,
+        device: Any,
+        active_state: HumidifierActiveState,
+        *,
+        index: int,
+    ) -> None:
+        """Initialise the program state wrapper."""
+
+        super().__init__(
+            device=device,
+            name=f"program{index}",
+            initial_value={"mist_level": 0, "duration": 0, "remaining": 0},
+            parse_option=ParseOption.NONE,
+        )
+        self._active_state = active_state
+        self._index = index
+        self._command_name = f"humidifier_program_{index}"
+
+    @property
+    def attributes(self) -> dict[str, int]:
+        """Expose auxiliary attributes for Home Assistant entities."""
+
+        value = self.value
+        return {
+            "duration": int(value.get("duration", 0)),
+            "remaining": int(value.get("remaining", 0)),
+        }
+
+    def _coerce_mist_level(self, value: Any) -> int | None:
+        try:
+            numeric = int(value)
+        except (TypeError, ValueError):
+            return None
+        if numeric < self._MIST_MIN or numeric > self._MIST_MAX:
+            return None
+        return numeric
+
+    def _coerce_duration(self, value: Any) -> int | None:
+        try:
+            numeric = int(value)
+        except (TypeError, ValueError):
+            return None
+        if numeric < self._DURATION_MIN or numeric > self._DURATION_MAX:
+            return None
+        return numeric
+
+    def _apply_mapping_value(
+        self,
+        mapping: Mapping[str, Any],
+        key: str,
+        coerce: Callable[[Any], int | None],
+        updates: dict[str, int],
+    ) -> bool:
+        if key not in mapping:
+            return True
+        value = coerce(mapping.get(key))
+        if value is None:
+            return False
+        updates[key] = value
+        return True
+
+    def _normalise_update(self, next_state: Any) -> dict[str, int] | None:
+        if isinstance(next_state, Mapping):
+            updates: dict[str, int] = {}
+            if not self._apply_mapping_value(
+                next_state, "mist_level", self._coerce_mist_level, updates
+            ):
+                return None
+            if not self._apply_mapping_value(
+                next_state, "duration", self._coerce_duration, updates
+            ):
+                return None
+            if not self._apply_mapping_value(
+                next_state, "remaining", self._coerce_duration, updates
+            ):
+                return None
+            return updates
+
+        mist_level = self._coerce_mist_level(next_state)
+        if mist_level is None:
+            return None
+        return {"mist_level": mist_level}
+
+    def set_state(self, next_state: Any) -> list[str]:
+        """Update program configuration and ensure program mode is active."""
+
+        updates = self._normalise_update(next_state)
+        if updates is None:
+            return []
+        current = dict(self.value)
+        updated = {**current, **updates}
+        commands: list[str] = []
+        if self._active_state.ensure_mode("program_mode"):
+            commands.append(_HUMIDIFIER_MODE_COMMAND)
+        if updated != current:
+            self._update_state(updated)
+            commands.append(self._command_name)
+        elif not commands:
+            return []
+        return commands
 
 
 class HumidifierDevice(BaseDevice):
@@ -212,9 +341,10 @@ class HumidifierDevice(BaseDevice):
         manual = self.add_state(_ModeOptionState(device_model, "manual_mode", 0x00))
         custom = self.add_state(_ModeOptionState(device_model, "custom_mode", 0x01))
         auto = self.add_state(_ModeOptionState(device_model, "auto_mode", 0x02))
+        program = self.add_state(_ModeOptionState(device_model, "program_mode", 0x03))
 
         self._mode_state = self.add_state(
-            HumidifierActiveState(device_model, [manual, custom, auto])
+            HumidifierActiveState(device_model, [manual, custom, auto, program])
         )
         self.expose_entity(platform="select", state=self._mode_state)
 
@@ -226,6 +356,19 @@ class HumidifierDevice(BaseDevice):
             TargetHumidityState(device_model, self._mode_state)
         )
         self.expose_entity(platform="number", state=self._target_state)
+
+        programs: list[HumidifierProgramState] = []
+        for index in range(1, _PROGRAM_COUNT + 1):
+            program_state = self.add_state(
+                HumidifierProgramState(device_model, self._mode_state, index=index)
+            )
+            programs.append(program_state)
+            self.expose_entity(
+                platform="number",
+                state=program_state,
+                entity_category=EntityCategory.CONFIG,
+            )
+        self._program_states = tuple(programs)
 
         for feature in self._MODEL_FEATURES.get(device_model.model, ()):  # type: ignore[attr-defined]
             platform, category = self._FEATURE_PLATFORMS.get(feature, ("sensor", None))
@@ -258,6 +401,7 @@ class HumidifierDevice(BaseDevice):
             primary=power,
             mode=self._mode_state,
             controls=(self._mist_state, self._target_state),
+            programs=self._program_states,
             sensors=tuple(sensors),
         )
 
@@ -272,3 +416,9 @@ class HumidifierDevice(BaseDevice):
         """Expose entities for Home Assistant humidifier platform."""
 
         return self._entities
+
+    @property
+    def program_states(self) -> tuple[HumidifierProgramState, ...]:
+        """Expose configured program state handlers."""
+
+        return self._program_states

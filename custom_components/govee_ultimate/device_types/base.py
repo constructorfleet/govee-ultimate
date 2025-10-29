@@ -29,6 +29,7 @@ class HumidifierEntities:
     primary: DeviceState[Any]
     mode: ModeState
     controls: tuple[DeviceState[Any], ...] = ()
+    programs: tuple[DeviceState[Any], ...] = ()
     sensors: tuple[DeviceState[Any], ...] = ()
 
 
