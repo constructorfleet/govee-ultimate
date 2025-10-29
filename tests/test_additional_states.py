@@ -8,6 +8,7 @@ from custom_components.govee_ultimate.state.states import (
     ConnectedState,
     ControlLockState,
     DisplayScheduleState,
+    HumidityState,
     HumidifierUVCState,
     NightLightState,
     TemperatureState,
@@ -41,6 +42,67 @@ def temperature_state(device: DummyDevice) -> TemperatureState:
     """Return a temperature state bound to a dummy device."""
 
     return TemperatureState(device=device)
+
+
+@pytest.fixture
+def humidity_state(device: DummyDevice) -> HumidityState:
+    """Return a humidity state bound to a dummy device."""
+
+    return HumidityState(device=device)
+
+
+def test_humidity_state_parses_measurement_payload(
+    humidity_state: HumidityState,
+) -> None:
+    """Humidity measurement payloads expose calibration and range metadata."""
+
+    humidity_state.parse(
+        {
+            "state": {
+                "humidity": {
+                    "current": 55,
+                    "calibration": 5,
+                    "min": 30,
+                    "max": 80,
+                }
+            }
+        }
+    )
+
+    assert humidity_state.value == {
+        "current": 55,
+        "raw": 50,
+        "calibration": 5,
+        "range": {"min": 30, "max": 80},
+    }
+
+
+def test_humidity_state_updates_from_status_code(
+    humidity_state: HumidityState,
+) -> None:
+    """Status code payloads refresh the humidity reading using calibration."""
+
+    humidity_state.parse(
+        {
+            "state": {
+                "humidity": {
+                    "current": 48,
+                    "calibration": -2,
+                    "min": 30,
+                    "max": 80,
+                }
+            }
+        }
+    )
+
+    humidity_state.parse({"state": {"status": {"code": "000031"}}})
+
+    assert humidity_state.value == {
+        "current": 47,
+        "raw": 49,
+        "calibration": -2,
+        "range": {"min": 30, "max": 80},
+    }
 
 
 def _next_command(state) -> dict:
