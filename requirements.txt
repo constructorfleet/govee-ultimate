@@ -1,6 +1,8 @@
+black==25.1.0
 httpx==0.27.2
 packaging==25.0
 pydantic==2.12.3
 PyYAML==6.0.2
 pytest==8.4.1
+ruff==0.0.292
 voluptuous==0.13.1

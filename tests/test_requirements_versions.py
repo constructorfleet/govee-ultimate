@@ -9,13 +9,23 @@ from packaging.requirements import Requirement
 
 REQUIREMENTS_PATH = Path("requirements.txt")
 
-EXPECTED_IMPORTED_PACKAGES = (
+EXPECTED_RUNTIME_PACKAGES = (
     "httpx",
     "packaging",
     "pydantic",
     "PyYAML",
     "pytest",
     "voluptuous",
+)
+
+EXPECTED_TOOLING_PACKAGES = (
+    "black",
+    "ruff",
+)
+
+EXPECTED_IMPORTED_PACKAGES = (
+    *EXPECTED_RUNTIME_PACKAGES,
+    *EXPECTED_TOOLING_PACKAGES,
 )
 
 
