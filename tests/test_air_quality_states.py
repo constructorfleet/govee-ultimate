@@ -110,3 +110,54 @@ def test_pm25_state_preserves_warning_flags(pm25_state: AirQualityPM25State) -> 
         "warning": True,
         "range": {"min": 0, "max": 300},
     }
+
+
+def test_air_quality_states_parse_multi_op_payloads(
+    temperature_state: AirQualityTemperatureState,
+    humidity_state: AirQualityHumidityState,
+    pm25_state: AirQualityPM25State,
+) -> None:
+    """Air quality measurements should decode multi-op command payloads."""
+
+    command = [
+        0x09,
+        0x29,
+        0x00,
+        0x0F,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x11,
+        0x94,
+        0x00,
+        0x1E,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x2A,
+    ]
+    payload = {"cmd": "status", "op": {"command": [command]}}
+
+    temperature_state.parse(payload)
+    humidity_state.parse(payload)
+    pm25_state.parse(payload)
+
+    assert temperature_state.value == {
+        "current": pytest.approx(23.6),
+        "raw": pytest.approx(23.45),
+        "calibration": pytest.approx(0.15),
+    }
+    assert humidity_state.value == {
+        "current": pytest.approx(45.3),
+        "raw": pytest.approx(45.0),
+        "calibration": pytest.approx(0.3),
+    }
+    assert pm25_state.value == {
+        "current": 42,
+        "range": {"min": 0, "max": 1000},
+    }
