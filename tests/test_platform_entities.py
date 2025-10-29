@@ -82,6 +82,7 @@ def setup_platform_stubs() -> Callable[[], None]:  # noqa: C901
 
     class _LightEntity(_Entity):
         _attr_is_on: bool | None = None
+        _attr_brightness: int | None = None
 
         @property
         def is_on(self) -> bool | None:
@@ -90,6 +91,10 @@ def setup_platform_stubs() -> Callable[[], None]:  # noqa: C901
         @property
         def state(self) -> bool | None:
             return self.is_on
+
+        @property
+        def brightness(self) -> int | None:
+            return self._attr_brightness
 
         async def async_turn_on(self, **kwargs: Any) -> None:  # pragma: no cover - stub
             raise NotImplementedError
@@ -515,6 +520,8 @@ async def test_light_brightness_entity_scales_and_dispatches_commands(
 
     added_entities: list[Any] = []
 
+    brightness_entity: Any | None = None
+
     try:
         await _async_setup_platform(
             "light",
@@ -523,20 +530,26 @@ async def test_light_brightness_entity_scales_and_dispatches_commands(
             coordinator,
             added_entities,
         )
+        brightness_entity = next(
+            entity
+            for entity in added_entities
+            if entity.unique_id == f"{metadata.device_id}-brightness"
+        )
+
+        await brightness_entity.async_added_to_hass()
     finally:
         teardown()
 
-    brightness_entity = next(
-        entity
-        for entity in added_entities
-        if entity.unique_id == f"{metadata.device_id}-brightness"
-    )
+    assert brightness_entity is not None
 
     brightness_state = device.states["brightness"]
     brightness_state._update_state(40)
     coordinator.notify_listeners()
 
-    assert brightness_entity.brightness == pytest.approx(int(40 * 255 / 100))
+    expected_brightness = int(40 * 255 / 100)
+
+    assert brightness_entity._attr_brightness == pytest.approx(expected_brightness)
+    assert brightness_entity.brightness == pytest.approx(expected_brightness)
 
     await brightness_entity.async_turn_on(brightness=128)
 

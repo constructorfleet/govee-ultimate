@@ -31,6 +31,19 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
 
         return max(0, min(100, round(value * 100 / 255)))
 
+    def _set_cached_brightness_from_percent(self, percent: int | None) -> None:
+        """Update `_attr_brightness` based on a device percentage."""
+
+        if not self._is_brightness:
+            self._attr_brightness = None
+            return
+
+        if percent is None:
+            self._attr_brightness = None
+            return
+
+        self._attr_brightness = self._percent_to_brightness(percent)
+
     @property
     def _is_brightness(self) -> bool:
         """Return True when the bound state tracks brightness."""
@@ -46,16 +59,25 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
             return value
         return bool(value)
 
-    @property
-    def brightness(self) -> int | None:
-        """Return the Home Assistant brightness for brightness states."""
+    def _update_cached_brightness(self) -> None:
+        """Synchronize `_attr_brightness` with the device state."""
 
-        if not self._is_brightness:
-            return None
         value = self._state.value
-        if not isinstance(value, int):
-            return None
-        return self._percent_to_brightness(value)
+        self._set_cached_brightness_from_percent(
+            value if isinstance(value, int) else None
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Ensure cached light attributes match the initial state."""
+
+        self._update_cached_brightness()
+        await super().async_added_to_hass()
+
+    def _handle_coordinator_update(self) -> None:
+        """Refresh cached Home Assistant attributes before updating state."""
+
+        self._update_cached_brightness()
+        super()._handle_coordinator_update()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the light on."""
@@ -63,11 +85,14 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
         if self._is_brightness:
             brightness = kwargs.get("brightness")
             if isinstance(brightness, int | float):
-                percent = self._brightness_to_percent(brightness)
+                ha_value = int(brightness)
+                percent = self._brightness_to_percent(ha_value)
+                self._attr_brightness = max(0, min(255, ha_value))
             else:
                 percent = (
                     self._state.value if isinstance(self._state.value, int) else 100
                 )
+                self._set_cached_brightness_from_percent(percent)
             await self._async_publish_state(percent)
             return
 
@@ -77,6 +102,7 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
         """Turn the light off."""
 
         if self._is_brightness:
+            self._set_cached_brightness_from_percent(0)
             await self._async_publish_state(0)
             return
 
