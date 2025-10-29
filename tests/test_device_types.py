@@ -607,6 +607,19 @@ def test_device_states_expose_home_assistant_entities(
     assert purifier_entities["filterExpired"].platform == "binary_sensor"
 
 
+def test_humidifier_uvc_entity_alias_avoids_duplicate_registration(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """The humidifier UVC entity should expose only the alias key."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    entities = device.home_assistant_entities
+
+    assert "uvc" in entities
+    assert "isUVCActive" not in entities
+
+
 def test_humidifier_includes_model_specific_states(
     humidifier_model_h7141: MockDeviceModel,
     humidifier_model_h7142: MockDeviceModel,
