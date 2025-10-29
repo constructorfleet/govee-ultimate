@@ -663,7 +663,7 @@ class TemperatureState(DeviceOpState[dict[str, Any]]):
         return numeric
 
 
-class _AirQualityMeasurementState(DeviceState[dict[str, Any] | None]):
+class _AirQualityMeasurementState(DeviceOpState[dict[str, Any] | None]):
     """Base class for air quality measurement parsing."""
 
     def __init__(
@@ -675,13 +675,14 @@ class _AirQualityMeasurementState(DeviceState[dict[str, Any] | None]):
     ) -> None:
         """Initialise the measurement state."""
 
-        super().__init__(device=device, name=name, initial_value=None)
+        super().__init__(
+            op_identifier={"op_type": None, "identifier": None},
+            device=device,
+            name=name,
+            initial_value=None,
+            parse_option=ParseOption.STATE | ParseOption.MULTI_OP,
+        )
         self._state_key = state_key or name
-
-    def parse(self, data: dict[str, Any]) -> None:
-        """Delegate to :meth:`parse_state` for compatibility."""
-
-        self.parse_state(data)
 
     def parse_state(self, data: dict[str, Any]) -> None:
         """Parse structured measurement payloads."""
@@ -735,6 +736,20 @@ class _AirQualityMeasurementState(DeviceState[dict[str, Any] | None]):
             return int(numeric)
         return numeric
 
+    @staticmethod
+    def _word(command: Sequence[int], start: int) -> int | None:
+        """Return the 16-bit value at ``start`` when available."""
+
+        if start < 0 or start + 1 >= len(command):
+            return None
+        return ((command[start] & 0xFF) << 8) | (command[start + 1] & 0xFF)
+
+    @staticmethod
+    def _signed_hundredths(word: int) -> float:
+        """Return a signed float represented as hundredths in ``word``."""
+
+        return ((word & 0x7FFF) - (word & 0x8000)) / 100
+
 
 class AirQualityTemperatureState(_AirQualityMeasurementState):
     """Expose calibrated air quality temperature readings."""
@@ -767,6 +782,25 @@ class AirQualityTemperatureState(_AirQualityMeasurementState):
             payload["range"] = range_mapping
 
         return payload
+
+    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
+        """Decode temperature readings from multi-op payloads."""
+
+        if not op_commands:
+            return
+        op_command = op_commands[0]
+        raw_word = self._word(op_command, 0)
+        calibration_word = self._word(op_command, 2)
+        if raw_word is None or calibration_word is None:
+            return
+
+        raw = raw_word / 100
+        calibration = self._signed_hundredths(calibration_word)
+        current = raw + calibration
+
+        payload: dict[str, Any] = {"current": current, "raw": raw}
+        payload["calibration"] = calibration
+        self._update_state(payload)
 
     def _scaled_value(self, value: Any, *, scale_small: bool = False) -> float | None:
         numeric = _float_from_value(value)
@@ -802,6 +836,28 @@ class AirQualityHumidityState(_AirQualityMeasurementState):
 
         return payload
 
+    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
+        """Extract humidity readings from multi-op payloads."""
+
+        if not op_commands:
+            return
+        op_command = op_commands[0]
+        raw_word = self._word(op_command, 9)
+        calibration_word = self._word(op_command, 11)
+        if raw_word is None or calibration_word is None:
+            return
+
+        raw = raw_word / 100
+        calibration = self._signed_hundredths(calibration_word)
+        current = raw + calibration
+
+        payload: dict[str, Any] = {
+            "current": current,
+            "raw": raw,
+            "calibration": calibration,
+        }
+        self._update_state(payload)
+
 
 class AirQualityPM25State(_AirQualityMeasurementState):
     """Expose particulate matter readings with warning flags."""
@@ -834,6 +890,22 @@ class AirQualityPM25State(_AirQualityMeasurementState):
             payload["range"] = range_mapping
 
         return payload
+
+    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
+        """Parse PM2.5 data from aggregated opcode payloads."""
+
+        if not op_commands:
+            return
+        op_command = op_commands[0]
+        current_word = self._word(op_command, 18)
+        if current_word is None:
+            return
+
+        payload: dict[str, Any] = {
+            "current": current_word,
+            "range": {"min": 0, "max": 1000},
+        }
+        self._update_state(payload)
 
 
 class TimerState(DeviceOpState[bool | None]):
