@@ -8,6 +8,7 @@ from custom_components.govee_ultimate.state.states import (
     ConnectedState,
     ControlLockState,
     DisplayScheduleState,
+    HumidifierUVCState,
     NightLightState,
     TemperatureState,
     UnknownState,
@@ -115,6 +116,13 @@ def control_lock_state(device: DummyDevice) -> ControlLockState:
 
 
 @pytest.fixture
+def humidifier_uvc_state(device: DummyDevice) -> HumidifierUVCState:
+    """Return a humidifier UVC state bound to a dummy device."""
+
+    return HumidifierUVCState(device=device, identifier=[0x1A])
+
+
+@pytest.fixture
 def unknown_state(device: DummyDevice) -> UnknownState:
     """Return an unknown state bound to a dummy device."""
 
@@ -159,6 +167,47 @@ def test_control_lock_state_emits_commands_and_tracks_history(
 
     control_lock_state.previous_state()
     assert control_lock_state.value is True
+
+
+def test_humidifier_uvc_state_parses_opcode_payload(
+    humidifier_uvc_state: HumidifierUVCState,
+) -> None:
+    """Humidifier UVC payloads map opcode values to booleans."""
+
+    humidifier_uvc_state.parse({"op": {"command": [[0xAA, 0x1A, 0x01]]}})
+    assert humidifier_uvc_state.value is True
+
+    humidifier_uvc_state.parse({"op": {"command": [[0xAA, 0x1A, 0x00]]}})
+    assert humidifier_uvc_state.value is False
+
+
+def test_humidifier_uvc_state_emits_multi_sync_command(
+    humidifier_uvc_state: HumidifierUVCState,
+) -> None:
+    """Humidifier UVC commands mirror the TypeScript multi-sync payload."""
+
+    command_ids = humidifier_uvc_state.set_state(True)
+
+    assert len(command_ids) == 1
+
+    queued = _next_command(humidifier_uvc_state)
+    assert queued["command"] == "multi_sync"
+    frame = queued["data"]["command"][0]
+
+    expected = [0x33, 0x1A, 0x01] + [0x00] * 16
+    checksum = 0
+    for byte in expected:
+        checksum ^= byte
+    expected.append(checksum)
+
+    assert frame == expected
+
+    humidifier_uvc_state.parse({"op": {"command": [[0xAA, 0x1A, 0x01]]}})
+
+    cleared = humidifier_uvc_state.clear_queue.get_nowait()
+    assert cleared["command_id"] == command_ids[0]
+    assert cleared["state"] == "isUVCActive"
+    assert cleared["value"] is True
 
 
 @pytest.fixture

@@ -9,6 +9,7 @@ from custom_components.govee_ultimate.state import (
     ControlLockState,
     DeviceState,
     DisplayScheduleState,
+    HumidifierUVCState,
     ModeState,
     NightLightState,
     ParseOption,
@@ -241,16 +242,24 @@ class HumidifierDevice(BaseDevice):
                 state = DisplayScheduleState(device=device_model, identifier=[0x30])
             elif feature == "controlLock":
                 state = ControlLockState(device=device_model, identifier=[0x0A])
+            elif feature == "uvc":
+                state = HumidifierUVCState(device=device_model)
             elif feature == "humidity":
                 state = HumidityState(device=device_model)
             else:
                 state = _BooleanState(device_model, feature)
             registered = self.add_state(state)
-            self.expose_entity(
-                platform=platform,
-                state=registered,
-                entity_category=category,
-            )
+            entity_kwargs: dict[str, Any] = {
+                "platform": platform,
+                "state": registered,
+                "entity_category": category,
+            }
+            if feature == "uvc":
+                self.alias_state("uvc", registered)
+                entity_kwargs["translation_key"] = "uvc"
+            self.expose_entity(**entity_kwargs)
+            if feature == "uvc":
+                self.alias_entity("uvc", registered)
 
         sensors = []
         current_states = self.states
