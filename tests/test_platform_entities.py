@@ -495,6 +495,55 @@ async def test_light_entity_updates_and_publishes_commands(
 
 
 @pytest.mark.asyncio
+async def test_light_brightness_entity_scales_and_dispatches_commands(
+    request: pytest.FixtureRequest,
+    setup_platform_stubs: Callable[[], None],
+) -> None:
+    """Brightness entities should expose scaled values and publish commands."""
+
+    metadata: DeviceMetadata = request.getfixturevalue("rgb_light_metadata")
+    device: RGBLightDevice = request.getfixturevalue("rgb_light_device")
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-brightness")
+    coordinator = FakeCoordinator(
+        {metadata.device_id: device},
+        {metadata.device_id: metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "light",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    brightness_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{metadata.device_id}-brightness"
+    )
+
+    brightness_state = device.states["brightness"]
+    brightness_state._update_state(40)
+    coordinator.notify_listeners()
+
+    assert brightness_entity.brightness == pytest.approx(int(40 * 255 / 100))
+
+    await brightness_entity.async_turn_on(brightness=128)
+
+    assert coordinator.command_publisher_calls
+
+
+@pytest.mark.asyncio
 async def test_humidifier_entity_updates_and_publishes_commands(
     setup_platform_stubs: Callable[[], None],
     humidifier_metadata: DeviceMetadata,
