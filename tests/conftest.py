@@ -1,109 +1,64 @@
-"""Test configuration for path resolution and async helpers."""
+"""Pytest configuration for the Govee Ultimate integration tests."""
 
-import asyncio
-import contextlib
-import json
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import asyncio
 import pytest
+import voluptuous as vol
 
-TESTS_ROOT = Path(__file__).resolve().parent
-STUBS = TESTS_ROOT / "stubs"
-if STUBS.exists() and str(STUBS) not in sys.path:
-    sys.path.insert(0, str(STUBS))
 
-ROOT = TESTS_ROOT.parents[0]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+_MODULE_NAME = "homeassistant.helpers.config_validation"
+_PREVIOUS_MODULE = sys.modules.get(_MODULE_NAME)
+
+root_path = Path(__file__).resolve().parent.parent
+if str(root_path) not in sys.path:
+    sys.path.insert(0, str(root_path))
+
+_config_validation_module = ModuleType(_MODULE_NAME)
+
+
+def _empty_config_schema(domain: str) -> Any:
+    return vol.Schema({domain: vol.Schema({})})
+
+
+_config_validation_module.empty_config_schema = _empty_config_schema  # type: ignore[attr-defined]
+sys.modules[_MODULE_NAME] = _config_validation_module
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Configure pytest."""
-    config.addinivalue_line("markers", "asyncio: execute test in an event loop")
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    config._govee_loop = loop  # type: ignore[attr-defined]
+    """Register markers used throughout the test suite."""
 
-    storage_module = ModuleType("homeassistant.helpers.storage")
-
-    class _Store:
-        """Minimal storage helper used for style tests."""
-
-        def __init__(
-            self,
-            hass: Any,
-            _version: int,
-            key: str,
-            *,
-            private: bool = False,
-        ) -> None:
-            """Prepare file path for storage operations."""
-
-            storage_dir = Path(hass.config.config_dir)
-            if private:
-                storage_dir = storage_dir / ".storage"
-            self._hass = hass
-            self._path = storage_dir / key
-
-        async def async_remove(self) -> None:
-            """Silently ignore missing files when removing."""
-
-            with contextlib.suppress(FileNotFoundError):
-                await self._hass.async_add_executor_job(self._path.unlink)
-
-        async def async_load(self) -> dict[str, Any] | None:
-            """Load JSON data from disk."""
-
-            if not self._path.exists():
-                return None
-            text = await self._hass.async_add_executor_job(self._path.read_text)
-            return json.loads(text)
-
-        async def async_save(self, data: dict[str, Any]) -> None:
-            """Persist JSON data to disk."""
-
-            def _write() -> None:
-                self._path.parent.mkdir(parents=True, exist_ok=True)
-                self._path.write_text(json.dumps(data))
-
-            await self._hass.async_add_executor_job(_write)
-
-    storage_module.Store = _Store
-
-    helpers_module = ModuleType("homeassistant.helpers")
-    helpers_module.storage = storage_module
-
-    homeassistant_module = ModuleType("homeassistant")
-    homeassistant_module.helpers = helpers_module
-
-    sys.modules.setdefault("homeassistant", homeassistant_module)
-    sys.modules.setdefault("homeassistant.helpers", helpers_module)
-    sys.modules.setdefault("homeassistant.helpers.storage", storage_module)
-
-
-def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
-    """Pytext function call."""
-    if asyncio.iscoroutinefunction(pyfuncitem.obj):
-        marker = pyfuncitem.get_closest_marker("asyncio")
-        if marker is not None:
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(pyfuncitem.obj(**pyfuncitem.funcargs))
-            finally:
-                default_loop = getattr(pyfuncitem.config, "_govee_loop", None)
-                asyncio.set_event_loop(default_loop)
-                loop.close()
-            return True
-    return None
+    config.addinivalue_line(
+        "markers", "asyncio: mark coroutine tests to execute via asyncio loop"
+    )
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
-    """Tear down resources created during configuration."""
+    """Restore any original config validation module when pytest exits."""
 
-    loop = getattr(config, "_govee_loop", None)
-    if loop is not None:
+    if _PREVIOUS_MODULE is None:
+        sys.modules.pop(_MODULE_NAME, None)
+    else:
+        sys.modules[_MODULE_NAME] = _PREVIOUS_MODULE
+
+
+def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
+    """Execute coroutine tests within a dedicated event loop."""
+
+    test_function = pyfuncitem.obj
+    if not asyncio.iscoroutinefunction(test_function):
+        return None
+
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(test_function(**pyfuncitem.funcargs))
+    finally:
+        asyncio.set_event_loop(None)
         loop.close()
+    return True

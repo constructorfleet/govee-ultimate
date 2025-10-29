@@ -37,6 +37,7 @@ def test_manifest_keys_sorted_by_specification() -> None:
         "documentation",
         "integration_type",
         "iot_class",
+        "issue_tracker",
         "requirements",
         "version",
     ]

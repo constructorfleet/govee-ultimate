@@ -11,9 +11,10 @@
   "documentation": "https://github.com/constructorfleet/govee-ultimate",
   "integration_type": "hub",
   "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/constructorfleet/govee-ultimate/issues",
   "requirements": [
     "httpx",
     "pydantic"
   ],
-  "version": "0.0.4"
+  "version": "0.0.6"
 }
