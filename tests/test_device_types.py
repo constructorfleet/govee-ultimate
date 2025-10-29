@@ -370,6 +370,10 @@ def test_ice_maker_device_registers_states_and_entities(
     assert water_entity.platform == "binary_sensor"
     assert water_entity.entity_category is EntityCategory.DIAGNOSTIC
 
+    nugget_entity = entities["nuggetSize"]
+    assert nugget_entity.platform == "select"
+    assert nugget_entity.entity_category is None
+
     status_entity = entities["iceMakerStatus"]
     assert status_entity.platform == "sensor"
     assert status_entity.entity_category is None

@@ -52,9 +52,9 @@ class IceMakerDevice(BaseDevice):
         self._status_state = status
         self.expose_entity(platform="sensor", state=status)
 
-        self._nugget_size_state = self.add_state(
-            IceMakerNuggetSizeState(device=device_model)
-        )
+        nugget_size = self.add_state(IceMakerNuggetSizeState(device=device_model))
+        self._nugget_size_state = nugget_size
+        self.expose_entity(platform="select", state=nugget_size)
 
         basket_full = self.add_state(IceMakerBasketFullState(device=device_model))
         self.expose_entity(
