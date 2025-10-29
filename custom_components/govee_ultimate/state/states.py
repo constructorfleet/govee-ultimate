@@ -626,6 +626,63 @@ class ControlLockState(DeviceOpState[bool | None]):
         }
 
 
+class HumidifierUVCState(DeviceOpState[bool | None]):
+    """Toggle the built-in UVC sanitisation feature."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        identifier: Sequence[int] | None = None,
+        op_type: int = _REPORT_OPCODE,
+    ) -> None:
+        """Initialise the UVC state handler with identifier defaults."""
+
+        identifiers = list(identifier) if identifier is not None else [0x1A]
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="isUVCActive",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Map opcode payloads to a boolean UVC state."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        value = payload[0]
+        if value in (0x00, 0x01):
+            self._update_state(value == 0x01)
+
+    def _state_to_command(self, next_state: bool | None):
+        """Translate boolean requests into multi-sync opcode frames."""
+
+        value = _bool_from_value(next_state)
+        if value is None:
+            return None
+        if not self._identifier:
+            return None
+        byte_value = 0x01 if value else 0x00
+        frame = _opcode_frame(0x33, *self._identifier, byte_value)
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {
+                "op": {
+                    "command": [
+                        [_REPORT_OPCODE, *self._identifier, byte_value],
+                    ]
+                }
+            },
+        }
+
+
 class HumidityState(DeviceState[int | None]):
     """Report the current ambient humidity percentage."""
 
