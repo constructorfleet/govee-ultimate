@@ -44,6 +44,7 @@ from custom_components.govee_ultimate import DOMAIN
 from custom_components.govee_ultimate.coordinator import DeviceMetadata
 from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
+from custom_components.govee_ultimate.device_types.ice_maker import IceMakerDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
 from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
@@ -307,6 +308,36 @@ def humidifier_device(humidifier_metadata: DeviceMetadata) -> HumidifierDevice:
         model_name=humidifier_metadata.device_name,
     )
     return HumidifierDevice(model)
+
+
+@pytest.fixture
+def ice_maker_metadata() -> DeviceMetadata:
+    """Return device metadata for ice maker platform tests."""
+
+    return DeviceMetadata(
+        device_id="ice-maker-1",
+        model="H7172",
+        sku="H7172",
+        category="Home Appliances",
+        category_group="Kitchen",
+        device_name="Ice Maker",
+        manufacturer="Govee",
+        channels={"iot": {"topic": "state"}},
+    )
+
+
+@pytest.fixture
+def ice_maker_device(ice_maker_metadata: DeviceMetadata) -> IceMakerDevice:
+    """Return a configured ice maker device."""
+
+    model = SimpleNamespace(
+        model=ice_maker_metadata.model,
+        sku=ice_maker_metadata.sku,
+        category=ice_maker_metadata.category,
+        category_group=ice_maker_metadata.category_group,
+        model_name=ice_maker_metadata.device_name,
+    )
+    return IceMakerDevice(model)
 
 
 @pytest.fixture
@@ -918,6 +949,75 @@ async def test_sensor_entity_tracks_state_updates(
     humidity_state._update_state(55)
 
     assert humidity_entity.native_value == 55
+
+
+@pytest.mark.asyncio
+async def test_ice_maker_schedule_sensor_attributes_and_commands(
+    setup_platform_stubs: Callable[[], None],
+    ice_maker_metadata: DeviceMetadata,
+    ice_maker_device: IceMakerDevice,
+) -> None:
+    """Ice maker schedule sensor should expose attributes and publish commands."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-ice-maker")
+    coordinator = FakeCoordinator(
+        {ice_maker_metadata.device_id: ice_maker_device},
+        {ice_maker_metadata.device_id: ice_maker_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "sensor",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    schedule_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{ice_maker_metadata.device_id}-scheduledStart"
+    )
+
+    schedule_state = ice_maker_device.states["scheduledStart"]
+    schedule_state._update_state(
+        {
+            "enabled": True,
+            "hourStart": 13,
+            "minuteStart": 45,
+            "nuggetSize": "LARGE",
+        }
+    )
+    coordinator.notify_listeners()
+
+    assert schedule_entity.native_value is True
+    assert schedule_entity.extra_state_attributes == {
+        "enabled": True,
+        "hourStart": 13,
+        "minuteStart": 45,
+        "nuggetSize": "LARGE",
+    }
+
+    coordinator.command_publisher_calls.clear()
+
+    await schedule_entity.async_set_schedule(
+        enabled=True,
+        hour_start=14,
+        minute_start=15,
+        nugget_size="MEDIUM",
+    )
+
+    assert coordinator.command_publisher_calls
+    for _, payload in coordinator.command_publisher_calls:
+        assert "state" not in payload
 
 
 @pytest.mark.asyncio

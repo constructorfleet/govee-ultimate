@@ -460,6 +460,11 @@ def test_ice_maker_device_registers_states_and_entities(
     assert temperature_entity.platform == "sensor"
     assert temperature_entity.entity_category is EntityCategory.DIAGNOSTIC
 
+    schedule_entity = entities["scheduledStart"]
+    assert schedule_entity.platform == "sensor"
+    assert schedule_entity.translation_key == "ice_maker_scheduled_start"
+    assert schedule_entity.entity_category is EntityCategory.CONFIG
+
 
 def test_hygrometer_registers_expected_states_and_entities(
     hygrometer_model: MockDeviceModel,
