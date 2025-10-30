@@ -2123,6 +2123,7 @@ _NUGGET_SIZE_CODES = {
     "MEDIUM": 0x02,
     "LARGE": 0x01,
 }
+_NUGGET_SIZE_OPTIONS = tuple(_NUGGET_SIZE_CODES)
 _NUGGET_SIZE_NAMES = {code: name for name, code in _NUGGET_SIZE_CODES.items()}
 
 _ICE_MAKER_STATUS_CODES = {
@@ -2163,6 +2164,7 @@ class IceMakerNuggetSizeState(DeviceOpState[str | None]):
         )
         self._command_template = entry.command_templates[0]
         self._default = entry.parse_options.get("default", "SMALL")
+        self.options: tuple[str, ...] = _NUGGET_SIZE_OPTIONS
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Update the stored nugget size based on opcode payloads."""

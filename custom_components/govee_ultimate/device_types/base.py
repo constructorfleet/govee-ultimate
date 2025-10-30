@@ -58,6 +58,15 @@ class HomeAssistantEntity:
     translation_key: str | None = None
     entity_category: EntityCategory | None = None
 
+    @property
+    def options(self) -> list[str]:
+        """Return available options exposed by the backing state, if any."""
+
+        options_attr = getattr(self.state, "options", None)
+        if options_attr is None:
+            return []
+        return list(options_attr)
+
 
 class BaseDevice:
     """Minimal state container mirroring the TypeScript device facade."""
