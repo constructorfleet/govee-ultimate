@@ -104,3 +104,26 @@ def test_diy_mode_set_state_queues_rebuilt_opcodes() -> None:
     with pytest.raises(Exception):
         # Queue should now be empty for this state.
         state.command_queue.get_nowait()
+
+
+def test_diy_mode_channel_update_populates_effect_catalog() -> None:
+    """Channel updates should hydrate the effect catalog for DIY mode."""
+
+    state = DiyModeState(device=object())
+    payload = bytes(range(1, 25))
+    effect = _dummy_effect("Wave", 0x0ABC, payload)
+
+    changed = state.apply_channel_update({"catalog": {"effects": [effect]}})
+
+    assert changed == ["diyMode"]
+
+    command_ids = state.set_state({"name": "Wave"})
+
+    assert command_ids
+    queued = state.command_queue.get_nowait()
+    assert queued["data"]["command"] == _expected_diy_commands(
+        [0x05, RGBICModes.DIY], effect["code"], effect["diyOpCodeBase64"]  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(Exception):
+        state.command_queue.get_nowait()

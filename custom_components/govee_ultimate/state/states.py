@@ -3680,6 +3680,13 @@ class RGBICModes(IntEnum):
 class DiyModeState(DeviceOpState[dict[str, Any]]):
     """Manage DIY scene selections for RGBIC lights."""
 
+    _BASE64_KEYS = (
+        "diyOpCodeBase64",
+        "diy_opcode_base64",
+        "opCodeBase64",
+        "opcode_base64",
+    )
+
     def __init__(self, *, device: object) -> None:
         """Initialise the DIY mode selector."""
 
@@ -3703,6 +3710,23 @@ class DiyModeState(DeviceOpState[dict[str, Any]]):
         """Return the code for the active DIY effect."""
 
         return self._active_effect_code
+
+    def apply_channel_update(self, payload: Any) -> list[str]:
+        """Process catalog payloads arriving via device channels."""
+
+        effects = self._collect_effects(payload)
+        changed = False
+        if effects:
+            self.update_effects(effects)
+            changed = True
+        active_code = self._extract_active_effect_code(payload)
+        if isinstance(active_code, int):
+            self._active_effect_code = active_code
+            effect = self._effects.get(active_code)
+            if effect is not None:
+                self._update_state(dict(effect))
+            changed = True
+        return [self.name] if changed else []
 
     def update_effects(self, effects: Sequence[Mapping[str, Any]]) -> None:
         """Store DIY effect metadata provided by catalogue updates."""
@@ -3825,6 +3849,67 @@ class DiyModeState(DeviceOpState[dict[str, Any]]):
     def _command_identifier(self) -> list[int]:
         identifier = self._identifier or [0x05, int(RGBICModes.DIY)]
         return [int(value) for value in identifier]
+
+    def _collect_effects(self, payload: Any) -> list[Mapping[str, Any]]:
+        if isinstance(payload, Mapping):
+            if self._is_effect_mapping(payload):
+                return [payload]
+            effects: list[Mapping[str, Any]] = []
+            for value in payload.values():
+                effects.extend(self._collect_effects(value))
+            return effects
+        if self._is_sequence_container(payload):
+            mappings = [
+                item
+                for item in payload
+                if isinstance(item, Mapping) and self._is_effect_mapping(item)
+            ]
+            if mappings:
+                return mappings
+            effects: list[Mapping[str, Any]] = []
+            for item in payload:
+                effects.extend(self._collect_effects(item))
+            return effects
+        return []
+
+    @staticmethod
+    def _is_effect_mapping(payload: Mapping[str, Any]) -> bool:
+        if "code" not in payload:
+            return False
+        return any(key in payload for key in DiyModeState._BASE64_KEYS)
+
+    @staticmethod
+    def _is_sequence_container(value: Any) -> bool:
+        return isinstance(value, Sequence) and not isinstance(
+            value, str | bytes | bytearray
+        )
+
+    def _extract_active_effect_code(self, payload: Any) -> int | None:
+        if isinstance(payload, Mapping):
+            for key in (
+                "activeCode",
+                "active_code",
+                "currentCode",
+                "current_code",
+                "effectCode",
+                "effect_code",
+                "selectedCode",
+                "selected_code",
+            ):
+                value = payload.get(key)
+                if isinstance(value, int):
+                    return value
+            for key in ("active", "current", "selected"):
+                nested = payload.get(key)
+                code = self._extract_active_effect_code(nested)
+                if isinstance(code, int):
+                    return code
+        if self._is_sequence_container(payload):
+            for item in payload:
+                code = self._extract_active_effect_code(item)
+                if isinstance(code, int):
+                    return code
+        return None
 
 
 class UnknownState(DeviceOpState[dict[str, Any]]):
