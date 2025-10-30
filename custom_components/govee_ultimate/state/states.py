@@ -1383,12 +1383,12 @@ class HumidityState(DeviceOpState[dict[str, Any] | None]):
         if current is None:
             return None
 
-        minimum = self._coalesce_bound(min_value, prev_min)
-        maximum = self._coalesce_bound(max_value, prev_max)
+        minimum, clamp_min = self._resolved_bound(min_value, prev_min)
+        maximum, clamp_max = self._resolved_bound(max_value, prev_max)
 
-        if minimum is not None and current < minimum:
+        if clamp_min and current < minimum:
             return None
-        if maximum is not None and current > maximum:
+        if clamp_max and current > maximum:
             return None
 
         payload: dict[str, Any] = {"current": current}
@@ -1397,9 +1397,7 @@ class HumidityState(DeviceOpState[dict[str, Any] | None]):
         if calibration is not None:
             payload["calibration"] = calibration
 
-        range_payload = self._range_payload(minimum, maximum)
-        if range_payload is not None:
-            payload["range"] = range_payload
+        payload["range"] = self._range_payload(minimum, maximum)
 
         return payload
 
@@ -1452,27 +1450,27 @@ class HumidityState(DeviceOpState[dict[str, Any] | None]):
             return int(numeric)
         return numeric
 
+    def _resolved_bound(
+        self, candidate: float | int | None, fallback: Any
+    ) -> tuple[float | int, bool]:
+        resolved = self._coalesce_bound(candidate, fallback)
+        has_value = candidate is not None or isinstance(fallback, int | float)
+        return resolved, has_value
+
     def _coalesce_bound(
         self, candidate: float | int | None, fallback: Any
-    ) -> float | int | None:
+    ) -> float | int:
         if candidate is not None:
             return candidate
         if isinstance(fallback, int | float):
             return fallback
-        return None
+        return 0
 
     @staticmethod
     def _range_payload(
-        minimum: float | int | None, maximum: float | int | None
-    ) -> dict[str, float | int] | None:
-        if minimum is None and maximum is None:
-            return None
-        payload: dict[str, float | int] = {}
-        if minimum is not None:
-            payload["min"] = minimum
-        if maximum is not None:
-            payload["max"] = maximum
-        return payload or None
+        minimum: float | int, maximum: float | int
+    ) -> dict[str, float | int]:
+        return {"min": minimum, "max": maximum}
 
 
 _HUMIDIFIER_MODE_PREFIX = 0x05

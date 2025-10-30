@@ -62,6 +62,14 @@ def test_humidity_state_parses_measurement_payload(
 ) -> None:
     """Humidity measurement payloads expose calibration and range metadata."""
 
+    humidity_state.parse({"state": {"humidity": {"current": 42}}})
+
+    assert humidity_state.value == {
+        "current": 42,
+        "raw": 42,
+        "range": {"min": 0, "max": 0},
+    }
+
     humidity_state.parse(
         {
             "state": {
@@ -81,6 +89,59 @@ def test_humidity_state_parses_measurement_payload(
         "calibration": 5,
         "range": {"min": 30, "max": 80},
     }
+
+    humidity_state.parse(
+        {
+            "state": {"humidity": {"current": 60, "max": 90}}
+        }
+    )
+
+    assert humidity_state.value == {
+        "current": 60,
+        "raw": 55,
+        "calibration": 5,
+        "range": {"min": 30, "max": 90},
+    }
+
+    humidity_state.parse(
+        {
+            "state": {"humidity": {"current": 50, "min": 25}}
+        }
+    )
+
+    assert humidity_state.value == {
+        "current": 50,
+        "raw": 45,
+        "calibration": 5,
+        "range": {"min": 25, "max": 90},
+    }
+
+
+def test_humidity_state_ignores_measurements_outside_range(
+    humidity_state: HumidityState,
+) -> None:
+    """Out-of-range humidity readings do not overwrite the current state."""
+
+    humidity_state.parse(
+        {
+            "state": {
+                "humidity": {
+                    "current": 55,
+                    "calibration": 5,
+                    "min": 30,
+                    "max": 80,
+                }
+            }
+        }
+    )
+
+    previous = humidity_state.value
+
+    humidity_state.parse({"state": {"humidity": {"current": 85}}})
+    assert humidity_state.value == previous
+
+    humidity_state.parse({"state": {"humidity": {"current": 10}}})
+    assert humidity_state.value == previous
 
 
 def test_humidity_state_updates_from_status_code(
