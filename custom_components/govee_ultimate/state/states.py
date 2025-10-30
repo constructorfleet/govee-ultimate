@@ -1158,7 +1158,7 @@ class ConnectedState(DeviceState[bool | None]):
                 return
 
 
-class BatteryLevelState(DeviceState[int | None]):
+class BatteryLevelState(DeviceState[float | int | None]):
     """Expose battery percentages reported by supported devices."""
 
     def __init__(self, *, device: object) -> None:
@@ -1171,12 +1171,11 @@ class BatteryLevelState(DeviceState[int | None]):
 
         for mapping in self._candidate_mappings(data):
             value = mapping.get("battery")
-            percentage = _int_from_value(value)
-            if percentage is None:
+            percentage = _float_from_value(value)
+            if percentage is None or not (0.0 <= percentage <= 100.0):
                 continue
-            if 0 <= percentage <= 100:
-                self._update_state(percentage)
-                return
+            self._update_state(percentage)
+            return
 
     def _candidate_mappings(self, data: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         candidates: list[Mapping[str, Any]] = []
