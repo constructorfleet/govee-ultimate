@@ -3540,7 +3540,18 @@ class ColorTemperatureState(DeviceState[int | None]):
         return [self.name]
 
 
-class SegmentColorState(DeviceState[list[int] | None]):
+def _index_to_segment_bits(indices: int) -> list[int]:
+    """Convert a segment bit mask into a list of bytes."""
+
+    if indices <= 0:
+        return []
+    hex_text = f"{indices:X}"
+    if len(hex_text) % 2:
+        hex_text = f"0{hex_text}"
+    return [int(hex_text[idx : idx + 2], 16) for idx in range(0, len(hex_text), 2)]
+
+
+class SegmentColorState(DeviceOpState[list[dict[str, Any]]]):
     """Expose segment-based RGB values for RGBIC devices."""
 
     def __init__(
@@ -3551,29 +3562,226 @@ class SegmentColorState(DeviceState[list[int] | None]):
     ) -> None:
         """Initialise the segment colour tracker."""
 
+        identifiers = list(identifier) if identifier is not None else [0xA5]
         super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": identifiers},
             device=device,
             name="segmentColor",
-            initial_value=None,
-            parse_option=ParseOption.NONE,
+            initial_value=[],
+            parse_option=ParseOption.MULTI_OP,
+            state_to_command=self._state_to_command,
         )
-        self._identifier = list(identifier) if identifier is not None else []
+        self._segments: dict[int, dict[str, Any]] = {}
 
-    def set_state(self, next_state: Any) -> list[str]:
-        """Update segment colours when the payload is well-formed."""
+    def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
+        """Convert multi-op payloads into structured segment entries."""
 
-        if not isinstance(next_state, list | tuple):
-            return []
-        values: list[int] = []
-        for value in next_state:
-            numeric = _int_from_value(value)
-            if numeric is None or not 0 <= numeric <= 255:
-                return []
-            values.append(numeric)
-        if len(values) % 3 != 0:
-            return []
-        self._update_state(values)
-        return [self.name]
+        parsed: dict[int, dict[str, Any]] = {}
+        for op_command in op_commands:
+            if not op_command:
+                continue
+            message_number = op_command[0] - 1
+            if message_number < 0:
+                continue
+            segment_chunks = _chunk(op_command[1:], 4)
+            for index, chunk in enumerate(segment_chunks[:3]):
+                if len(chunk) < 4:
+                    continue
+                brightness, red, green, blue = chunk[:4]
+                segment_id = message_number * 3 + index
+                self._store_segment(
+                    parsed,
+                    segment_id,
+                    brightness=brightness,
+                    color={"red": red, "green": green, "blue": blue},
+                )
+        if parsed:
+            self._segments = parsed
+            self._update_state(self._segments_as_list())
+
+    def _segments_as_list(self) -> list[dict[str, Any]]:
+        segments: list[dict[str, Any]] = []
+        for segment_id in sorted(self._segments):
+            stored = self._segments[segment_id]
+            entry: dict[str, Any] = {"id": segment_id}
+            brightness = stored.get("brightness")
+            if isinstance(brightness, int):
+                entry["brightness"] = brightness
+            color = stored.get("color")
+            if isinstance(color, Mapping):
+                red = _int_from_value(color.get("red"))
+                green = _int_from_value(color.get("green"))
+                blue = _int_from_value(color.get("blue"))
+                if None not in (red, green, blue):
+                    entry["color"] = {"red": red, "green": green, "blue": blue}
+            segments.append(entry)
+        return segments
+
+    def _normalise_updates(self, next_state: Any) -> list[dict[str, Any]] | None:
+        if isinstance(next_state, Mapping):
+            candidates = [next_state]
+        elif isinstance(next_state, Sequence) and not isinstance(
+            next_state, str | bytes | Mapping
+        ):
+            candidates = list(next_state)
+        else:
+            return None
+
+        updates: list[dict[str, Any]] = []
+        for entry in candidates:
+            if not isinstance(entry, Mapping):
+                return None
+            segment_id = _int_from_value(entry.get("id"))
+            if segment_id is None or segment_id < 0:
+                return None
+            normalised: dict[str, Any] = {"id": segment_id}
+            if "brightness" in entry:
+                brightness = _int_from_value(entry.get("brightness"))
+                if brightness is None or not 0 <= brightness <= 0xFF:
+                    return None
+                normalised["brightness"] = brightness
+            if "color" in entry:
+                color = entry.get("color")
+                if not isinstance(color, Mapping):
+                    return None
+                red = _int_from_value(color.get("red"))
+                green = _int_from_value(color.get("green"))
+                blue = _int_from_value(color.get("blue"))
+                if None in (red, green, blue):
+                    return None
+                if not all(0 <= value <= 0xFF for value in (red, green, blue)):
+                    return None
+                normalised["color"] = {"red": red, "green": green, "blue": blue}
+            if len(normalised) == 1:
+                continue
+            updates.append(normalised)
+        return updates if updates else None
+
+    def _group_updates(
+        self, updates: Sequence[Mapping[str, Any]]
+    ) -> tuple[dict[tuple[int, int, int], int], dict[int, int]]:
+        color_groups: dict[tuple[int, int, int], int] = {}
+        brightness_groups: dict[int, int] = {}
+        for entry in updates:
+            segment_id = entry["id"]
+            color = entry.get("color")
+            if isinstance(color, Mapping):
+                key = (
+                    int(color["red"]),
+                    int(color["green"]),
+                    int(color["blue"]),
+                )
+                color_groups[key] = color_groups.get(key, 0) | (1 << segment_id)
+            brightness = entry.get("brightness")
+            if isinstance(brightness, int):
+                brightness_groups[brightness] = brightness_groups.get(brightness, 0) | (
+                    1 << segment_id
+                )
+        return color_groups, brightness_groups
+
+    def _apply_segment_updates(
+        self, updates: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        for entry in updates:
+            segment_id = entry["id"]
+            brightness = entry.get("brightness")
+            color_value = entry.get("color")
+            color_mapping: Mapping[str, Any] | None = (
+                color_value if isinstance(color_value, Mapping) else None
+            )
+            self._store_segment(
+                self._segments,
+                segment_id,
+                brightness=brightness if isinstance(brightness, int) else None,
+                color=color_mapping,
+            )
+        segments = self._segments_as_list()
+        self._update_state(segments)
+        return segments
+
+    def _message_headers_for_updates(
+        self, updates: Sequence[Mapping[str, Any]]
+    ) -> list[int]:
+        headers: set[int] = set()
+        for entry in updates:
+            segment_id = entry.get("id")
+            if isinstance(segment_id, int):
+                headers.add((segment_id // 3) + 1)
+        return sorted(headers)
+
+    def _store_segment(
+        self,
+        target: dict[int, dict[str, Any]],
+        segment_id: int,
+        *,
+        brightness: int | None,
+        color: Mapping[str, Any] | None,
+    ) -> None:
+        entry = dict(target.get(segment_id) or {"id": segment_id})
+        if isinstance(brightness, int):
+            entry["brightness"] = brightness
+        if isinstance(color, Mapping):
+            red = _int_from_value(color.get("red"))
+            green = _int_from_value(color.get("green"))
+            blue = _int_from_value(color.get("blue"))
+            if None not in (red, green, blue):
+                entry["color"] = {"red": red, "green": green, "blue": blue}
+        target[segment_id] = entry
+
+    def _state_to_command(self, next_state: Any) -> StateCommandAndStatus | None:
+        updates = self._normalise_updates(next_state)
+        if not updates:
+            return None
+        color_groups, brightness_groups = self._group_updates(updates)
+        if not color_groups and not brightness_groups:
+            return None
+
+        commands: list[list[int]] = []
+        for (red, green, blue), indices in color_groups.items():
+            index_bytes = _index_to_segment_bits(indices)
+            commands.append(
+                _opcode_frame(
+                    0x33,
+                    0x05,
+                    RGBICModes.SEGMENT_COLOR,
+                    0x01,
+                    red,
+                    green,
+                    blue,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                    *index_bytes,
+                )
+            )
+        for brightness, indices in brightness_groups.items():
+            index_bytes = _index_to_segment_bits(indices)
+            commands.append(
+                _opcode_frame(
+                    0x33,
+                    0x05,
+                    RGBICModes.SEGMENT_COLOR,
+                    0x02,
+                    brightness,
+                    *index_bytes,
+                )
+            )
+        if not commands:
+            return None
+
+        state_snapshot = self._apply_segment_updates(updates)
+        status_entries: list[dict[str, Any]] = [{"state": {self.name: state_snapshot}}]
+        message_headers = self._message_headers_for_updates(updates)
+        if message_headers:
+            status_entries.append(
+                {"op": {"command": [[header, None] for header in message_headers]}}
+            )
+        return {
+            "command": {"command": "multi_sync", "data": {"command": commands}},
+            "status": status_entries,
+        }
 
 
 class SceneModeState(DeviceOpState[dict[str, int]]):
