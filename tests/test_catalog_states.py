@@ -11,6 +11,7 @@ from custom_components.govee_ultimate.state.states import (
     ActiveState,
     BrightnessState,
     ColorRGBState,
+    ColorTemperatureState,
     PowerState,
 )
 from custom_components.govee_ultimate.state_catalog import load_state_catalog
@@ -154,6 +155,53 @@ def test_brightness_state_command_and_status_alignment() -> None:
     state.parse({"op": {"command": [[0xAA, 0x02, 0x2A]]}})
 
     assert state.value == 42
+
+    cleared = _drain(state.clear_queue)
+    assert cleared and cleared[0]["command_id"] == command_ids[0]
+
+
+@pytest.mark.parametrize("invalid_value", [None, 1999, 8701])
+def test_color_temperature_state_rejects_out_of_range_values(invalid_value) -> None:
+    """Color temperature commands require catalog-defined range values."""
+
+    state = ColorTemperatureState(device=DummyDevice())
+
+    assert state.set_state(invalid_value) == []
+    assert state.command_queue.empty()
+
+
+def test_color_temperature_state_generates_catalog_command_and_clears() -> None:
+    """Color temperature command uses template payloads and clears on responses."""
+
+    catalog = load_state_catalog()
+    entry = catalog.get_state("color_temperature")
+    command_template = entry.command_templates[0]
+    status_opcode = int(entry.identifiers["status"]["opcode"], 16)
+
+    state = ColorTemperatureState(device=DummyDevice())
+
+    command_ids = state.set_state(3200)
+    assert command_ids
+
+    command_payloads = _drain(state.command_queue)
+    assert command_payloads
+    command = command_payloads[0]
+
+    assert command["name"] == command_template.name
+    assert command["opcode"] == command_template.opcode
+    assert command["payload_hex"] == "030C80"
+    assert command["ble_base64"] == _ble_frame(command["opcode"], "030C80")
+
+    pending = _first_pending(state, command_ids[0])
+    assert any(
+        expectation.get("state", {}).get("colorTem") == 3200 for expectation in pending
+    )
+    assert any("op" in expectation for expectation in pending)
+
+    state.parse({"cmd": "status", "state": {"colorTem": 3200}})
+    state.parse({"op": {"command": [[0xAA, status_opcode, 0x0C, 0x80]]}})
+
+    assert state.value == 3200
 
     cleared = _drain(state.clear_queue)
     assert cleared and cleared[0]["command_id"] == command_ids[0]
