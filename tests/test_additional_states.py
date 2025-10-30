@@ -49,12 +49,40 @@ def temperature_state(device: DummyDevice) -> TemperatureState:
 def humidity_state(device: DummyDevice) -> HumidityState:
     """Return a humidity state bound to a dummy device."""
 
-    return HumidityState(
-        device=device,
-        op_type=None,
-        identifier=None,
-        parse_option=ParseOption.STATE,
+    return HumidityState(device)
+
+
+def test_humidity_state_accepts_opcode_metadata(device: DummyDevice) -> None:
+    """Humidity state accepts optional opcode metadata like the TS port."""
+
+    humidity_state = HumidityState(
+        device,
+        op_type=0xAA,
+        parse_option=ParseOption.STATE | ParseOption.OP_CODE,
+        identifier=[0x05],
     )
+
+    humidity_state.parse(
+        {
+            "state": {
+                "humidity": {
+                    "current": 48,
+                    "calibration": -2,
+                    "min": 30,
+                    "max": 80,
+                }
+            }
+        }
+    )
+
+    humidity_state.parse({"state": {"status": {"code": "000031"}}})
+
+    assert humidity_state.value == {
+        "current": 47,
+        "raw": 49,
+        "calibration": -2,
+        "range": {"min": 30, "max": 80},
+    }
 
 
 def test_humidity_state_parses_measurement_payload(
