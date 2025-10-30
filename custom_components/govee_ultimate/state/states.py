@@ -345,7 +345,7 @@ class PresetState(DeviceOpState[dict[str, Any] | None]):
     """Represent preset alarm and doneness configuration per probe."""
 
     options: tuple[str, ...] = tuple(
-        _FOOD_MAP[key] for key in sorted(_FOOD_MAP)  # type: ignore[index]
+        _FOOD_MAP[key] for key in _FOOD_MAP  # type: ignore[index]
     )
 
     def __init__(

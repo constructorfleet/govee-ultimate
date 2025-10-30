@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from typing import Any
 
 import pytest
 
+from custom_components.govee_ultimate.state import states
 from custom_components.govee_ultimate.state.states import (
     BuzzerState,
     EarlyWarningState,
@@ -160,3 +162,12 @@ def test_early_warning_enabled_wrapper_surfaces_flag() -> None:
     state.parse({"op": {"command": _build_probe_commands()}})
 
     assert wrapper.value is True
+
+
+def test_preset_state_options_follow_food_map_order() -> None:
+    """Preset state options should mirror the upstream FoodMap sequence."""
+
+    expected = tuple(states._FOOD_MAP.values())
+
+    assert PresetState.options == expected
+    assert "sorted(" not in inspect.getsource(PresetState)
