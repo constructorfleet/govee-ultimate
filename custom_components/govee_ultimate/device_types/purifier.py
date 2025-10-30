@@ -58,7 +58,7 @@ class PurifierDevice(BaseDevice):
         "controlLock": (ControlLockState, {"identifier": [0x10]}),
         "displaySchedule": (DisplayScheduleState, {"identifier": [0x16]}),
         "timer": (TimerState, {"identifier": [0x11]}),
-        "filterLife": (FilterLifeState, {}),
+        "filterLife": (FilterLifeState, {"identifier": [0x19]}),
         "filterExpired": (FilterExpiredState, {}),
     }
 
