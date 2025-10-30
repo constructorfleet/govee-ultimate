@@ -62,6 +62,9 @@ from custom_components.govee_ultimate.state.states import (
     PresetState,
     ProbeTempState,
     TemperatureUnitState,
+    ManualModeState,
+    CustomModeState,
+    AutoModeState,
 )
 
 
@@ -820,20 +823,33 @@ def test_humidifier_mode_interlocks_gate_mist_levels(
     mist_state = device.states["mistLevel"]
     target_state = device.states["targetHumidity"]
 
+    manual_mode = device.states["manual_mode"]
+    auto_mode = device.states["auto_mode"]
+
     device.mode_state.activate("manual_mode")
-    assert mist_state.set_state(40) == ["mist_level"]
-    assert mist_state.value == 40
+    manual_commands = mist_state.set_state(40)
+    assert len(manual_commands) == 1
+    manual_frame = _next_command_frame(manual_mode)
+    assert manual_frame[:3] == [0x33, 0x05, 0x01]
+    assert manual_frame[3] == 9
+    assert mist_state.value == 9
     assert target_state.set_state(55) == []
 
     device.mode_state.activate("auto_mode")
-    assert mist_state.set_state(20) == ["mist_level"]
+    manual_commands = mist_state.set_state(20)
+    assert len(manual_commands) == 1
+    manual_frame = _next_command_frame(manual_mode)
+    assert manual_frame[3] == 9
     assert device.mode_state.active_mode is not None
     assert device.mode_state.active_mode.name == "manual_mode"
-    assert mist_state.value == 20
+    assert mist_state.value == 9
     assert target_state.set_state(60) == []
     assert device.mode_state.active_mode is not None
     assert device.mode_state.active_mode.name == "auto_mode"
     assert target_state.set_state(60) == ["target_humidity"]
+    auto_frame = _next_command_frame(auto_mode)
+    assert auto_frame[:3] == [0x33, 0x05, 0x03]
+    assert auto_frame[3] == 60
 
 
 def test_mist_level_state_tracks_mode_and_delegates(
@@ -937,19 +953,132 @@ def test_target_humidity_switches_to_auto_and_clamps_range(
 def test_target_humidity_auto_activation_queues_mode_command(
     humidifier_model_h7142: MockDeviceModel,
 ) -> None:
-    """Auto activation should enqueue a mode change command before clamping."""
+    """Auto activation should promote the mode without queuing a catalog command."""
 
     device = HumidifierDevice(humidifier_model_h7142)
 
     target_state = device.states["targetHumidity"]
+    auto_mode = device.states["auto_mode"]
 
     device.mode_state.activate("manual_mode")
 
     assert target_state.set_state(55) == []
 
-    auto_payload = device.mode_state.command_queue.get_nowait()
-    assert auto_payload["name"] == "set_humidifier_mode"
-    assert auto_payload["payload_hex"] == "2001"
+    assert device.mode_state.active_mode is not None
+    assert device.mode_state.active_mode.name == "auto_mode"
+    assert auto_mode.command_queue.empty()
+
+
+def test_humidifier_mode_states_parse_and_command(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Manual, custom, and auto states should mirror the TypeScript behaviours."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    manual_state = device.states["manual_mode"]
+    custom_state = device.states["custom_mode"]
+    auto_state = device.states["auto_mode"]
+
+    assert isinstance(manual_state, ManualModeState)
+    assert isinstance(custom_state, CustomModeState)
+    assert isinstance(auto_state, AutoModeState)
+
+    manual_state.parse_op_command([0x00, 0x05, 0x01, 0x04, 0x00])
+    assert manual_state.value == 4
+
+    manual_state.set_state(12)
+    manual_command = _next_command_frame(manual_state)
+    assert manual_command[:4] == [0x33, 0x05, 0x01, 0x09]
+
+    custom_state.parse_op_command(
+        [
+            0x00,
+            0x01,
+            0x14,
+            0x00,
+            0x0A,
+            0x00,
+            0x0A,
+            0x1E,
+            0x00,
+            0x14,
+            0x00,
+            0x14,
+            0x32,
+            0x00,
+            0x1E,
+            0x00,
+            0x1E,
+        ]
+    )
+
+    assert custom_state.value == {
+        "id": 1,
+        "mistLevel": 0x1E,
+        "duration": 0x0014,
+        "remaining": 0x0014,
+    }
+
+    custom_state.set_state(
+        {"id": 2, "mistLevel": 55, "duration": 360, "remaining": 180}
+    )
+    custom_command = _next_command_frame(custom_state)
+    assert custom_command[0] == 0x33
+    assert custom_command[1:3] == [0x05, 0x02]
+    assert custom_command[3] == 2
+
+    humidity_state = device.states["humidity"]
+    humidity_state.parse(
+        {
+            "state": {
+                "humidity": {
+                    "current": 50,
+                    "calibration": 0,
+                    "min": 40,
+                    "max": 70,
+                }
+            }
+        }
+    )
+
+    auto_state.parse_op_command([60])
+    assert auto_state.value == {"targetHumidity": 60}
+
+    auto_state.set_state({"targetHumidity": 80})
+    auto_command = _next_command_frame(auto_state)
+    assert auto_command[:3] == [0x33, 0x05, 0x03]
+    assert auto_command[3] == 70
+
+
+def test_humidifier_active_state_tracks_delegate_pending(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Active mode should track delegate pending and relay clear events."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    mode_state = device.mode_state
+    manual_state = device.states["manual_mode"]
+
+    command_ids = mode_state.set_state("manual_mode")
+
+    assert len(command_ids) == 2
+
+    delegate_id = command_ids[-1]
+    assert delegate_id in manual_state._pending_commands  # type: ignore[attr-defined]
+
+    assert delegate_id in mode_state._pending_commands  # type: ignore[attr-defined]
+    assert (
+        mode_state._pending_commands[delegate_id]  # type: ignore[attr-defined]
+        == manual_state._pending_commands[delegate_id]  # type: ignore[attr-defined]
+    )
+
+    manual_state.expire_pending_commands([delegate_id])
+
+    relayed = mode_state.clear_queue.get_nowait()
+    assert relayed["command_id"] == delegate_id
+    assert delegate_id not in mode_state._pending_commands  # type: ignore[attr-defined]
 
 
 def test_purifier_model_specific_states(

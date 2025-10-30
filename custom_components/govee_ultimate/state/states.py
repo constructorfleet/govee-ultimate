@@ -10,6 +10,7 @@ from typing import Any
 from collections.abc import Callable
 import itertools
 from enum import Enum
+import logging
 
 from .. import opcodes
 from collections.abc import Sequence
@@ -21,6 +22,9 @@ from .device_state import (
     ParseOption,
     StateCommandAndStatus,
 )
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _chunk(values: Sequence[int], size: int) -> list[list[int]]:
@@ -825,6 +829,345 @@ class HumidityState(DeviceState[dict[str, Any] | None]):
         if maximum is not None:
             payload["max"] = maximum
         return payload or None
+
+
+_HUMIDIFIER_MODE_PREFIX = 0x05
+_HUMIDIFIER_MODE_MANUAL = 0x01
+_HUMIDIFIER_MODE_CUSTOM = 0x02
+_HUMIDIFIER_MODE_AUTO = 0x03
+
+
+class _HumidifierModeState(DeviceOpState[Any]):
+    """Shared helpers for humidifier mode opcode-backed states."""
+
+    _command_opcode = 0x33
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        name: str,
+        identifier: Sequence[int],
+        delegate: Any | None = None,
+        state_to_command: Callable[[Any], StateCommandAndStatus | None] | None,
+    ) -> None:
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": list(identifier)},
+            device=device,
+            name=name,
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=state_to_command,
+        )
+        self._identifier = [identifier[-1]] if identifier else []
+        self._listeners: list[Callable[[Any], None]] = []
+        self._delegate = delegate
+        self._pending_value: Any | None = None
+
+    @property
+    def delegate_state(self) -> Any | None:
+        """Expose the optional delegate backing this mode."""
+
+        return self._delegate
+
+    def register_listener(self, callback: Callable[[Any], None]) -> None:
+        """Register a listener invoked when the mode payload changes."""
+
+        self._listeners.append(callback)
+
+    def _notify_listeners(self, value: Any) -> None:
+        for listener in list(self._listeners):
+            listener(value)
+
+    def _update_state(self, value: Any) -> None:  # type: ignore[override]
+        super()._update_state(value)
+        self._notify_listeners(value)
+
+    def set_state(self, next_state: Any) -> list[str]:  # type: ignore[override]
+        command_ids = super().set_state(next_state)
+        if command_ids and self._pending_value is not None:
+            self._update_state(self._pending_value)
+            self._pending_value = None
+        return command_ids
+
+    def _command_payload(self, payload: Sequence[int]) -> dict[str, Any]:
+        return {
+            "data": {
+                "command": [[self._command_opcode, *payload]],
+            }
+        }
+
+
+class ManualModeState(_HumidifierModeState):
+    """Track humidifier manual mode output levels."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        delegate: Any | None = None,
+    ) -> None:
+        """Initialise the manual mode opcode-backed state."""
+        super().__init__(
+            device=device,
+            name="manual_mode",
+            identifier=[_HUMIDIFIER_MODE_PREFIX, _HUMIDIFIER_MODE_MANUAL],
+            delegate=delegate,
+            state_to_command=self._state_to_command,
+        )
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Decode the manual mist level from the opcode payload."""
+        payload = op_command[1:]
+        if not payload:
+            return
+        try:
+            sentinel_index = payload.index(0x00)
+        except ValueError:
+            return
+        if sentinel_index <= 0:
+            return
+        level = _int_from_value(payload[sentinel_index - 1])
+        if level is None:
+            return
+        self._update_state(self._clamp_level(level))
+
+    def _clamp_level(self, value: int) -> int:
+        if value < 0:
+            return 0
+        if value > 9:
+            return 9
+        return value
+
+    def _state_to_command(self, next_state: Any) -> StateCommandAndStatus | None:
+        value = _int_from_value(next_state)
+        if value is None:
+            return None
+        clamped = self._clamp_level(value)
+        if clamped != value:
+            _LOGGER.warning(
+                "Manual mode level %s outside supported range, clamping to %s",
+                value,
+                clamped,
+            )
+        payload = [_HUMIDIFIER_MODE_PREFIX, _HUMIDIFIER_MODE_MANUAL, clamped]
+        self._pending_value = clamped
+        return {
+            "command": self._command_payload(payload),
+            "status": {"op": {"command": [[clamped]]}},
+        }
+
+
+class CustomModeState(_HumidifierModeState):
+    """Track and update humidifier custom programs."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        delegate: Any | None = None,
+    ) -> None:
+        """Initialise the custom mode program tracker."""
+        super().__init__(
+            device=device,
+            name="custom_mode",
+            identifier=[_HUMIDIFIER_MODE_PREFIX, _HUMIDIFIER_MODE_CUSTOM],
+            delegate=delegate,
+            state_to_command=self._state_to_command,
+        )
+        self._programs: dict[int, dict[str, int]] = {}
+        self._current_program_id: int | None = None
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Parse the program slots and active program identifier."""
+        payload = op_command[1:]
+        if not payload:
+            return
+        program_id = _int_from_value(payload[0])
+        if program_id is None:
+            return
+        programs: dict[int, dict[str, int]] = {}
+        for index in range(3):
+            base = 1 + 5 * index
+            if len(payload) < base + 5:
+                return
+            mist_level = _int_from_value(payload[base])
+            duration_hi = _int_from_value(payload[base + 1])
+            duration_lo = _int_from_value(payload[base + 2])
+            remaining_hi = _int_from_value(payload[base + 3])
+            remaining_lo = _int_from_value(payload[base + 4])
+            if None in (
+                mist_level,
+                duration_hi,
+                duration_lo,
+                remaining_hi,
+                remaining_lo,
+            ):
+                return
+            duration = duration_hi * 255 + duration_lo
+            remaining = remaining_hi * 255 + remaining_lo
+            programs[index] = {
+                "id": index,
+                "mistLevel": mist_level,
+                "duration": duration,
+                "remaining": remaining,
+            }
+        self._programs = programs
+        self._current_program_id = program_id if program_id in programs else None
+        current = (
+            programs.get(self._current_program_id)
+            if self._current_program_id is not None
+            else None
+        )
+        self._update_state(current)
+
+    def _default_programs(self, selected: int) -> dict[int, dict[str, int]]:
+        defaults = {
+            0: {"id": 0, "duration": 100, "remaining": 100, "mistLevel": 0},
+            1: {
+                "id": 1,
+                "duration": 100,
+                "remaining": 0 if selected > 1 else 100,
+                "mistLevel": 0,
+            },
+            2: {"id": 2, "duration": 32640, "remaining": 32640, "mistLevel": 0},
+        }
+        if selected == 1:
+            defaults[0]["remaining"] = 0
+        if selected == 2:
+            defaults[0]["remaining"] = 0
+            defaults[1]["remaining"] = 0
+        return defaults
+
+    @staticmethod
+    def _encode_program(program: Mapping[str, int]) -> list[int]:
+        duration = max(0, int(program.get("duration", 0)))
+        remaining = max(0, int(program.get("remaining", 0)))
+        mist_level = _int_from_value(program.get("mistLevel")) or 0
+        return [
+            mist_level,
+            duration // 255,
+            duration % 255,
+            remaining // 255,
+            remaining % 255,
+        ]
+
+    def _state_to_command(self, next_state: Any) -> StateCommandAndStatus | None:
+        if not isinstance(next_state, Mapping):
+            return None
+        program_id = _int_from_value(next_state.get("id"))
+        if program_id is None:
+            program_id = self._current_program_id or 0
+        if program_id not in (0, 1, 2):
+            program_id = max(0, min(2, program_id))
+        source = self._programs.get(program_id, {"id": program_id})
+        mist_level = _int_from_value(next_state.get("mistLevel"))
+        duration = _int_from_value(next_state.get("duration"))
+        remaining = _int_from_value(next_state.get("remaining"))
+        program: dict[str, int] = {
+            "id": program_id,
+            "mistLevel": (
+                mist_level if mist_level is not None else source.get("mistLevel", 0)
+            ),
+            "duration": duration if duration is not None else source.get("duration", 0),
+            "remaining": (
+                remaining
+                if remaining is not None
+                else source.get("remaining", 100 if program_id == 0 else 0)
+            ),
+        }
+        programs = {
+            **self._default_programs(program_id),
+            **self._programs,
+            program_id: program,
+        }
+        payload: list[int] = [
+            _HUMIDIFIER_MODE_PREFIX,
+            _HUMIDIFIER_MODE_CUSTOM,
+            program_id,
+        ]
+        status_payload: list[int | None] = [program_id]
+        for index in range(3):
+            encoded = self._encode_program(programs[index])
+            payload.extend(encoded)
+            status_payload.extend(encoded[:3] + [None, None])
+        self._pending_value = program
+        return {
+            "command": self._command_payload(payload),
+            "status": {"op": {"command": [status_payload]}},
+        }
+
+
+class AutoModeState(_HumidifierModeState):
+    """Track target humidity for humidifier auto mode."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        humidity_state: HumidityState | None = None,
+        delegate: Any | None = None,
+    ) -> None:
+        """Initialise the auto mode state with optional humidity binding."""
+        super().__init__(
+            device=device,
+            name="auto_mode",
+            identifier=[_HUMIDIFIER_MODE_PREFIX, _HUMIDIFIER_MODE_AUTO],
+            delegate=delegate,
+            state_to_command=self._state_to_command,
+        )
+        self._humidity_state = humidity_state
+
+    def bind_humidity_state(self, humidity_state: HumidityState) -> None:
+        """Bind the humidity state for range clamping."""
+
+        self._humidity_state = humidity_state
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Extract the target humidity from the opcode payload."""
+        if not op_command:
+            return
+        target = _int_from_value(op_command[0])
+        if target is None:
+            return
+        self._update_state({"targetHumidity": target})
+
+    def _clamp_target(self, target: int) -> int:
+        state = self._humidity_state.value if self._humidity_state is not None else None
+        if isinstance(state, Mapping):
+            range_value = state.get("range")
+            if isinstance(range_value, Mapping):
+                minimum = _int_from_value(range_value.get("min"))
+                maximum = _int_from_value(range_value.get("max"))
+                if minimum is not None and target < minimum:
+                    _LOGGER.warning(
+                        "Target humidity %s below minimum %s, clamping",
+                        target,
+                        minimum,
+                    )
+                    target = minimum
+                if maximum is not None and target > maximum:
+                    _LOGGER.warning(
+                        "Target humidity %s above maximum %s, clamping",
+                        target,
+                        maximum,
+                    )
+                    target = maximum
+        return target
+
+    def _state_to_command(self, next_state: Any) -> StateCommandAndStatus | None:
+        if not isinstance(next_state, Mapping):
+            return None
+        target = _int_from_value(next_state.get("targetHumidity"))
+        if target is None:
+            return None
+        clamped = self._clamp_target(target)
+        self._pending_value = {"targetHumidity": clamped}
+        payload = [_HUMIDIFIER_MODE_PREFIX, _HUMIDIFIER_MODE_AUTO, clamped]
+        return {
+            "command": self._command_payload(payload),
+            "status": {"op": {"command": [[clamped]]}},
+        }
 
 
 class TemperatureState(DeviceOpState[dict[str, Any]]):

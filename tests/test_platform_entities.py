@@ -743,10 +743,12 @@ async def test_humidifier_select_entity_dispatches_mode_command(
     await mode_entity.async_select_option("manual_mode")
 
     assert coordinator.command_publisher_calls
-    device_id, command = coordinator.command_publisher_calls[-1]
-    assert device_id == humidifier_metadata.device_id
-    assert command["opcode"] == "0x20"
-    assert command["payload_hex"].upper() == "2003"
+    payloads = [command for _, command in coordinator.command_publisher_calls]
+    assert any(command.get("payload_hex", "").upper() == "2003" for command in payloads)
+    manual_command = payloads[-1]
+    sequence = manual_command.get("data", {}).get("command", [])
+    assert sequence
+    assert sequence[0][:3] == [0x33, 0x05, 0x01]
 
 
 @pytest.mark.asyncio
