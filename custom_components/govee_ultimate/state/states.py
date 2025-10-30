@@ -1319,22 +1319,25 @@ class HumidityState(DeviceOpState[dict[str, Any] | None]):
 
     def __init__(
         self,
-        *,
         device: object,
         op_type: int | None = None,
-        identifier: Sequence[int] | None = None,
         parse_option: ParseOption = ParseOption.STATE,
+        identifier: Sequence[int] | None = None,
     ) -> None:
         """Initialise the humidity sensor state handler."""
 
+        op_identifier: dict[str, Any] = {}
+        if op_type is not None:
+            op_identifier["op_type"] = op_type
+        if identifier is not None:
+            op_identifier["identifier"] = list(identifier)
+        elif op_type is not None:
+            op_identifier["identifier"] = []
         super().__init__(
-            op_identifier={
-                "op_type": op_type,
-                "identifier": list(identifier or []),
-            },
+            op_identifier=op_identifier,
             device=device,
             name="humidity",
-            initial_value=None,
+            initial_value={},
             parse_option=parse_option,
         )
         self._has_explicit_min = False
