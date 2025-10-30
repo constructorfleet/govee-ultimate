@@ -8,12 +8,14 @@ from custom_components.govee_ultimate.state import PowerState
 from custom_components.govee_ultimate.state.states import (
     BuzzerState,
     EarlyWarningState,
+    EarlyWarningEnabledState,
+    EarlyWarningSettingState,
     PresetState,
     ProbeTempState,
     TemperatureUnitState,
 )
 
-from .base import BaseDevice
+from .base import BaseDevice, EntityCategory
 
 
 class MeatThermometerDevice(BaseDevice):
@@ -29,9 +31,39 @@ class MeatThermometerDevice(BaseDevice):
 
         self._register_connected_state(device_model)
 
-        self.add_state(BuzzerState(device=device_model))
-        self.add_state(TemperatureUnitState(device=device_model))
-        self.add_state(EarlyWarningState(device=device_model))
+        buzzer = self.add_state(BuzzerState(device=device_model))
+        self.expose_entity(
+            platform="binary_sensor",
+            state=buzzer,
+            translation_key="buzzer",
+            entity_category=EntityCategory.CONFIG,
+        )
+
+        temperature_unit = self.add_state(TemperatureUnitState(device=device_model))
+        self.expose_entity(
+            platform="sensor",
+            state=temperature_unit,
+            translation_key="temperature_unit",
+        )
+
+        early_warning = self.add_state(EarlyWarningState(device=device_model))
+        early_warning_enabled = self.add_state(
+            EarlyWarningEnabledState(source=early_warning)
+        )
+        self.expose_entity(
+            platform="binary_sensor",
+            state=early_warning_enabled,
+            translation_key="early_warning_enabled",
+            entity_category=EntityCategory.CONFIG,
+        )
+        early_warning_setting = self.add_state(
+            EarlyWarningSettingState(source=early_warning)
+        )
+        self.expose_entity(
+            platform="sensor",
+            state=early_warning_setting,
+            translation_key="early_warning_setting",
+        )
 
         self._register_probe_states(device_model)
         self._register_preset_states(device_model)

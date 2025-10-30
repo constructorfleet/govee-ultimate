@@ -10,6 +10,8 @@ import pytest
 from custom_components.govee_ultimate.state.states import (
     BuzzerState,
     EarlyWarningState,
+    EarlyWarningEnabledState,
+    EarlyWarningSettingState,
     PresetState,
     ProbeTempState,
     TemperatureUnitState,
@@ -134,3 +136,27 @@ def test_preset_state_parses_food_and_alarm_ranges(
         "alarm": {"high": pytest.approx(high), "low": pytest.approx(low)},
         "doneLevel": done,
     }
+
+
+def test_early_warning_setting_wrapper_surfaces_offset() -> None:
+    """Early warning setting wrapper should mirror the parsed offset."""
+
+    device = DummyDevice()
+    state = EarlyWarningState(device=device)
+    wrapper = EarlyWarningSettingState(source=state)
+
+    state.parse({"op": {"command": _build_probe_commands()}})
+
+    assert wrapper.value == "MEDIUM"
+
+
+def test_early_warning_enabled_wrapper_surfaces_flag() -> None:
+    """Early warning enabled wrapper should surface the boolean flag."""
+
+    device = DummyDevice()
+    state = EarlyWarningState(device=device)
+    wrapper = EarlyWarningEnabledState(source=state)
+
+    state.parse({"op": {"command": _build_probe_commands()}})
+
+    assert wrapper.value is True

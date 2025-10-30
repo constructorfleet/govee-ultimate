@@ -207,6 +207,7 @@ class EarlyWarningState(DeviceOpState[dict[str, Any] | None]):
             initial_value=default_state,
             parse_option=ParseOption.MULTI_OP,
         )
+        self._listeners: list[Callable[[dict[str, Any] | None], None]] = []
 
     def parse_multi_op_command(self, op_commands: list[list[int]]) -> None:
         """Map header bytes to structured early warning metadata."""
@@ -224,6 +225,80 @@ class EarlyWarningState(DeviceOpState[dict[str, Any] | None]):
                 "setting": setting,
             }
         )
+
+    def register_listener(
+        self, callback: Callable[[dict[str, Any] | None], None]
+    ) -> None:
+        """Register ``callback`` for early warning configuration updates."""
+
+        if callback not in self._listeners:
+            self._listeners.append(callback)
+
+    def unregister_listener(
+        self, callback: Callable[[dict[str, Any] | None], None]
+    ) -> None:
+        """Remove ``callback`` from listeners when present."""
+
+        if callback in self._listeners:
+            self._listeners.remove(callback)
+
+    def _notify_listeners(self) -> None:
+        for listener in list(self._listeners):
+            listener(self.value)
+
+    def _update_state(self, value: dict[str, Any] | None) -> None:  # type: ignore[override]
+        super()._update_state(value)
+        self._notify_listeners()
+
+
+class EarlyWarningSettingState(DeviceState[str | None]):
+    """Mirror the parsed early warning offset setting as a scalar state."""
+
+    def __init__(self, *, source: EarlyWarningState) -> None:
+        """Initialise the derived state sourced from ``EarlyWarningState``."""
+
+        super().__init__(
+            device=source.device,
+            name="earlyWarningSetting",
+            initial_value=self._extract_value(source.value),
+            parse_option=ParseOption.NONE,
+        )
+        source.register_listener(self._handle_update)
+
+    def _extract_value(self, value: dict[str, Any] | None) -> str | None:
+        if isinstance(value, Mapping):
+            setting = value.get("setting")
+            if isinstance(setting, str):
+                return setting
+        return None
+
+    def _handle_update(self, value: dict[str, Any] | None) -> None:
+        self._update_state(self._extract_value(value))
+
+
+class EarlyWarningEnabledState(DeviceState[bool | None]):
+    """Expose the early warning enable flag as a dedicated boolean state."""
+
+    def __init__(self, *, source: EarlyWarningState) -> None:
+        """Initialise the derived state sourced from ``EarlyWarningState``."""
+
+        super().__init__(
+            device=source.device,
+            name="earlyWarningEnabled",
+            initial_value=self._extract_value(source.value),
+            parse_option=ParseOption.NONE,
+        )
+        source.register_listener(self._handle_update)
+
+    def _extract_value(self, value: dict[str, Any] | None) -> bool | None:
+        if isinstance(value, Mapping):
+            enabled = value.get("enabled")
+            if isinstance(enabled, bool):
+                return enabled
+        return None
+
+    def _handle_update(self, value: dict[str, Any] | None) -> None:
+        self._update_state(self._extract_value(value))
 
 
 _FOOD_MAP: dict[int, str] = {
