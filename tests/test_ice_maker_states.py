@@ -130,7 +130,8 @@ def test_making_ice_state_reflects_status(device: DummyDevice) -> None:
 
     command_ids = state.set_state(True)
     assert command_ids
-    [command] = _drain(status.command_queue)
+    assert status.command_queue.empty()
+    [command] = _drain(state.command_queue)
     assert command["payload_hex"] == "1901"
 
 
