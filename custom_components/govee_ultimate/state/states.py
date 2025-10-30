@@ -176,7 +176,7 @@ class EarlyWarningOffset(str, Enum):
     """Enumeration of supported early warning offsets."""
 
     OFF = "OFF"
-    LOW = "LOW"
+    LOW = "low"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
 
@@ -185,11 +185,11 @@ class EarlyWarningState(DeviceOpState[dict[str, Any] | None]):
     """Decode early warning enablement and offset configuration."""
 
     _VALID_FLAGS = {0, 1, 3, 5}
-    _OFFSET_MAP = {
-        0: EarlyWarningOffset.OFF,
-        1: EarlyWarningOffset.LOW,
-        3: EarlyWarningOffset.MEDIUM,
-        5: EarlyWarningOffset.HIGH,
+    _OFFSET_MAP: dict[int, str] = {
+        0: EarlyWarningOffset.OFF.value,
+        1: EarlyWarningOffset.LOW.value,
+        3: EarlyWarningOffset.MEDIUM.value,
+        5: EarlyWarningOffset.HIGH.value,
     }
 
     def __init__(
@@ -217,7 +217,7 @@ class EarlyWarningState(DeviceOpState[dict[str, Any] | None]):
         enabled_flag = op_command[3]
         if enabled_flag not in self._VALID_FLAGS:
             return
-        setting = self._OFFSET_MAP.get(op_command[4], EarlyWarningOffset.OFF)
+        setting = self._OFFSET_MAP.get(op_command[4], EarlyWarningOffset.OFF.value)
         self._update_state(
             {
                 "enabled": enabled_flag != 0,
