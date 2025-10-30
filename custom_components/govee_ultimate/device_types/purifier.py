@@ -18,68 +18,10 @@ from custom_components.govee_ultimate.state import (
     PurifierManualModeState,
     PurifierCustomModeState,
     PurifierActiveMode,
+    PurifierFanSpeedState,
 )
 
 from .base import BaseDevice, EntityCategory, PurifierEntities
-
-
-class _NumericState(DeviceState[int | None]):
-    """Numeric state with bounded values."""
-
-    def __init__(
-        self,
-        device: Any,
-        name: str,
-        *,
-        minimum: int,
-        maximum: int,
-        command_name: str | None = None,
-    ) -> None:
-        super().__init__(
-            device=device,
-            name=name,
-            initial_value=None,
-            parse_option=ParseOption.NONE,
-        )
-        self._minimum = minimum
-        self._maximum = maximum
-        self._command_name = command_name or name
-
-    def set_state(self, next_state: Any) -> list[str]:
-        try:
-            numeric = int(next_state)
-        except (TypeError, ValueError):
-            return []
-        if numeric < self._minimum or numeric > self._maximum:
-            return []
-        self._update_state(numeric)
-        return [self._command_name]
-
-
-class PurifierFanSpeedState(_NumericState):
-    """Fan speed controller gated by manual/custom modes when available."""
-
-    def __init__(self, device: Any, mode_state: PurifierActiveMode) -> None:
-        """Initialise the fan speed state bound to ``mode_state``."""
-
-        super().__init__(
-            device,
-            "fanSpeed",
-            minimum=1,
-            maximum=6,
-            command_name="fan_speed",
-        )
-        self._mode_state = mode_state
-
-    def set_state(self, next_state: Any) -> list[str]:
-        """Set the fan speed when manual/custom modes allow it."""
-
-        modes = {mode.name for mode in self._mode_state.modes}
-        if {"manual_mode", "custom_mode"} & modes:
-            active = self._mode_state.active_mode
-            if active is None or active.name not in {"manual_mode", "custom_mode"}:
-                return []
-        return super().set_state(next_state)
 
 
 class PurifierDevice(BaseDevice):
@@ -130,13 +72,12 @@ class PurifierDevice(BaseDevice):
         )
 
         mode_states: list[DeviceState[str] | None] = []
+        manual_state: PurifierManualModeState | None = None
+        custom_state: PurifierCustomModeState | None = None
         if model_id == "H7126":
-            mode_states.extend(
-                [
-                    self.add_state(PurifierManualModeState(device_model)),
-                    self.add_state(PurifierCustomModeState(device_model)),
-                ]
-            )
+            manual_state = self.add_state(PurifierManualModeState(device_model))
+            custom_state = self.add_state(PurifierCustomModeState(device_model))
+            mode_states.extend([manual_state, custom_state])
 
         auto = self.add_state(
             DeviceState(
@@ -152,7 +93,12 @@ class PurifierDevice(BaseDevice):
         self._mode_state = self.add_state(PurifierActiveMode(device_model, mode_states))
         self.expose_entity(platform="select", state=self._mode_state)
         self._fan_state = self.add_state(
-            PurifierFanSpeedState(device_model, self._mode_state)
+            PurifierFanSpeedState(
+                device_model,
+                self._mode_state,
+                manual_state=manual_state,
+                custom_state=custom_state,
+            )
         )
         self.expose_entity(platform="number", state=self._fan_state)
 

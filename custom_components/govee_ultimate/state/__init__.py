@@ -52,6 +52,7 @@ from .states import (
     PurifierManualModeState,
     PurifierCustomModeState,
     PurifierActiveMode,
+    PurifierFanSpeedState,
     AutoModeState,
 )
 
@@ -112,6 +113,7 @@ __all__ = [
     "PurifierManualModeState",
     "PurifierCustomModeState",
     "PurifierActiveMode",
+    "PurifierFanSpeedState",
     "AutoModeState",
 ]
 
