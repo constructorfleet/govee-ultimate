@@ -1315,15 +1315,31 @@ class HumidifierUVCState(DeviceOpState[bool | None]):
         }
 
 
-class HumidityState(DeviceState[dict[str, Any] | None]):
+class HumidityState(DeviceOpState[dict[str, Any] | None]):
     """Report the current ambient humidity percentage with calibration data."""
 
-    def __init__(self, *, device: object) -> None:
+    def __init__(
+        self,
+        *,
+        device: object,
+        op_type: int | None = None,
+        identifier: Sequence[int] | None = None,
+        parse_option: ParseOption = ParseOption.STATE,
+    ) -> None:
         """Initialise the humidity sensor state handler."""
 
-        super().__init__(device=device, name="humidity", initial_value=None)
+        super().__init__(
+            op_identifier={
+                "op_type": op_type,
+                "identifier": list(identifier or []),
+            },
+            device=device,
+            name="humidity",
+            initial_value=None,
+            parse_option=parse_option,
+        )
 
-    def parse(self, data: dict[str, Any]) -> None:
+    def parse_state(self, data: dict[str, Any]) -> None:
         """Parse humidity readings from nested state payloads."""
 
         state_section = data.get("state")
