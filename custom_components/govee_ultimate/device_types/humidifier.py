@@ -5,13 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 from collections.abc import Callable
+from asyncio import QueueEmpty
 
 from custom_components.govee_ultimate.state import (
     ActiveState,
+    AutoModeState,
+    CustomModeState,
     ControlLockState,
     DeviceState,
     DisplayScheduleState,
     HumidifierUVCState,
+    ManualModeState,
     ModeState,
     NightLightState,
     ParseOption,
@@ -80,37 +84,10 @@ class _NumericState(DeviceState[int | None]):
         return [self._command_name]
 
 
-class _ModeOptionState(DeviceState[str]):
-    """Simple mode option carrying an identifier for ModeState mapping."""
-
-    def __init__(
-        self,
-        device: Any,
-        name: str,
-        identifier: int,
-        *,
-        delegate: Any | None = None,
-    ) -> None:
-        super().__init__(
-            device=device,
-            name=name,
-            initial_value=name,
-            parse_option=ParseOption.NONE,
-        )
-        self._identifier = [identifier]
-        self._delegate = delegate
-
-    @property
-    def delegate_state(self) -> Any | None:
-        """Expose the backing state that handles commands when available."""
-
-        return self._delegate
-
-
 class HumidifierActiveState(ModeState):
     """Composite humidifier mode that exposes an imperative activation API."""
 
-    def __init__(self, device: Any, modes: list[_ModeOptionState]) -> None:
+    def __init__(self, device: Any, modes: list[DeviceState[str]]) -> None:
         """Initialise the composite mode tracker."""
 
         super().__init__(
@@ -149,6 +126,57 @@ class HumidifierActiveState(ModeState):
     ) -> None:
         super()._update_state(value)
         self._notify_listeners(value)
+
+    def set_state(self, next_state: Any) -> list[str]:  # type: ignore[override]
+        """Delegate mode changes to the backing mode states."""
+        mode = self.resolve_mode(next_state)
+        command_ids = super().set_state(next_state)
+        if mode is None or not hasattr(mode, "set_state"):
+            return command_ids
+        payload = getattr(mode, "value", None)
+        if payload is None:
+            payload = self._default_payload(mode)
+        if payload is None:
+            return command_ids
+        delegate_ids = mode.set_state(payload)
+        self._relay_queues(mode)
+        if delegate_ids:
+            command_ids.extend(delegate_ids)
+        return command_ids
+
+    def _relay_queues(self, mode: DeviceState[Any]) -> None:
+        """Relay queued commands and clear events from the mode."""
+
+        self._relay_queue(mode.command_queue, self.command_queue)
+        self._relay_queue(mode.clear_queue, self.clear_queue)
+
+    @staticmethod
+    def _relay_queue(source: Any, target: Any) -> None:
+        while True:
+            try:
+                payload = source.get_nowait()
+            except QueueEmpty:
+                break
+            target.put_nowait(payload)
+
+    @property
+    def is_commandable(self) -> bool:  # type: ignore[override]
+        """Expose mode selection as commandable for delegate relaying."""
+
+        return True
+
+    @staticmethod
+    def _default_payload(mode: DeviceState[Any]) -> Any:
+        """Return a fallback payload when the delegate has no cached value."""
+
+        name = getattr(mode, "name", "")
+        if name == "manual_mode":
+            return 0
+        if name == "custom_mode":
+            return {"id": 0}
+        if name == "auto_mode":
+            return {"targetHumidity": 50}
+        return None
 
 
 class MistLevelState(_NumericState):
@@ -214,8 +242,7 @@ class MistLevelState(_NumericState):
         result = self._dispatch_delegate("manual_mode", value, ensure_manual=True)
         if result is not None:
             return result
-        if self._active_state.is_commandable:
-            self._active_state.set_state("manual_mode")
+        self._active_state.set_state("manual_mode")
         self._ensure_manual_activation()
         return super().set_state(value)
 
@@ -289,12 +316,14 @@ class MistLevelState(_NumericState):
         if delegate is None or not hasattr(delegate, "set_state"):
             return None
         result = delegate.set_state(payload)
+        current = self._delegate_value(delegate)
+        level = self._extract_level(
+            mode_name, current if current is not None else payload
+        )
         if ensure_manual:
             self._ensure_manual_activation()
-        if not result:
-            level = self._extract_level(mode_name, payload)
-            if level is not None:
-                self._update_state(level)
+        if level is not None:
+            self._update_state(level)
         return result
 
     def _ensure_manual_activation(self) -> None:
@@ -339,6 +368,9 @@ class TargetHumidityState(_NumericState):
             return []
 
         clamped = self._clamp_to_humidity_range(value)
+        auto_mode = self._active_state.resolve_mode(self._auto_mode_name)
+        if auto_mode is not None and hasattr(auto_mode, "set_state"):
+            auto_mode.set_state({"targetHumidity": clamped})
         self._update_state(clamped)
         return [self._command_name]
 
@@ -364,8 +396,7 @@ class TargetHumidityState(_NumericState):
     def _ensure_auto_mode(self) -> bool:
         if self._auto_active:
             return True
-        if self._active_state.is_commandable:
-            self._active_state.set_state(self._auto_mode_name)
+        self._active_state.set_state(self._auto_mode_name)
         self._active_state.activate(self._auto_mode_name)
         return False
 
@@ -478,18 +509,15 @@ class HumidifierDevice(BaseDevice):
         auto_delegate = self._resolve_mode_delegate(device_model, "auto_mode")
 
         manual = self.add_state(
-            _ModeOptionState(
-                device_model, "manual_mode", 0x00, delegate=manual_delegate
-            )
+            ManualModeState(device=device_model, delegate=manual_delegate)
         )
         custom = self.add_state(
-            _ModeOptionState(
-                device_model, "custom_mode", 0x01, delegate=custom_delegate
-            )
+            CustomModeState(device=device_model, delegate=custom_delegate)
         )
         auto = self.add_state(
-            _ModeOptionState(device_model, "auto_mode", 0x02, delegate=auto_delegate)
+            AutoModeState(device=device_model, delegate=auto_delegate)
         )
+        self._auto_mode_state = auto
 
         self._mode_state = self.add_state(
             HumidifierActiveState(device_model, [manual, custom, auto])
@@ -547,6 +575,7 @@ class HumidifierDevice(BaseDevice):
             registered = self.add_state(state)
             if feature == "humidity":
                 self._target_state.bind_humidity_state(registered)
+                self._auto_mode_state.bind_humidity_state(registered)
             entity_kwargs: dict[str, Any] = {
                 "platform": platform,
                 "state": registered,
