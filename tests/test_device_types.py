@@ -450,6 +450,7 @@ def test_ice_maker_device_registers_states_and_entities(
     nugget_entity = entities["nuggetSize"]
     assert nugget_entity.platform == "select"
     assert nugget_entity.entity_category is None
+    assert nugget_entity.options == ["SMALL", "MEDIUM", "LARGE"]
 
     status_entity = entities["iceMakerStatus"]
     assert status_entity.platform == "sensor"

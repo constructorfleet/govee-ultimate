@@ -55,6 +55,7 @@ def test_nugget_size_state_parses_and_emits_command(
     """Nugget size state should parse opcode payloads and emit commands."""
 
     state = IceMakerNuggetSizeState(device=device)
+    assert state.options == ("SMALL", "MEDIUM", "LARGE")
 
     state.parse({"op": {"command": [payload]}})
     assert state.value == value
