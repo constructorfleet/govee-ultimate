@@ -15,5 +15,26 @@
         }
       }
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connected": {
+        "name": "Connected"
+      },
+      "buzzer": {
+        "name": "Buzzer"
+      },
+      "early_warning_enabled": {
+        "name": "Early warning enabled"
+      }
+    },
+    "sensor": {
+      "temperature_unit": {
+        "name": "Temperature unit"
+      },
+      "early_warning_setting": {
+        "name": "Early warning setting"
+      }
+    }
   }
 }

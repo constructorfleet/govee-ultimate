@@ -60,6 +60,8 @@ from custom_components.govee_ultimate.state.states import (
     TimerState,
     WaterShortageState,
     BuzzerState,
+    EarlyWarningEnabledState,
+    EarlyWarningSettingState,
     PresetState,
     ProbeTempState,
     TemperatureUnitState,
@@ -883,6 +885,8 @@ def test_meat_thermometer_registers_probes_and_presets(
         "buzzer",
         "temperatureUnit",
         "earlyWarning",
+        "earlyWarningEnabled",
+        "earlyWarningSetting",
         "probeTemp1",
         "probeTemp2",
         "probeTemp3",
@@ -894,6 +898,8 @@ def test_meat_thermometer_registers_probes_and_presets(
     } <= set(states)
     assert isinstance(states["buzzer"], BuzzerState)
     assert isinstance(states["temperatureUnit"], TemperatureUnitState)
+    assert isinstance(states["earlyWarningEnabled"], EarlyWarningEnabledState)
+    assert isinstance(states["earlyWarningSetting"], EarlyWarningSettingState)
     for index in range(1, 5):
         assert isinstance(states[f"probeTemp{index}"], ProbeTempState)
         assert isinstance(states[f"preset{index}"], PresetState)
@@ -902,6 +908,16 @@ def test_meat_thermometer_registers_probes_and_presets(
     assert ha_entities["power"].platform == "switch"
     assert ha_entities["isConnected"].platform == "binary_sensor"
     assert ha_entities["isConnected"].translation_key == "connected"
+    assert ha_entities["buzzer"].platform == "binary_sensor"
+    assert ha_entities["buzzer"].entity_category == EntityCategory.CONFIG
+    assert ha_entities["buzzer"].translation_key == "buzzer"
+    assert ha_entities["temperatureUnit"].platform == "sensor"
+    assert ha_entities["temperatureUnit"].translation_key == "temperature_unit"
+    assert ha_entities["earlyWarningEnabled"].platform == "binary_sensor"
+    assert ha_entities["earlyWarningEnabled"].entity_category == EntityCategory.CONFIG
+    assert ha_entities["earlyWarningEnabled"].translation_key == "early_warning_enabled"
+    assert ha_entities["earlyWarningSetting"].platform == "sensor"
+    assert ha_entities["earlyWarningSetting"].translation_key == "early_warning_setting"
     for index in range(1, 5):
         probe_key = f"probeTemp{index}"
         preset_key = f"preset{index}"
