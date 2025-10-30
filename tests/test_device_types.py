@@ -1129,16 +1129,126 @@ def test_purifier_registers_catalog_state_types(
 def test_purifier_fan_speed_respects_active_modes(
     purifier_model_h7126: MockDeviceModel,
 ) -> None:
-    """Fan speed adjustments should be locked unless manual/custom are active."""
+    """Fan speed adjustments should only execute when manual/custom are active."""
 
     device = PurifierDevice(purifier_model_h7126)
     fan_speed = device.states["fanSpeed"]
+    manual_state = device.states["manual_mode"]
 
-    device.mode_state.activate("manual_mode")
-    assert fan_speed.set_state(3) == ["fan_speed"]
+    manual_state.parse(
+        {"op": {"command": [[0xAA, 0x05, 0x01, 0x03, 0x04, 0x05, 0x00]]}}
+    )
+    device.mode_state.parse_op_command([0x01])
 
-    device.mode_state.activate("auto_mode")
+    command_ids = fan_speed.set_state(3)
+    assert len(command_ids) == 1
+
+    frame = _next_command_frame(fan_speed)
+    assert frame[:6] == [0x33, 0x05, 0x01, 0x00, 0x00, 0x03]
+
+    device.mode_state.parse_op_command([0x03])
     assert fan_speed.set_state(1) == []
+
+
+def test_purifier_fan_speed_tracks_active_delegate(
+    purifier_model_h7126: MockDeviceModel,
+) -> None:
+    """Fan speed should mirror the active manual or custom delegate."""
+
+    device = PurifierDevice(purifier_model_h7126)
+    fan_speed = device.states["fanSpeed"]
+    manual_state = device.states["manual_mode"]
+    custom_state = device.states["custom_mode"]
+    mode_state = device.mode_state
+
+    manual_state.parse(
+        {"op": {"command": [[0xAA, 0x05, 0x01, 0x03, 0x04, 0x05, 0x00]]}}
+    )
+    mode_state.parse_op_command([0x01])
+
+    assert fan_speed.value == 5
+
+    custom_state.parse(
+        {
+            "op": {
+                "command": [
+                    [
+                        0xAA,
+                        0x05,
+                        0x02,
+                        0x01,
+                        0x05,
+                        0x00,
+                        0x0A,
+                        0x00,
+                        0x0A,
+                        0x06,
+                        0x00,
+                        0x14,
+                        0x00,
+                        0x14,
+                        0x07,
+                        0x00,
+                        0x1E,
+                        0x00,
+                        0x1E,
+                    ]
+                ]
+            }
+        }
+    )
+    mode_state.parse_op_command([0x02])
+
+    assert fan_speed.value == 6
+
+
+def test_purifier_fan_speed_delegates_custom_mode_commands(
+    purifier_model_h7126: MockDeviceModel,
+) -> None:
+    """Custom program fan speed commands should reuse the delegate payloads."""
+
+    device = PurifierDevice(purifier_model_h7126)
+    fan_speed = device.states["fanSpeed"]
+    custom_state = device.states["custom_mode"]
+    mode_state = device.mode_state
+
+    custom_state.parse(
+        {
+            "op": {
+                "command": [
+                    [
+                        0xAA,
+                        0x05,
+                        0x02,
+                        0x01,
+                        0x05,
+                        0x00,
+                        0x0A,
+                        0x00,
+                        0x0A,
+                        0x06,
+                        0x00,
+                        0x14,
+                        0x00,
+                        0x14,
+                        0x07,
+                        0x00,
+                        0x1E,
+                        0x00,
+                        0x1E,
+                    ]
+                ]
+            }
+        }
+    )
+    mode_state.parse_op_command([0x02])
+
+    command_ids = fan_speed.set_state(8)
+    assert len(command_ids) == 1
+
+    frame = _next_command_frame(fan_speed)
+    assert frame[:4] == [0x33, 0x05, 0x02, 0x01]
+    assert frame[9] == 0x08
 
 
 def test_purifier_manual_and_custom_modes_process_reports(

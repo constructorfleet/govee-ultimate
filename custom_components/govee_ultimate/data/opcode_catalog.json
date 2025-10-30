@@ -107,6 +107,38 @@
         "ble": "MyMAAAAAAAAAAAAAAAAAAAAAABA=",
         "iot": "AA=="
       }
+    },
+    {
+      "name": "purifier_fan_speed_manual_medium",
+      "opcode": "0x33",
+      "identifiers": [
+        51,
+        5,
+        1
+      ],
+      "payload_hex": "01000003",
+      "extra_payload_hex": "000000000000000000000034",
+      "description": "Example manual fan speed payload targeting speed level 3.",
+      "vectors": {
+        "ble": "MwUBAAADAAAAAAAAAAAAAAAAADQ=",
+        "iot": "MwUBAAADAAAAAAAAAAAAAAAAADQ="
+      }
+    },
+    {
+      "name": "purifier_fan_speed_custom_program",
+      "opcode": "0x33",
+      "identifiers": [
+        51,
+        5,
+        2
+      ],
+      "payload_hex": "0105000A000A080014001407001E001E",
+      "extra_payload_hex": "3F",
+      "description": "Custom program slot update setting fan speed 8 on program 1.",
+      "vectors": {
+        "ble": "MwUCAQUACgAKCAAUABQHAB4AHj8=",
+        "iot": "MwUCAQUACgAKCAAUABQHAB4AHj8="
+      }
     }
   ]
 }

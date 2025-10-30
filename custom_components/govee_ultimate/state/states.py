@@ -12,6 +12,7 @@ from collections.abc import Callable
 import itertools
 from enum import Enum
 import logging
+from uuid import uuid4
 
 from .. import opcodes
 from collections.abc import Sequence
@@ -538,6 +539,7 @@ class PurifierManualModeState(DeviceOpState[int | None]):
         )
         self._mode_identifier = [_PurifierMode.MANUAL.value]
         self._speed_index = 0
+        self._listeners: list[Callable[[int | None], None]] = []
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Decode report payloads to capture manual fan speeds."""
@@ -558,6 +560,26 @@ class PurifierManualModeState(DeviceOpState[int | None]):
             return
         self._speed_index = speed_index
         self._update_state(command[speed_index])
+
+    def register_listener(self, callback: Callable[[int | None], None]) -> None:
+        """Register ``callback`` for value changes."""
+
+        if callback not in self._listeners:
+            self._listeners.append(callback)
+
+    def unregister_listener(self, callback: Callable[[int | None], None]) -> None:
+        """Remove ``callback`` from listeners when present."""
+
+        if callback in self._listeners:
+            self._listeners.remove(callback)
+
+    def _notify_listeners(self) -> None:
+        for listener in list(self._listeners):
+            listener(self.value)
+
+    def _update_state(self, value: int | None) -> None:  # type: ignore[override]
+        super()._update_state(value)
+        self._notify_listeners()
 
     def _state_to_command(self, next_state: Any):
         """Translate a manual fan speed into a command payload."""
@@ -610,6 +632,7 @@ class PurifierCustomModeState(DeviceOpState[dict[str, Any] | None]):
         )
         self._mode_identifier = [_PurifierMode.PROGRAM.value]
         self._custom_modes: dict[str, Any] = {}
+        self._listeners: list[Callable[[dict[str, Any] | None], None]] = []
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Parse custom program slot data from opcode payloads."""
@@ -643,6 +666,30 @@ class PurifierCustomModeState(DeviceOpState[dict[str, Any] | None]):
             "current_program": current_program,
         }
         self._update_state(current_program)
+
+    def register_listener(
+        self, callback: Callable[[dict[str, Any] | None], None]
+    ) -> None:
+        """Register ``callback`` for program updates."""
+
+        if callback not in self._listeners:
+            self._listeners.append(callback)
+
+    def unregister_listener(
+        self, callback: Callable[[dict[str, Any] | None], None]
+    ) -> None:
+        """Remove ``callback`` from listeners when present."""
+
+        if callback in self._listeners:
+            self._listeners.remove(callback)
+
+    def _notify_listeners(self) -> None:
+        for listener in list(self._listeners):
+            listener(self.value)
+
+    def _update_state(self, value: dict[str, Any] | None) -> None:  # type: ignore[override]
+        super()._update_state(value)
+        self._notify_listeners()
 
     def _state_to_command(self, next_state: Any):
         """Generate a command sequence for a custom program update."""
@@ -817,6 +864,8 @@ class PurifierActiveMode(ModeState):
             identifier = getattr(mode, "_mode_identifier", None)
             if isinstance(identifier, Sequence) and identifier:
                 self._mode_by_code[int(identifier[0])] = mode
+        self._listeners: list[Callable[[DeviceState[str] | None], None]] = []
+        self._listeners: list[Callable[[DeviceState[str] | None], None]] = []
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Update the active mode using inline opcode payloads."""
@@ -883,6 +932,209 @@ class PurifierActiveMode(ModeState):
             return
         mode = self._mode_by_code.get(sequence[0])
         self._update_state(mode)
+
+    def register_listener(
+        self, callback: Callable[[DeviceState[str] | None], None]
+    ) -> None:
+        """Register ``callback`` to receive active mode updates."""
+
+        if callback not in self._listeners:
+            self._listeners.append(callback)
+
+    def unregister_listener(
+        self, callback: Callable[[DeviceState[str] | None], None]
+    ) -> None:
+        """Detach ``callback`` from active mode notifications."""
+
+        if callback in self._listeners:
+            self._listeners.remove(callback)
+
+    def _notify_listeners(self) -> None:
+        for listener in list(self._listeners):
+            listener(self.value)
+
+    def _update_state(self, value: DeviceState[str] | None) -> None:  # type: ignore[override]
+        super()._update_state(value)
+        self._notify_listeners()
+
+
+class PurifierFanSpeedState(DeviceOpState[int | None]):
+    """Represent purifier fan speed leveraging active mode delegates."""
+
+    def __init__(
+        self,
+        device: object,
+        mode_state: PurifierActiveMode | None = None,
+        *,
+        manual_state: PurifierManualModeState | None = None,
+        custom_state: PurifierCustomModeState | None = None,
+        op_type: int = _REPORT_OPCODE,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the fan speed state optionally bound to ``mode_state``."""
+
+        identifiers = list(identifier) if identifier is not None else [0x05]
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="fanSpeed",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+        self._mode_state = mode_state
+        self._manual_state = manual_state
+        self._custom_state = custom_state
+        self._active_delegate: DeviceState[str] | None = None
+        self._delegate_callback = self._handle_delegate_update
+        if self._mode_state is not None:
+            if self._manual_state is None or self._custom_state is None:
+                for candidate in self._mode_state.modes:
+                    if self._manual_state is None and isinstance(
+                        candidate, PurifierManualModeState
+                    ):
+                        self._manual_state = candidate
+                    elif self._custom_state is None and isinstance(
+                        candidate, PurifierCustomModeState
+                    ):
+                        self._custom_state = candidate
+            self._mode_state.register_listener(self._handle_active_change)
+            self._handle_active_change(self._mode_state.active_mode)
+
+    def _handle_active_change(
+        self, mode: DeviceState[str] | None
+    ) -> None:  # pragma: no cover - exercised via listeners
+        self._subscribe_delegate(mode)
+        self._sync_from_delegate(mode)
+
+    def _subscribe_delegate(self, delegate: DeviceState[str] | None) -> None:
+        if self._active_delegate is delegate:
+            return
+        if isinstance(self._active_delegate, PurifierManualModeState):
+            self._active_delegate.unregister_listener(self._delegate_callback)
+        elif isinstance(self._active_delegate, PurifierCustomModeState):
+            self._active_delegate.unregister_listener(self._delegate_callback)
+        self._active_delegate = delegate
+        if isinstance(delegate, PurifierManualModeState):
+            delegate.register_listener(self._delegate_callback)
+        elif isinstance(delegate, PurifierCustomModeState):
+            delegate.register_listener(self._delegate_callback)
+
+    def _handle_delegate_update(self, _value: Any) -> None:
+        self._sync_from_delegate(self._active_delegate)
+
+    def _sync_from_delegate(self, delegate: DeviceState[str] | None) -> None:
+        speed = self._resolve_delegate_speed(delegate)
+        self._update_state(speed)
+
+    def _resolve_delegate_speed(self, delegate: DeviceState[str] | None) -> int | None:
+        if isinstance(delegate, PurifierManualModeState):
+            return _int_from_value(delegate.value)
+        if isinstance(delegate, PurifierCustomModeState):
+            program = delegate.value
+            if isinstance(program, Mapping):
+                return _int_from_value(
+                    program.get("fan_speed") or program.get("fanSpeed")
+                )
+        return None
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Update fan speed using inline opcode payloads when unbound."""
+
+        if self._mode_state is not None:
+            return
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        value = payload[0] if payload else None
+        if value is None:
+            return
+        speed = 1 if value == 0x10 else value + 1
+        self._update_state(speed)
+
+    def set_state(self, next_state: Any) -> list[str]:
+        """Dispatch fan speed commands via the active delegate when present."""
+
+        speed = _int_from_value(next_state)
+        if speed is None:
+            return []
+        if speed < 1:
+            speed = 1
+        if speed > 9:
+            speed = 9
+        if self._mode_state is None:
+            return super().set_state(speed)
+        delegate = self._active_delegate
+        if delegate is None:
+            return []
+        if (
+            isinstance(delegate, PurifierManualModeState)
+            and self._manual_state is not None
+        ):
+            return self._emit_delegate_command(
+                self._manual_state._state_to_command(speed)
+            )
+        if (
+            isinstance(delegate, PurifierCustomModeState)
+            and self._custom_state is not None
+        ):
+            payload = self._custom_payload(speed)
+            if payload is None:
+                return []
+            return self._emit_delegate_command(
+                self._custom_state._state_to_command(payload)
+            )
+        return []
+
+    def _custom_payload(self, speed: int) -> dict[str, Any] | None:
+        program = self._custom_state.value if self._custom_state else None
+        if not isinstance(program, Mapping):
+            return None
+        return {
+            "id": program.get("id"),
+            "fan_speed": speed,
+            "duration": program.get("duration"),
+            "remaining": program.get("remaining"),
+        }
+
+    def _state_to_command(self, next_state: Any):
+        """Generate a direct opcode payload when no delegate is available."""
+
+        speed = _int_from_value(next_state)
+        if speed is None:
+            return None
+        encoded = 0x10 if speed <= 0 else max(speed - 1, 0)
+        identifier = list(self._identifier) if self._identifier else []
+        frame = _opcode_frame(0x33, *identifier, encoded)
+        status_sequence = [encoded]
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {"op": {"command": [status_sequence]}},
+        }
+
+    def _emit_delegate_command(
+        self, command_and_status: StateCommandAndStatus | None
+    ) -> list[str]:
+        if not command_and_status:
+            return []
+        command_spec = command_and_status.get("command")
+        status_spec = command_and_status.get("status")
+        if command_spec is None or status_spec is None:
+            return []
+        commands = self._as_list(command_spec)
+        statuses = self._as_list(status_spec)
+        command_id = str(uuid4())
+        self._pending_commands[command_id] = statuses
+        command_ids: list[str] = []
+        for payload in commands:
+            command = dict(payload)
+            command["command_id"] = command_id
+            self.command_queue.put_nowait(command)
+            command_ids.append(command_id)
+        return command_ids
 
 
 class ConnectedState(DeviceState[bool | None]):
