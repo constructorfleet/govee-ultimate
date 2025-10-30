@@ -11,11 +11,13 @@ from custom_components.govee_ultimate.state import (
     DisplayScheduleState,
     FilterExpiredState,
     FilterLifeState,
-    ModeState,
     NightLightState,
     ParseOption,
     PowerState,
     TimerState,
+    ManualModeState,
+    CustomModeState,
+    PurifierActiveMode,
 )
 
 from .base import BaseDevice, EntityCategory, PurifierEntities
@@ -54,50 +56,10 @@ class _NumericState(DeviceState[int | None]):
         return [self._command_name]
 
 
-class _ModeOptionState(DeviceState[str]):
-    """Simple mode option used for purifier mode tracking."""
-
-    def __init__(self, device: Any, name: str, identifier: int) -> None:
-        super().__init__(
-            device=device,
-            name=name,
-            initial_value=name,
-            parse_option=ParseOption.NONE,
-        )
-        self._identifier = [identifier]
-
-
-class PurifierActiveState(ModeState):
-    """Composite mode tracker with imperative activation."""
-
-    def __init__(self, device: Any, modes: list[_ModeOptionState]) -> None:
-        """Initialise the purifier mode tracker."""
-
-        # Purifier modes reuse manual/custom state handlers that emit their own
-        # commands, so we intentionally avoid wiring a catalog mapping here.
-        super().__init__(
-            device=device,
-            modes=modes,
-            inline=True,
-        )
-        self._modes_by_name = {mode.name: mode for mode in modes}
-
-    def activate(self, mode_name: str) -> None:
-        """Activate the mode matching ``mode_name``."""
-
-        mode = self._modes_by_name.get(mode_name)
-        if mode is None:
-            raise KeyError(mode_name)
-        identifier = getattr(mode, "_identifier", None)
-        if not identifier:
-            identifier = [0x00]
-        self._set_active_identifier(identifier)
-
-
 class PurifierFanSpeedState(_NumericState):
     """Fan speed controller gated by manual/custom modes when available."""
 
-    def __init__(self, device: Any, mode_state: PurifierActiveState) -> None:
+    def __init__(self, device: Any, mode_state: PurifierActiveMode) -> None:
         """Initialise the fan speed state bound to ``mode_state``."""
 
         super().__init__(
@@ -167,19 +129,27 @@ class PurifierDevice(BaseDevice):
             entity_category=EntityCategory.DIAGNOSTIC,
         )
 
-        mode_states: list[_ModeOptionState] = []
+        mode_states: list[DeviceState[str] | None] = []
         if model_id == "H7126":
-            manual = self.add_state(_ModeOptionState(device_model, "manual_mode", 0x00))
-            custom = self.add_state(_ModeOptionState(device_model, "custom_mode", 0x01))
-            auto = self.add_state(_ModeOptionState(device_model, "auto_mode", 0x02))
-            mode_states.extend([manual, custom, auto])
-        else:
-            auto = self.add_state(_ModeOptionState(device_model, "auto_mode", 0x02))
-            mode_states.append(auto)
+            mode_states.extend(
+                [
+                    self.add_state(ManualModeState(device_model)),
+                    self.add_state(CustomModeState(device_model)),
+                ]
+            )
 
-        self._mode_state = self.add_state(
-            PurifierActiveState(device_model, mode_states)
+        auto = self.add_state(
+            DeviceState(
+                device=device_model,
+                name="auto_mode",
+                initial_value="auto_mode",
+                parse_option=ParseOption.NONE,
+            )
         )
+        setattr(auto, "_mode_identifier", [0x03])
+        mode_states.append(auto)
+
+        self._mode_state = self.add_state(PurifierActiveMode(device_model, mode_states))
         self.expose_entity(platform="select", state=self._mode_state)
         self._fan_state = self.add_state(
             PurifierFanSpeedState(device_model, self._mode_state)
@@ -209,7 +179,7 @@ class PurifierDevice(BaseDevice):
         )
 
     @property
-    def mode_state(self) -> PurifierActiveState:
+    def mode_state(self) -> PurifierActiveMode:
         """Return the mode controller for the purifier."""
 
         return self._mode_state

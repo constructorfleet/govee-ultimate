@@ -59,6 +59,9 @@ from custom_components.govee_ultimate.state.states import (
     PresetState,
     ProbeTempState,
     TemperatureUnitState,
+    ManualModeState,
+    CustomModeState,
+    PurifierActiveMode,
 )
 
 
@@ -850,6 +853,10 @@ def test_purifier_model_specific_states(
     } <= set(h7126_device.states)
     assert "fanSpeed" in h7126_device.states
 
+    assert isinstance(h7126_device.states["manual_mode"], ManualModeState)
+    assert isinstance(h7126_device.states["custom_mode"], CustomModeState)
+    assert isinstance(h7126_device.mode_state, PurifierActiveMode)
+
 
 def test_purifier_registers_catalog_state_types(
     purifier_model_h7126: MockDeviceModel,
@@ -879,6 +886,91 @@ def test_purifier_fan_speed_respects_active_modes(
 
     device.mode_state.activate("auto_mode")
     assert fan_speed.set_state(1) == []
+
+
+def test_purifier_manual_and_custom_modes_process_reports(
+    purifier_model_h7126: MockDeviceModel,
+) -> None:
+    """Manual and custom mode states should parse reports and issue commands."""
+
+    device = PurifierDevice(purifier_model_h7126)
+
+    manual_state = device.states["manual_mode"]
+    custom_state = device.states["custom_mode"]
+    mode_state = device.mode_state
+
+    assert isinstance(manual_state, ManualModeState)
+    assert isinstance(custom_state, CustomModeState)
+    assert isinstance(mode_state, PurifierActiveMode)
+
+    manual_state.parse(
+        {"op": {"command": [[0xAA, 0x05, 0x01, 0x03, 0x04, 0x05, 0x00]]}}
+    )
+    assert manual_state.value == 5
+
+    manual_command_ids = manual_state.set_state(2)
+    assert manual_command_ids
+    manual_frame = _next_command_frame(manual_state)
+    assert manual_frame[:6] == [0x33, 0x05, 0x01, 0x00, 0x00, 0x02]
+
+    custom_state.parse(
+        {
+            "op": {
+                "command": [
+                    [
+                        0xAA,
+                        0x05,
+                        0x02,
+                        0x01,
+                        0x05,
+                        0x00,
+                        0x0A,
+                        0x00,
+                        0x0A,
+                        0x06,
+                        0x00,
+                        0x14,
+                        0x00,
+                        0x14,
+                        0x07,
+                        0x00,
+                        0x1E,
+                        0x00,
+                        0x1E,
+                    ]
+                ]
+            }
+        }
+    )
+
+    assert custom_state.value == {
+        "id": 1,
+        "fan_speed": 6,
+        "duration": 20,
+        "remaining": 20,
+    }
+
+    custom_command_ids = custom_state.set_state({"id": 1, "fan_speed": 8})
+    assert custom_command_ids
+    custom_frame = _next_command_frame(custom_state)
+    assert custom_frame[:4] == [0x33, 0x05, 0x02, 0x01]
+    assert custom_frame[9] == 0x08
+
+    mode_state.parse_op_command([1])
+    assert mode_state.active_mode is manual_state
+
+    mode_state.parse_op_command([2])
+    assert mode_state.active_mode is custom_state
+
+    manual_state.parse(
+        {"op": {"command": [[0xAA, 0x05, 0x01, 0x01, 0x02, 0x03, 0x00]]}}
+    )
+    while not manual_state.command_queue.empty():
+        manual_state.command_queue.get_nowait()
+    delegated_ids = mode_state.set_state(manual_state)
+    assert delegated_ids
+    delegated_frame = _next_command_frame(manual_state)
+    assert delegated_frame[5] == manual_state.value
 
 
 def test_air_quality_device_registers_environment_states(

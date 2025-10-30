@@ -505,6 +505,343 @@ class ModeState(DeviceOpState[DeviceState[str] | None]):
         return self._mode_lookup.get(token)
 
 
+class _PurifierMode(Enum):
+    MANUAL = 0x01
+    PROGRAM = 0x02
+    AUTO = 0x03
+
+
+class ManualModeState(DeviceOpState[int | None]):
+    """Represent purifier manual mode fan speed slots."""
+
+    def __init__(
+        self,
+        device: object,
+        *,
+        op_type: int = _REPORT_OPCODE,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the purifier manual mode tracker."""
+        identifiers = list(identifier) if identifier is not None else [0x05]
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="manual_mode",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+        self._mode_identifier = [_PurifierMode.MANUAL.value]
+        self._speed_index = 0
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Decode report payloads to capture manual fan speeds."""
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        mode_code, *command = payload
+        if mode_code != _PurifierMode.MANUAL.value:
+            return
+        if not command:
+            return
+        try:
+            sentinel_index = command.index(0x00)
+        except ValueError:
+            return
+        speed_index = sentinel_index - 1
+        if speed_index < 0 or speed_index >= len(command):
+            return
+        self._speed_index = speed_index
+        self._update_state(command[speed_index])
+
+    def _state_to_command(self, next_state: Any):
+        """Translate a manual fan speed into a command payload."""
+        speed = _int_from_value(next_state)
+        if speed is None:
+            return None
+        filler = [0x00] * max(self._speed_index, 0)
+        frame = _opcode_frame(
+            0x33,
+            0x05,
+            _PurifierMode.MANUAL.value,
+            *filler,
+            speed,
+        )
+        status_sequence = [
+            _REPORT_OPCODE,
+            0x05,
+            _PurifierMode.MANUAL.value,
+            0x00,
+            speed,
+        ]
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {"op": {"command": [status_sequence]}},
+        }
+
+
+class CustomModeState(DeviceOpState[dict[str, Any] | None]):
+    """Track purifier custom program slots and durations."""
+
+    def __init__(
+        self,
+        device: object,
+        *,
+        op_type: int = _REPORT_OPCODE,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the custom program handler."""
+        identifiers = list(identifier) if identifier is not None else [0x05]
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="custom_mode",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+        self._mode_identifier = [_PurifierMode.PROGRAM.value]
+        self._custom_modes: dict[str, Any] = {}
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Parse custom program slot data from opcode payloads."""
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        mode_code, *command = payload
+        if mode_code != _PurifierMode.PROGRAM.value:
+            return
+        if not command:
+            return
+        current_program_id = command[0]
+        programs: dict[int, dict[str, int]] = {}
+        for slot in range(3):
+            offset = 1 + slot * 5
+            if len(command) < offset + 5:
+                continue
+            fan_speed = command[offset]
+            duration = (command[offset + 1] << 8) | command[offset + 2]
+            remaining = (command[offset + 3] << 8) | command[offset + 4]
+            programs[slot] = {
+                "id": slot,
+                "fan_speed": fan_speed,
+                "duration": duration,
+                "remaining": remaining,
+            }
+        current_program = programs.get(current_program_id)
+        self._custom_modes = {
+            "current_program_id": current_program_id,
+            "programs": programs,
+            "current_program": current_program,
+        }
+        self._update_state(current_program)
+
+    def _state_to_command(self, next_state: Any):
+        """Generate a command sequence for a custom program update."""
+        program = self._resolve_program(next_state)
+        if program is None:
+            return None
+        programs = self._merged_programs(program)
+        frame = _opcode_frame(
+            0x33,
+            0x05,
+            _PurifierMode.PROGRAM.value,
+            program["id"],
+            *self._flatten_programs(programs, include_remaining=True),
+        )
+        status_sequence = [
+            _REPORT_OPCODE,
+            0x05,
+            _PurifierMode.PROGRAM.value,
+            program["id"],
+            *self._flatten_programs(programs, include_remaining=False),
+        ]
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {"op": {"command": [status_sequence]}},
+        }
+
+    def _resolve_program(self, next_state: Any) -> dict[str, int] | None:
+        """Normalise mapping inputs into a program dictionary."""
+        if not isinstance(next_state, Mapping):
+            return None
+        id_candidate = _int_from_value(
+            next_state.get("id") or next_state.get("program")
+        )
+        fan_speed = _int_from_value(
+            next_state.get("fan_speed") or next_state.get("fanSpeed")
+        )
+        duration = _int_from_value(next_state.get("duration"))
+        remaining = _int_from_value(next_state.get("remaining"))
+        current_program: Mapping[str, Any] | None = self._custom_modes.get(
+            "current_program"
+        )
+        program_id = (
+            id_candidate
+            if id_candidate is not None
+            else _int_from_value(current_program.get("id") if current_program else None)
+        )
+        if program_id is None:
+            program_id = 0
+        resolved_duration = (
+            duration
+            if duration is not None
+            else _int_from_value(
+                current_program.get("duration") if current_program else None
+            )
+        )
+        resolved_remaining = (
+            remaining
+            if remaining is not None
+            else _int_from_value(
+                current_program.get("duration") if current_program else None
+            )
+        )
+        resolved_fan_speed = (
+            fan_speed
+            if fan_speed is not None
+            else _int_from_value(
+                current_program.get("fan_speed") if current_program else None
+            )
+        )
+        if resolved_fan_speed is None:
+            return None
+        return {
+            "id": program_id,
+            "fan_speed": resolved_fan_speed,
+            "duration": resolved_duration or 100,
+            "remaining": resolved_remaining or 100,
+        }
+
+    def _merged_programs(self, program: Mapping[str, int]) -> dict[int, dict[str, int]]:
+        """Merge incoming program changes with stored slot metadata."""
+        base_programs: Mapping[int, Mapping[str, Any]] = self._custom_modes.get(
+            "programs", {}
+        )
+        merged: dict[int, dict[str, int]] = {
+            idx: {
+                "id": idx,
+                "fan_speed": _int_from_value(value.get("fan_speed")) or 0,
+                "duration": _int_from_value(value.get("duration")) or 100,
+                "remaining": _int_from_value(value.get("remaining"))
+                or (0 if idx != 2 else 32640),
+            }
+            for idx, value in base_programs.items()
+        }
+        defaults = {
+            0: {"id": 0, "duration": 100, "remaining": 100, "fan_speed": 0},
+            1: {"id": 1, "duration": 100, "remaining": 100, "fan_speed": 0},
+            2: {
+                "id": 2,
+                "duration": 32640,
+                "remaining": 32640,
+                "fan_speed": 0,
+            },
+        }
+        for idx, value in defaults.items():
+            merged.setdefault(idx, dict(value))
+        slot = program["id"]
+        merged[slot] = {
+            "id": slot,
+            "fan_speed": program["fan_speed"],
+            "duration": program["duration"],
+            "remaining": program["remaining"],
+        }
+        return merged
+
+    def _flatten_programs(
+        self, programs: Mapping[int, Mapping[str, int]], *, include_remaining: bool
+    ) -> list[int | None]:
+        """Flatten structured program data into opcode payload fields."""
+        flattened: list[int | None] = []
+        for slot in range(3):
+            program = programs.get(slot)
+            if not program:
+                flattened.extend([0, 0, 0, None, None])
+                continue
+            duration = int(program.get("duration", 0))
+            remaining = int(program.get("remaining", 0))
+            flattened.extend(
+                [
+                    int(program.get("fan_speed", 0)),
+                    (duration >> 8) & 0xFF,
+                    duration & 0xFF,
+                ]
+            )
+            if include_remaining:
+                flattened.extend(
+                    [
+                        (remaining >> 8) & 0xFF,
+                        remaining & 0xFF,
+                    ]
+                )
+            else:
+                flattened.extend([None, None])
+        return flattened
+
+
+class PurifierActiveMode(ModeState):
+    """Active mode selector delegating commands to sub-states."""
+
+    def __init__(
+        self,
+        device: object,
+        modes: list[DeviceState[str] | None],
+    ) -> None:
+        """Initialise the purifier active mode delegator."""
+        filtered_modes = [mode for mode in modes if mode is not None]
+        super().__init__(device=device, modes=filtered_modes, inline=True)
+        self._mode_by_code: dict[int, DeviceState[str]] = {}
+        for mode in filtered_modes:
+            identifier = getattr(mode, "_mode_identifier", None)
+            if isinstance(identifier, Sequence) and identifier:
+                self._mode_by_code[int(identifier[0])] = mode
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Update the active mode using inline opcode payloads."""
+        if not op_command:
+            return
+        self._set_active_from_sequence(op_command)
+
+    def activate(self, mode_name: str) -> None:
+        """Select the active mode using a human readable name."""
+        mode = self.resolve_mode(mode_name)
+        if mode is None:
+            raise KeyError(mode_name)
+        identifier = getattr(mode, "_mode_identifier", None)
+        if isinstance(identifier, Sequence) and identifier:
+            self._set_active_from_sequence([int(identifier[0])])
+
+    def set_state(self, next_state: Any) -> list[str]:
+        """Delegate commands to the currently resolved sub-state."""
+        mode: DeviceState[str] | None
+        if isinstance(next_state, DeviceState):
+            mode = next_state
+        else:
+            mode = self.resolve_mode(next_state)
+        if mode is None:
+            return []
+        value = getattr(mode, "value", None)
+        if value is None:
+            return []
+        return mode.set_state(value)
+
+    def _set_active_from_sequence(self, sequence: Sequence[int]) -> None:
+        """Persist ``sequence`` as the active identifier and update state."""
+        self._active_identifier = list(sequence)
+        if not sequence:
+            self._update_state(None)
+            return
+        mode = self._mode_by_code.get(sequence[0])
+        self._update_state(mode)
+
+
 class ConnectedState(DeviceState[bool | None]):
     """Track whether a device reports itself as connected."""
 
