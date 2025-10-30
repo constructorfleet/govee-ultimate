@@ -1338,6 +1338,8 @@ class HumidityState(DeviceOpState[dict[str, Any] | None]):
             initial_value=None,
             parse_option=parse_option,
         )
+        self._has_explicit_min = False
+        self._has_explicit_max = False
 
     def parse_state(self, data: dict[str, Any]) -> None:
         """Parse humidity readings from nested state payloads."""
@@ -1383,8 +1385,13 @@ class HumidityState(DeviceOpState[dict[str, Any] | None]):
         if current is None:
             return None
 
-        minimum, clamp_min = self._resolved_bound(min_value, prev_min)
-        maximum, clamp_max = self._resolved_bound(max_value, prev_max)
+        minimum = self._coalesce_bound(min_value, prev_min)
+        maximum = self._coalesce_bound(max_value, prev_max)
+        explicit_min = min_value is not None
+        explicit_max = max_value is not None
+
+        clamp_min = self._has_explicit_min or explicit_min
+        clamp_max = self._has_explicit_max or explicit_max
 
         if clamp_min and current < minimum:
             return None
@@ -1398,6 +1405,9 @@ class HumidityState(DeviceOpState[dict[str, Any] | None]):
             payload["calibration"] = calibration
 
         payload["range"] = self._range_payload(minimum, maximum)
+
+        self._has_explicit_min = clamp_min
+        self._has_explicit_max = clamp_max
 
         return payload
 
@@ -1449,13 +1459,6 @@ class HumidityState(DeviceOpState[dict[str, Any] | None]):
         if float(numeric).is_integer():
             return int(numeric)
         return numeric
-
-    def _resolved_bound(
-        self, candidate: float | int | None, fallback: Any
-    ) -> tuple[float | int, bool]:
-        resolved = self._coalesce_bound(candidate, fallback)
-        has_value = candidate is not None or isinstance(fallback, int | float)
-        return resolved, has_value
 
     def _coalesce_bound(
         self, candidate: float | int | None, fallback: Any

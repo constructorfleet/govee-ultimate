@@ -90,11 +90,7 @@ def test_humidity_state_parses_measurement_payload(
         "range": {"min": 30, "max": 80},
     }
 
-    humidity_state.parse(
-        {
-            "state": {"humidity": {"current": 60, "max": 90}}
-        }
-    )
+    humidity_state.parse({"state": {"humidity": {"current": 60, "max": 90}}})
 
     assert humidity_state.value == {
         "current": 60,
@@ -103,11 +99,7 @@ def test_humidity_state_parses_measurement_payload(
         "range": {"min": 30, "max": 90},
     }
 
-    humidity_state.parse(
-        {
-            "state": {"humidity": {"current": 50, "min": 25}}
-        }
-    )
+    humidity_state.parse({"state": {"humidity": {"current": 50, "min": 25}}})
 
     assert humidity_state.value == {
         "current": 50,
@@ -142,6 +134,45 @@ def test_humidity_state_ignores_measurements_outside_range(
 
     humidity_state.parse({"state": {"humidity": {"current": 10}}})
     assert humidity_state.value == previous
+
+
+def test_humidity_state_only_clamps_after_explicit_bounds(
+    humidity_state: HumidityState,
+) -> None:
+    """Implicit ranges do not prevent later updates without bounds."""
+
+    humidity_state.parse({"state": {"humidity": {"current": 10}}})
+    assert humidity_state.value == {
+        "current": 10,
+        "raw": 10,
+        "range": {"min": 0, "max": 0},
+    }
+
+    humidity_state.parse({"state": {"humidity": {"current": 55}}})
+    assert humidity_state.value == {
+        "current": 55,
+        "raw": 55,
+        "range": {"min": 0, "max": 0},
+    }
+
+    humidity_state.parse(
+        {
+            "state": {
+                "humidity": {
+                    "current": 45,
+                    "min": 30,
+                    "max": 70,
+                }
+            }
+        }
+    )
+
+    humidity_state.parse({"state": {"humidity": {"current": 75}}})
+    assert humidity_state.value == {
+        "current": 45,
+        "raw": 45,
+        "range": {"min": 30, "max": 70},
+    }
 
 
 def test_humidity_state_updates_from_status_code(
