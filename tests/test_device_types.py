@@ -1117,6 +1117,51 @@ def test_purifier_model_specific_states(
     assert isinstance(h7126_device.mode_state, PurifierActiveMode)
 
 
+def test_purifier_feature_identifiers_match_upstream(
+    purifier_model_default: MockDeviceModel,
+    purifier_model_h7126: MockDeviceModel,
+) -> None:
+    """Purifier feature identifiers should align with the upstream mapping."""
+
+    default_device = PurifierDevice(purifier_model_default)
+    h7126_device = PurifierDevice(purifier_model_h7126)
+
+    default_states = default_device.states
+    assert default_states["nightLight"]._identifier == [0x18]
+    assert default_states["controlLock"]._identifier == [0x10]
+    assert default_states["displaySchedule"]._identifier == [0x16]
+
+    default_timer = default_states["timer"]
+    assert default_timer._identifier == [0x11]
+    assert default_timer._status_identifier == [0x11]
+
+    h7126_timer = h7126_device.states["timer"]
+    assert h7126_timer._identifier == [0x26]
+    assert h7126_timer._status_identifier == [0x26]
+
+
+def test_purifier_default_registers_common_features(
+    purifier_model_default: MockDeviceModel,
+) -> None:
+    """Default purifier models should expose the shared feature set."""
+
+    device = PurifierDevice(purifier_model_default)
+
+    assert {"displaySchedule", "filterExpired", "timer"} <= set(device.states)
+
+    entities = device.home_assistant_entities
+
+    assert entities["displaySchedule"].platform == "switch"
+    assert entities["displaySchedule"].entity_category is EntityCategory.CONFIG
+    assert entities["displaySchedule"].translation_key == "display_schedule"
+
+    assert entities["filterExpired"].platform == "binary_sensor"
+    assert entities["filterExpired"].entity_category is EntityCategory.DIAGNOSTIC
+
+    assert entities["timer"].platform == "switch"
+    assert entities["timer"].entity_category is EntityCategory.CONFIG
+
+
 def test_purifier_registers_catalog_state_types(
     purifier_model_h7126: MockDeviceModel,
 ) -> None:

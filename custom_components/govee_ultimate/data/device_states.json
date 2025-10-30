@@ -628,8 +628,8 @@
       "op_type": "command",
       "identifiers": {
         "status": {
-          "opcode": "0x32",
-          "payload": "3200",
+          "opcode": "0x11",
+          "payload": "1100",
           "description": "Timer enabled flag and duration"
         }
       },
@@ -642,8 +642,8 @@
       },
       "status_templates": [
         {
-          "opcode": "0x32",
-          "payload": "3200",
+          "opcode": "0x11",
+          "payload": "1100",
           "expect_bytes": 6,
           "notes": "Bytes 3-5 encode timer status"
         }
@@ -651,8 +651,8 @@
       "command_templates": [
         {
           "name": "set_timer",
-          "opcode": "0x32",
-          "payload_template": "32{{ '01' if enabled else '00' }}{{ duration | int | format('04x') }}",
+          "opcode": "0x11",
+          "payload_template": "11{{ '01' if enabled else '00' }}{{ duration | int | format('04x') }}",
           "description": "Configure timer enabled flag and duration in seconds"
         }
       ]

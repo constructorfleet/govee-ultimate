@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import chain
 from typing import Any
 
 from custom_components.govee_ultimate.state import (
@@ -27,10 +28,17 @@ from .base import BaseDevice, EntityCategory, PurifierEntities
 class PurifierDevice(BaseDevice):
     """Simplified purifier port matching the TypeScript factory."""
 
-    _BASE_FEATURES = ("nightLight", "controlLock", "timer")
+    _BASE_FEATURES = (
+        "nightLight",
+        "controlLock",
+        "displaySchedule",
+        "timer",
+        "filterExpired",
+    )
     _MODEL_FEATURES = {
-        "H7126": ("displaySchedule", "filterLife", "filterExpired"),
+        "H7126": ("filterLife",),
     }
+    _MODEL_FEATURE_OVERRIDES = {"H7126": {"timer": {"identifier": [0x26]}}}
     _FEATURE_PLATFORMS = {
         "nightLight": ("light", None),
         "timer": ("switch", EntityCategory.CONFIG),
@@ -46,10 +54,10 @@ class PurifierDevice(BaseDevice):
         "timer": "timer",
     }
     _FEATURE_SPEC = {
-        "nightLight": (NightLightState, {"identifier": [0x40]}),
-        "controlLock": (ControlLockState, {"identifier": [0x0A]}),
-        "displaySchedule": (DisplayScheduleState, {"identifier": [0x30]}),
-        "timer": (TimerState, {"identifier": [0x32]}),
+        "nightLight": (NightLightState, {"identifier": [0x18]}),
+        "controlLock": (ControlLockState, {"identifier": [0x10]}),
+        "displaySchedule": (DisplayScheduleState, {"identifier": [0x16]}),
+        "timer": (TimerState, {"identifier": [0x11]}),
         "filterLife": (FilterLifeState, {}),
         "filterExpired": (FilterExpiredState, {}),
     }
@@ -103,14 +111,17 @@ class PurifierDevice(BaseDevice):
         self.expose_entity(platform="number", state=self._fan_state)
 
         extras: list[DeviceState[Any]] = []
-        features = list(self._BASE_FEATURES)
-        model_features = self._MODEL_FEATURES.get(model_id, ())
-        for feature in model_features:
+        features: list[str] = []
+        for feature in chain(
+            self._BASE_FEATURES, self._MODEL_FEATURES.get(model_id, ())
+        ):
             if feature not in features:
                 features.append(feature)
 
         for feature in features:
-            state = self.add_state(self._build_feature_state(device_model, feature))
+            state = self.add_state(
+                self._build_feature_state(device_model, feature, model_id=model_id)
+            )
             extras.append(state)
             translation_key = self._FEATURE_TRANSLATIONS.get(feature)
             self._register_feature_entity(
@@ -136,15 +147,21 @@ class PurifierDevice(BaseDevice):
 
         return self._entities
 
-    def _build_feature_state(self, device_model: Any, feature: str) -> DeviceState[Any]:
+    def _build_feature_state(
+        self, device_model: Any, feature: str, *, model_id: str | None = None
+    ) -> DeviceState[Any]:
         """Create the device state matching ``feature``."""
 
         try:
-            factory, extra_kwargs = self._FEATURE_SPEC[feature]
+            factory, default_kwargs = self._FEATURE_SPEC[feature]
         except KeyError as exc:  # pragma: no cover - defensive guard
             raise KeyError(feature) from exc
         kwargs = {"device": device_model}
-        kwargs.update(extra_kwargs)
+        kwargs.update(default_kwargs)
+        if model_id is None:
+            model_id = getattr(device_model, "model", "")
+        overrides = self._MODEL_FEATURE_OVERRIDES.get(model_id, {})
+        kwargs.update(overrides.get(feature, {}))
         return factory(**kwargs)
 
     def _register_feature_entity(
