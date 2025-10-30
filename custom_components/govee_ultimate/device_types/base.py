@@ -89,14 +89,19 @@ class BaseDevice:
 
         self._states[alias] = state
 
-    def alias_entity(self, alias: str, state: DeviceState[Any]) -> None:
+    def alias_entity(
+        self, alias: str, state: DeviceState[Any], *, keep_canonical: bool = False
+    ) -> None:
         """Expose the entity registered for ``state`` under ``alias``."""
 
         if alias == state.name:
             return
-        entity = self._ha_entities.pop(state.name, None)
-        if entity is not None:
-            self._ha_entities[alias] = entity
+        entity = self._ha_entities.get(state.name)
+        if entity is None:
+            return
+        self._ha_entities[alias] = entity
+        if not keep_canonical:
+            self._ha_entities.pop(state.name, None)
 
     def expose_entity(
         self,
