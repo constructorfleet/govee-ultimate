@@ -14,24 +14,126 @@ from custom_components.govee_ultimate.state import (
     LightEffectState,
     MicModeState,
     ModeState,
-    ParseOption,
     PowerState,
     SegmentColorState,
 )
+from custom_components.govee_ultimate.state.states import RGBICModes
 
 from .base import BaseDevice, LightEntities
 
 
-class _StaticModeState(DeviceState[str]):
-    """Simple string-based mode state used for composite mode management."""
+class RGBICModeState(ModeState):
+    """Composite mode delegator for RGBIC lights."""
 
-    def __init__(self, device: Any, name: str) -> None:
+    _REPORT_OPCODE = 0xAA
+
+    def __init__(
+        self,
+        device: Any,
+        *,
+        color_state: DeviceState[Any] | None,
+        segment_state: DeviceState[Any] | None,
+        light_effect_state: DeviceState[Any] | None,
+        mic_mode_state: DeviceState[Any] | None,
+        diy_mode_state: DeviceState[Any] | None,
+    ) -> None:
+        """Initialise the composite mode handler with real state delegates."""
+
+        modes = [
+            state
+            for state in (
+                color_state,
+                segment_state,
+                light_effect_state,
+                mic_mode_state,
+                diy_mode_state,
+            )
+            if state is not None
+        ]
         super().__init__(
             device=device,
-            name=name,
-            initial_value="",
-            parse_option=ParseOption.NONE,
+            modes=modes,
+            identifier=[0x05],
+            inline=True,
+            identifier_map=self._map_identifier,
         )
+        self._color_state = color_state
+        self._segment_state = segment_state
+        self._light_effect_state = light_effect_state
+        self._mic_mode_state = mic_mode_state
+        self._diy_mode_state = diy_mode_state
+        self._register_aliases(
+            {
+                "color_whole": color_state,
+                "color_segment": segment_state,
+                "scene": light_effect_state,
+                "mic": mic_mode_state,
+                "diy": diy_mode_state,
+            }
+        )
+        identifier_targets = {
+            RGBICModes.WHOLE_COLOR: color_state,
+            RGBICModes.SEGMENT_COLOR: segment_state,
+            RGBICModes.SCENE: light_effect_state,
+            RGBICModes.MIC: mic_mode_state,
+            RGBICModes.DIY: diy_mode_state,
+        }
+        self._identifier_targets: dict[int, DeviceState[Any]] = {
+            int(mode): state
+            for mode, state in identifier_targets.items()
+            if state is not None
+        }
+        self._assign_mode_identifiers(identifier_targets)
+
+    def _register_aliases(self, alias_map: dict[str, DeviceState[Any] | None]) -> None:
+        for alias, state in alias_map.items():
+            if state is None:
+                continue
+            token = self._normalise_alias(alias)
+            self._mode_lookup[token] = state
+            self._mode_aliases.setdefault(token, alias)
+
+    def _assign_mode_identifiers(
+        self, mapping: dict[RGBICModes, DeviceState[Any] | None]
+    ) -> None:
+        for mode, state in mapping.items():
+            if state is None:
+                continue
+            setattr(state, "_mode_identifier", [int(mode)])
+
+    @staticmethod
+    def _normalise_alias(name: str) -> str:
+        token = name.strip().replace("-", "_").replace(" ", "_")
+        if token.lower().endswith("_mode"):
+            token = token[: -len("_mode")]
+        return token.upper()
+
+    def _normalise_active_identifier(self) -> list[int]:
+        sequence = list(self.active_identifier or [])
+        if sequence and sequence[0] == self._REPORT_OPCODE:
+            sequence = sequence[1:]
+        if sequence and sequence[0] == 0x05:
+            sequence = sequence[1:]
+        return sequence
+
+    def _map_identifier(self, _: ModeState) -> DeviceState[Any] | None:
+        sequence = self._normalise_active_identifier()
+        if not sequence:
+            return None
+        return self._identifier_targets.get(sequence[0])
+
+    def set_state(self, next_state: Any) -> list[str]:  # type: ignore[override]
+        """Delegate commands to the selected mode state."""
+
+        if isinstance(next_state, DeviceState):
+            delegate = next_state
+            payload = getattr(delegate, "value", None)
+        else:
+            delegate = self.resolve_mode(next_state)
+            payload = getattr(delegate, "value", None) if delegate else None
+        if delegate is None or payload is None:
+            return []
+        return delegate.set_state(payload)
 
 
 class RGBICLightDevice(BaseDevice):
@@ -78,16 +180,15 @@ class RGBICLightDevice(BaseDevice):
         diy_mode = self.add_state(DiyModeState(device=device_model))
         self.expose_entity(platform="select", state=diy_mode)
 
-        mode_states = self._register_mode_states(
-            "color_whole",
-            "color_segment",
-            "scene",
-            "mic",
-            "diy",
-        )
-
         self._mode_state = self.add_state(
-            ModeState(device=device_model, modes=mode_states)
+            RGBICModeState(
+                device=device_model,
+                color_state=color,
+                segment_state=segment_color,
+                light_effect_state=light_effect,
+                mic_mode_state=mic_mode,
+                diy_mode_state=diy_mode,
+            )
         )
         self.expose_entity(platform="select", state=self._mode_state)
 
@@ -97,7 +198,7 @@ class RGBICLightDevice(BaseDevice):
         )
 
     @property
-    def mode_state(self) -> ModeState:
+    def mode_state(self) -> RGBICModeState:
         """Return the composite mode state for the device."""
 
         return self._mode_state
@@ -107,8 +208,3 @@ class RGBICLightDevice(BaseDevice):
         """Return Home Assistant entity hints for the light platform."""
 
         return self._light_entities
-
-    def _register_mode_states(self, *names: str) -> list[DeviceState[str]]:
-        """Create and register static mode state placeholders."""
-
-        return [self.add_state(_StaticModeState(self.device, name)) for name in names]
