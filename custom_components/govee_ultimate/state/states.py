@@ -3380,9 +3380,13 @@ class PowerState(DeviceOpState[bool | None]):
             self._command_template, {"value": value}
         )
         status_sequence = [_REPORT_OPCODE, self._status_opcode, payload_bytes[-1]]
+        status_payload = [
+            {"state": {"isOn": value}},
+            *_status_payload("power", value, status_sequence),
+        ]
         return {
             "command": command,
-            "status": _status_payload("power", value, status_sequence),
+            "status": status_payload,
         }
 
 

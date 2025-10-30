@@ -12,6 +12,7 @@ from custom_components.govee_ultimate.state.states import (
     HumidityState,
     HumidifierUVCState,
     NightLightState,
+    PowerState,
     TemperatureState,
     UnknownState,
 )
@@ -50,6 +51,13 @@ def humidity_state(device: DummyDevice) -> HumidityState:
     """Return a humidity state bound to a dummy device."""
 
     return HumidityState(device)
+
+
+@pytest.fixture
+def power_state(device: DummyDevice) -> PowerState:
+    """Return a power state bound to a dummy device."""
+
+    return PowerState(device)
 
 
 def test_humidity_state_accepts_opcode_metadata(device: DummyDevice) -> None:
@@ -135,6 +143,27 @@ def test_humidity_state_parses_measurement_payload(
         "calibration": 5,
         "range": {"min": 25, "max": 90},
     }
+
+
+@pytest.mark.parametrize("desired_state", [True, False])
+def test_power_state_set_state_enqueues_is_on_status(
+    power_state: PowerState, desired_state: bool
+) -> None:
+    """Queued status payloads mirror the power request via the isOn field."""
+
+    command_ids = power_state.set_state(desired_state)
+
+    assert command_ids, "PowerState should enqueue a command for valid boolean input"
+
+    command_id = command_ids[0]
+    statuses = power_state._pending_commands[command_id]
+
+    state_snapshots = [status for status in statuses if "state" in status]
+
+    assert (
+        state_snapshots
+    ), "PowerState should capture a state snapshot in pending status"
+    assert state_snapshots[0]["state"]["isOn"] is desired_state
 
 
 def test_humidity_state_ignores_measurements_outside_range(
