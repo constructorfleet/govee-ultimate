@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 from collections.abc import Callable
 from asyncio import QueueEmpty
+import types
 
 from custom_components.govee_ultimate.state import (
     ActiveState,
@@ -98,6 +99,8 @@ class HumidifierActiveState(ModeState):
         )
         self._by_name = {mode.name: mode for mode in modes}
         self._listeners: list[Callable[[DeviceState[str] | None], None]] = []
+        for mode in modes:
+            self._wrap_delegate_clear_events(mode)
 
     def activate(self, mode_name: str) -> None:
         """Set the active mode via human-readable name."""
@@ -139,6 +142,7 @@ class HumidifierActiveState(ModeState):
         if payload is None:
             return command_ids
         delegate_ids = mode.set_state(payload)
+        self._adopt_delegate_pending(mode, delegate_ids)
         self._relay_queues(mode)
         if delegate_ids:
             command_ids.extend(delegate_ids)
@@ -148,16 +152,19 @@ class HumidifierActiveState(ModeState):
         """Relay queued commands and clear events from the mode."""
 
         self._relay_queue(mode.command_queue, self.command_queue)
-        self._relay_queue(mode.clear_queue, self.clear_queue)
+        self._relay_queue(mode.clear_queue, self.clear_queue, expire=True)
 
-    @staticmethod
-    def _relay_queue(source: Any, target: Any) -> None:
+    def _relay_queue(self, source: Any, target: Any, *, expire: bool = False) -> None:
         while True:
             try:
                 payload = source.get_nowait()
             except QueueEmpty:
                 break
             target.put_nowait(payload)
+            if expire and isinstance(payload, Mapping):
+                command_id = payload.get("command_id")
+                if command_id is not None:
+                    self._pending_commands.pop(command_id, None)  # type: ignore[attr-defined]
 
     @property
     def is_commandable(self) -> bool:  # type: ignore[override]
@@ -177,6 +184,42 @@ class HumidifierActiveState(ModeState):
         if name == "auto_mode":
             return {"targetHumidity": 50}
         return None
+
+    def _wrap_delegate_clear_events(self, mode: DeviceState[Any]) -> None:
+        """Wrap delegate clear emission to relay pending command completion."""
+
+        if not hasattr(mode, "_emit_clear_event"):
+            return
+        if getattr(mode, "_humidifier_active_wrapped", False):
+            return
+
+        original = mode._emit_clear_event  # type: ignore[attr-defined]
+        active_state = self
+
+        def wrapped(self_mode: DeviceState[Any], command_id: str) -> None:
+            original(command_id)
+            active_state._handle_delegate_clear(self_mode, command_id)
+
+        mode._emit_clear_event = types.MethodType(wrapped, mode)  # type: ignore[attr-defined]
+        setattr(mode, "_humidifier_active_wrapped", True)
+
+    def _adopt_delegate_pending(
+        self, mode: DeviceState[Any], command_ids: list[str]
+    ) -> None:
+        if not command_ids:
+            return
+        pending = getattr(mode, "_pending_commands", None)
+        if not isinstance(pending, dict):
+            return
+        for command_id in command_ids:
+            statuses = pending.get(command_id)
+            if statuses is None:
+                continue
+            self._pending_commands[command_id] = statuses  # type: ignore[attr-defined]
+
+    def _handle_delegate_clear(self, mode: DeviceState[Any], command_id: str) -> None:
+        self._relay_queue(mode.clear_queue, self.clear_queue, expire=True)
+        self._pending_commands.pop(command_id, None)  # type: ignore[attr-defined]
 
 
 class MistLevelState(_NumericState):

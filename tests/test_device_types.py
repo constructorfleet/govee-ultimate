@@ -1051,6 +1051,36 @@ def test_humidifier_mode_states_parse_and_command(
     assert auto_command[3] == 70
 
 
+def test_humidifier_active_state_tracks_delegate_pending(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Active mode should track delegate pending and relay clear events."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    mode_state = device.mode_state
+    manual_state = device.states["manual_mode"]
+
+    command_ids = mode_state.set_state("manual_mode")
+
+    assert len(command_ids) == 2
+
+    delegate_id = command_ids[-1]
+    assert delegate_id in manual_state._pending_commands  # type: ignore[attr-defined]
+
+    assert delegate_id in mode_state._pending_commands  # type: ignore[attr-defined]
+    assert (
+        mode_state._pending_commands[delegate_id]  # type: ignore[attr-defined]
+        == manual_state._pending_commands[delegate_id]  # type: ignore[attr-defined]
+    )
+
+    manual_state.expire_pending_commands([delegate_id])
+
+    relayed = mode_state.clear_queue.get_nowait()
+    assert relayed["command_id"] == delegate_id
+    assert delegate_id not in mode_state._pending_commands  # type: ignore[attr-defined]
+
+
 def test_purifier_model_specific_states(
     purifier_model_default: MockDeviceModel,
     purifier_model_h7126: MockDeviceModel,
