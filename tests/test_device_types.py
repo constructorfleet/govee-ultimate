@@ -546,6 +546,7 @@ def test_rgbic_light_registers_expected_states(
         "isConnected",
         "active",
         "brightness",
+        "colorRGB",
         "color",
         "colorTemperature",
         "segmentColor",
@@ -556,7 +557,8 @@ def test_rgbic_light_registers_expected_states(
     assert isinstance(states["power"], PowerState)
     assert isinstance(states["isConnected"], ConnectedState)
     assert isinstance(states["brightness"], BrightnessState)
-    assert isinstance(states["color"], ColorRGBState)
+    assert isinstance(states["colorRGB"], ColorRGBState)
+    assert states["color"] is states["colorRGB"]
     assert isinstance(states["colorTemperature"], ColorTemperatureState)
     assert isinstance(states["segmentColor"], SegmentColorState)
     assert isinstance(states["lightEffect"], LightEffectState)
@@ -573,7 +575,7 @@ def test_rgbic_light_registers_expected_states(
         MicModeState,
         DiyModeState,
     }
-    assert mode_state.resolve_mode("color_whole") is states["color"]
+    assert mode_state.resolve_mode("color_whole") is states["colorRGB"]
     assert mode_state.resolve_mode("color_segment") is states["segmentColor"]
     assert mode_state.resolve_mode("scene") is states["lightEffect"]
     assert mode_state.resolve_mode("mic") is states["micMode"]
@@ -583,7 +585,7 @@ def test_rgbic_light_registers_expected_states(
     assert light_entities.primary is states["power"]
     assert set(light_entities.supporting) == {
         states["brightness"],
-        states["color"],
+        states["colorRGB"],
         states["colorTemperature"],
         states["segmentColor"],
     }
@@ -596,7 +598,8 @@ def test_rgbic_mode_state_maps_active_identifiers(
 
     device = rgbic_light_module.RGBICLightDevice(rgbic_device_model)
     mode_state = device.mode_state
-    color_state = device.states["color"]
+    color_state = device.states["colorRGB"]
+    assert device.states["color"] is color_state
     segment_state = device.states["segmentColor"]
     light_effect = device.states["lightEffect"]
     mic_mode = device.states["micMode"]
@@ -662,6 +665,7 @@ def test_rgb_light_registers_expected_states(
         "isConnected",
         "active",
         "brightness",
+        "colorRGB",
         "color",
         "colorTemperature",
         "sceneMode",
@@ -670,7 +674,8 @@ def test_rgb_light_registers_expected_states(
     assert isinstance(states["isConnected"], ConnectedState)
     assert isinstance(states["active"], ActiveState)
     assert isinstance(states["brightness"], BrightnessState)
-    assert isinstance(states["color"], ColorRGBState)
+    assert isinstance(states["colorRGB"], ColorRGBState)
+    assert states["color"] is states["colorRGB"]
     assert isinstance(states["colorTemperature"], ColorTemperatureState)
     assert isinstance(states["sceneMode"], SceneModeState)
 
@@ -678,13 +683,14 @@ def test_rgb_light_registers_expected_states(
     assert light_entities.primary is states["power"]
     assert set(light_entities.supporting) == {
         states["brightness"],
-        states["color"],
+        states["colorRGB"],
         states["colorTemperature"],
     }
 
     ha_entities = device.home_assistant_entities
     assert ha_entities["power"].platform == "light"
     assert ha_entities["brightness"].platform == "light"
+    assert ha_entities["colorRGB"].platform == "light"
     assert ha_entities["color"].platform == "light"
     assert ha_entities["colorTemperature"].platform == "light"
     assert ha_entities["isConnected"].platform == "binary_sensor"
@@ -707,6 +713,7 @@ def test_device_states_expose_home_assistant_entities(
         "power",
         "isConnected",
         "brightness",
+        "colorRGB",
         "color",
         "colorTemperature",
         "segmentColor",
@@ -718,6 +725,8 @@ def test_device_states_expose_home_assistant_entities(
     assert light_entities["power"].platform == "light"
     assert light_entities["power"].state is light_device.states["power"]
     assert light_entities["brightness"].platform == "light"
+    assert light_entities["colorRGB"].platform == "light"
+    assert light_entities["color"].platform == "light"
     assert light_entities["colorTemperature"].platform == "light"
     assert light_entities["segmentColor"].platform == "light"
     assert light_entities["isConnected"].platform == "binary_sensor"
