@@ -62,6 +62,14 @@ def test_humidity_state_parses_measurement_payload(
 ) -> None:
     """Humidity measurement payloads expose calibration and range metadata."""
 
+    humidity_state.parse({"state": {"humidity": {"current": 42}}})
+
+    assert humidity_state.value == {
+        "current": 42,
+        "raw": 42,
+        "range": {"min": 0, "max": 0},
+    }
+
     humidity_state.parse(
         {
             "state": {
@@ -80,6 +88,90 @@ def test_humidity_state_parses_measurement_payload(
         "raw": 50,
         "calibration": 5,
         "range": {"min": 30, "max": 80},
+    }
+
+    humidity_state.parse({"state": {"humidity": {"current": 60, "max": 90}}})
+
+    assert humidity_state.value == {
+        "current": 60,
+        "raw": 55,
+        "calibration": 5,
+        "range": {"min": 30, "max": 90},
+    }
+
+    humidity_state.parse({"state": {"humidity": {"current": 50, "min": 25}}})
+
+    assert humidity_state.value == {
+        "current": 50,
+        "raw": 45,
+        "calibration": 5,
+        "range": {"min": 25, "max": 90},
+    }
+
+
+def test_humidity_state_ignores_measurements_outside_range(
+    humidity_state: HumidityState,
+) -> None:
+    """Out-of-range humidity readings do not overwrite the current state."""
+
+    humidity_state.parse(
+        {
+            "state": {
+                "humidity": {
+                    "current": 55,
+                    "calibration": 5,
+                    "min": 30,
+                    "max": 80,
+                }
+            }
+        }
+    )
+
+    previous = humidity_state.value
+
+    humidity_state.parse({"state": {"humidity": {"current": 85}}})
+    assert humidity_state.value == previous
+
+    humidity_state.parse({"state": {"humidity": {"current": 10}}})
+    assert humidity_state.value == previous
+
+
+def test_humidity_state_only_clamps_after_explicit_bounds(
+    humidity_state: HumidityState,
+) -> None:
+    """Implicit ranges do not prevent later updates without bounds."""
+
+    humidity_state.parse({"state": {"humidity": {"current": 10}}})
+    assert humidity_state.value == {
+        "current": 10,
+        "raw": 10,
+        "range": {"min": 0, "max": 0},
+    }
+
+    humidity_state.parse({"state": {"humidity": {"current": 55}}})
+    assert humidity_state.value == {
+        "current": 55,
+        "raw": 55,
+        "range": {"min": 0, "max": 0},
+    }
+
+    humidity_state.parse(
+        {
+            "state": {
+                "humidity": {
+                    "current": 45,
+                    "min": 30,
+                    "max": 70,
+                }
+            }
+        }
+    )
+
+    humidity_state.parse({"state": {"humidity": {"current": 75}}})
+    assert humidity_state.value == {
+        "current": 45,
+        "raw": 45,
+        "range": {"min": 30, "max": 70},
     }
 
 
