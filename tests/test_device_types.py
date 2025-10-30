@@ -64,6 +64,8 @@ from custom_components.govee_ultimate.state.states import (
     TemperatureUnitState,
     ManualModeState,
     CustomModeState,
+    PurifierManualModeState,
+    PurifierCustomModeState,
     PurifierActiveMode,
     AutoModeState,
 )
@@ -1104,8 +1106,8 @@ def test_purifier_model_specific_states(
     } <= set(h7126_device.states)
     assert "fanSpeed" in h7126_device.states
 
-    assert isinstance(h7126_device.states["manual_mode"], ManualModeState)
-    assert isinstance(h7126_device.states["custom_mode"], CustomModeState)
+    assert isinstance(h7126_device.states["manual_mode"], PurifierManualModeState)
+    assert isinstance(h7126_device.states["custom_mode"], PurifierCustomModeState)
     assert isinstance(h7126_device.mode_state, PurifierActiveMode)
 
 
@@ -1150,8 +1152,8 @@ def test_purifier_manual_and_custom_modes_process_reports(
     custom_state = device.states["custom_mode"]
     mode_state = device.mode_state
 
-    assert isinstance(manual_state, ManualModeState)
-    assert isinstance(custom_state, CustomModeState)
+    assert isinstance(manual_state, PurifierManualModeState)
+    assert isinstance(custom_state, PurifierCustomModeState)
     assert isinstance(mode_state, PurifierActiveMode)
 
     manual_state.parse(
@@ -1233,7 +1235,7 @@ def test_purifier_active_mode_strips_report_header(
     manual_state = device.states["manual_mode"]
     mode_state = device.mode_state
 
-    assert isinstance(manual_state, ManualModeState)
+    assert isinstance(manual_state, PurifierManualModeState)
     assert isinstance(mode_state, PurifierActiveMode)
 
     manual_identifier = getattr(manual_state, "_mode_identifier", [0x01])

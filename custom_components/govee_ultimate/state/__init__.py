@@ -49,9 +49,14 @@ from .states import (
     PresetState,
     ManualModeState,
     CustomModeState,
+    PurifierManualModeState,
+    PurifierCustomModeState,
     PurifierActiveMode,
     AutoModeState,
 )
+
+HumidifierManualModeState = ManualModeState
+HumidifierCustomModeState = CustomModeState
 
 __all__ = [
     "DeviceState",
@@ -102,6 +107,10 @@ __all__ = [
     "PresetState",
     "ManualModeState",
     "CustomModeState",
+    "HumidifierManualModeState",
+    "HumidifierCustomModeState",
+    "PurifierManualModeState",
+    "PurifierCustomModeState",
     "PurifierActiveMode",
     "AutoModeState",
 ]

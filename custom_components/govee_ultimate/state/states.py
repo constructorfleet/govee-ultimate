@@ -516,7 +516,7 @@ class _PurifierMode(Enum):
     AUTO = 0x03
 
 
-class ManualModeState(DeviceOpState[int | None]):
+class PurifierManualModeState(DeviceOpState[int | None]):
     """Represent purifier manual mode fan speed slots."""
 
     def __init__(
@@ -588,7 +588,7 @@ class ManualModeState(DeviceOpState[int | None]):
         }
 
 
-class CustomModeState(DeviceOpState[dict[str, Any] | None]):
+class PurifierCustomModeState(DeviceOpState[dict[str, Any] | None]):
     """Track purifier custom program slots and durations."""
 
     def __init__(
@@ -820,7 +820,15 @@ class PurifierActiveMode(ModeState):
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Update the active mode using inline opcode payloads."""
-        sequence = self._normalise_sequence(op_command)
+        sequence = list(op_command)
+        if self._op_type is not None and sequence and sequence[0] == self._op_type:
+            sequence = _strip_op_header(sequence, self._op_type, self._identifier)
+        if (
+            self._report_identifier
+            and len(sequence) > len(self._report_identifier)
+            and sequence[: len(self._report_identifier)] == self._report_identifier
+        ):
+            sequence = sequence[len(self._report_identifier) :]
         if not sequence:
             return
         self._set_active_from_sequence(sequence)

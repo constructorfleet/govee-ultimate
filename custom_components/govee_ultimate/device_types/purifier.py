@@ -15,8 +15,8 @@ from custom_components.govee_ultimate.state import (
     ParseOption,
     PowerState,
     TimerState,
-    ManualModeState,
-    CustomModeState,
+    PurifierManualModeState,
+    PurifierCustomModeState,
     PurifierActiveMode,
 )
 
@@ -133,8 +133,8 @@ class PurifierDevice(BaseDevice):
         if model_id == "H7126":
             mode_states.extend(
                 [
-                    self.add_state(ManualModeState(device_model)),
-                    self.add_state(CustomModeState(device_model)),
+                    self.add_state(PurifierManualModeState(device_model)),
+                    self.add_state(PurifierCustomModeState(device_model)),
                 ]
             )
 
