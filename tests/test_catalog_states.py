@@ -170,6 +170,24 @@ def test_color_temperature_state_rejects_out_of_range_values(invalid_value) -> N
     assert state.command_queue.empty()
 
 
+def test_color_temperature_state_parses_range_metadata() -> None:
+    """Color temperature state surfaces device-provided range metadata."""
+
+    state = ColorTemperatureState(device=DummyDevice())
+
+    state.parse(
+        {
+            "cmd": "status",
+            "state": {
+                "colorTem": 4200,
+                "colorTemRange": {"min": 2800, "max": 6500},
+            },
+        }
+    )
+
+    assert state.value == {"current": 4200, "range": {"min": 2800, "max": 6500}}
+
+
 def test_color_temperature_state_generates_catalog_command_and_clears() -> None:
     """Color temperature command uses template payloads and clears on responses."""
 
@@ -201,7 +219,13 @@ def test_color_temperature_state_generates_catalog_command_and_clears() -> None:
     state.parse({"cmd": "status", "state": {"colorTem": 3200}})
     state.parse({"op": {"command": [[0xAA, status_opcode, 0x0C, 0x80]]}})
 
-    assert state.value == 3200
+    assert state.value == {
+        "current": 3200,
+        "range": {
+            "min": entry.parse_options["range"]["min"],
+            "max": entry.parse_options["range"]["max"],
+        },
+    }
 
     cleared = _drain(state.clear_queue)
     assert cleared and cleared[0]["command_id"] == command_ids[0]
