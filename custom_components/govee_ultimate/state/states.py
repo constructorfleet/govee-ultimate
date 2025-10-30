@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 from collections.abc import Mapping
 from functools import cache
@@ -3432,15 +3433,229 @@ class LightEffectState(_IdentifierStringState):
         }
 
 
-class MicModeState(_IdentifierStringState):
+_RGBIC_MIC_IDENTIFIER = [0x05, 0x13]
+_DEFAULT_MIC_SENSITIVITY = 50
+
+
+class MicModeState(DeviceOpState[dict[str, Any]]):
     """Track the active microphone reactive mode."""
 
     def __init__(
-        self, *, device: object, identifier: Sequence[int] | None = None
+        self,
+        *,
+        device: object,
+        identifier: Sequence[int] | None = None,
+        op_type: int = _REPORT_OPCODE,
     ) -> None:
         """Initialise the microphone mode selector."""
 
-        super().__init__(device=device, name="micMode", identifier=identifier)
+        identifiers = (
+            list(identifier) if identifier is not None else list(_RGBIC_MIC_IDENTIFIER)
+        )
+        super().__init__(
+            op_identifier={"op_type": op_type, "identifier": identifiers},
+            device=device,
+            name="micMode",
+            initial_value={},
+            state_to_command=self._state_to_command,
+        )
+        # Retain compatibility with select entities expecting an options attribute.
+        self.options: list[str] = []
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Decode microphone mode payloads into structured values."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) < 7:
+            return
+        mic_scene, sensitivity, calm, auto_color, red, green, blue = payload[:7]
+        self._update_state(
+            {
+                "micScene": mic_scene,
+                "sensitivity": sensitivity,
+                "calm": calm == 0x01,
+                "autoColor": auto_color == 0x01,
+                "color": {"red": red, "green": green, "blue": blue},
+            }
+        )
+
+    def _coerce_next_state(self, next_state: Any) -> Mapping[str, Any] | None:
+        if isinstance(next_state, Mapping):
+            return next_state
+        if isinstance(next_state, str):
+            token = next_state.strip()
+            if not token:
+                return None
+            try:
+                decoded = json.loads(token)
+            except ValueError:
+                return self._parse_assignment_string(token)
+            return self._mapping_from_json(decoded)
+        return None
+
+    def _parse_assignment_string(self, token: str) -> Mapping[str, Any] | None:
+        pairs: dict[str, Any] = {}
+        normalised = token.replace(";", ",")
+        segments = [segment for segment in normalised.split(",") if segment]
+        if not segments:
+            return None
+        if len(segments) == 1 and "=" not in segments[0]:
+            try:
+                mic_scene = int(segments[0], 0)
+            except ValueError:
+                return None
+            return {"micScene": mic_scene}
+        for segment in segments:
+            if "=" not in segment:
+                continue
+            key, value = segment.split("=", 1)
+            key = key.strip()
+            raw_value = value.strip()
+            if not key:
+                continue
+            lowered = raw_value.lower()
+            if lowered in {"true", "false"}:
+                pairs[key] = lowered == "true"
+                continue
+            try:
+                pairs[key] = int(raw_value, 0)
+                continue
+            except ValueError:
+                pass
+            try:
+                pairs[key] = float(raw_value)
+                continue
+            except ValueError:
+                pairs[key] = raw_value
+        if pairs:
+            return pairs
+        return None
+
+    def _mapping_from_json(self, decoded: Any) -> Mapping[str, Any] | None:
+        if isinstance(decoded, Mapping):
+            return decoded
+        if isinstance(decoded, Sequence) and not isinstance(
+            decoded, str | bytes | Mapping
+        ):
+            pairs = self._pairs_from_sequence(decoded)
+            if pairs:
+                return pairs
+        if isinstance(decoded, int | float):
+            return {"micScene": int(decoded)}
+        return None
+
+    def _pairs_from_sequence(self, decoded: Sequence[Any]) -> dict[str, Any]:
+        pairs: dict[str, Any] = {}
+        for entry in decoded:
+            if (
+                isinstance(entry, Sequence)
+                and not isinstance(entry, str | bytes | Mapping)
+                and len(entry) >= 2
+            ):
+                key = entry[0]
+                if isinstance(key, str):
+                    pairs[key] = entry[1]
+        return pairs
+
+    def _state_to_command(
+        self, next_state: Any
+    ) -> StateCommandAndStatus | None:  # type: ignore[override]
+        resolved_next = self._coerce_next_state(next_state)
+        if resolved_next is None:
+            return None
+        next_state = resolved_next
+
+        current = self.value if isinstance(self.value, Mapping) else {}
+
+        def _pick_int(*candidates: Any, default: int) -> int:
+            for candidate in candidates:
+                if isinstance(candidate, bool):
+                    continue
+                if isinstance(candidate, int | float):
+                    return int(candidate)
+            return default
+
+        def _pick_bool(*candidates: Any, default: bool) -> bool:
+            for candidate in candidates:
+                if isinstance(candidate, bool):
+                    return candidate
+                if isinstance(candidate, int | float):
+                    return bool(int(candidate))
+            return default
+
+        current_color = (
+            current.get("color") if isinstance(current.get("color"), Mapping) else {}
+        )
+        next_color = (
+            next_state.get("color")
+            if isinstance(next_state.get("color"), Mapping)
+            else {}
+        )
+
+        resolved = {
+            "micScene": _pick_int(
+                next_state.get("micScene"), current.get("micScene"), default=0
+            ),
+            "sensitivity": _pick_int(
+                next_state.get("sensitivity"),
+                current.get("sensitivity"),
+                default=_DEFAULT_MIC_SENSITIVITY,
+            ),
+            "calm": _pick_bool(
+                next_state.get("calm"), current.get("calm"), default=False
+            ),
+            "autoColor": _pick_bool(
+                next_state.get("autoColor"),
+                current.get("autoColor"),
+                default=False,
+            ),
+            "color": {
+                "red": _pick_int(
+                    next_color.get("red"), current_color.get("red"), default=0
+                ),
+                "green": _pick_int(
+                    next_color.get("green"), current_color.get("green"), default=0
+                ),
+                "blue": _pick_int(
+                    next_color.get("blue"), current_color.get("blue"), default=0
+                ),
+            },
+        }
+
+        prefix = list(self._identifier or [])
+        calm_byte = 0x01 if resolved["calm"] else 0x00
+        auto_color_byte = 0x01 if resolved["autoColor"] else 0x00
+        color_values = resolved["color"]
+        frame = _opcode_frame(
+            0x33,
+            *prefix,
+            resolved["micScene"],
+            resolved["sensitivity"],
+            calm_byte,
+            auto_color_byte,
+            color_values["red"],
+            color_values["green"],
+            color_values["blue"],
+        )
+        status_sequence = [
+            _REPORT_OPCODE,
+            *prefix,
+            resolved["micScene"],
+            resolved["sensitivity"],
+            calm_byte,
+            auto_color_byte,
+            color_values["red"],
+            color_values["green"],
+            color_values["blue"],
+        ]
+
+        return {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [frame]},
+            },
+            "status": {"op": {"command": [status_sequence]}},
+        }
 
 
 class DiyModeState(_IdentifierStringState):
