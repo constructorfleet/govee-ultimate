@@ -50,6 +50,7 @@ from .states import (
     ManualModeState,
     CustomModeState,
     PurifierActiveMode,
+    AutoModeState,
 )
 
 __all__ = [
@@ -102,6 +103,7 @@ __all__ = [
     "ManualModeState",
     "CustomModeState",
     "PurifierActiveMode",
+    "AutoModeState",
 ]
 
 _ensure_loop()
