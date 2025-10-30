@@ -3543,7 +3543,7 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
         )
         if channels is None:
             return None
-        command, payload_bytes = _command_payload(self._command_template, channels)
+        command, _payload_bytes = _command_payload(self._command_template, channels)
         status_sequence = [
             _REPORT_OPCODE,
             self._status_opcode,
@@ -3552,8 +3552,23 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
             channels["blue"],
         ]
         return {
-            "command": command,
+            "command": [self._colorwc_command(channels), command],
             "status": _status_payload("color", channels, status_sequence),
+        }
+
+    def _colorwc_command(self, channels: Mapping[str, int]) -> dict[str, Any]:
+        """Return the structured colorwc command payload for RGBIC devices."""
+
+        return {
+            "command": "colorwc",
+            "data": {
+                "color": {
+                    "r": channels["red"],
+                    "g": channels["green"],
+                    "b": channels["blue"],
+                },
+                "colorTemInKelvin": 0,
+            },
         }
 
 
