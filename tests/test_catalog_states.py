@@ -219,11 +219,37 @@ def test_color_rgb_state_requires_complete_channels() -> None:
     assert command_ids
 
     command_payloads = _drain(state.command_queue)
-    assert command_payloads
-    command = command_payloads[0]
+    assert len(command_payloads) == 2
 
-    assert command["payload_hex"] == "04102030"
-    assert command["ble_base64"] == _ble_frame(command["opcode"], "04102030")
+    colorwc_command, opcode_command = command_payloads
+
+    assert colorwc_command["command"] == "colorwc"
+    assert colorwc_command["data"] == {
+        "color": {"r": 16, "g": 32, "b": 48},
+        "colorTemInKelvin": 0,
+    }
+
+    assert opcode_command["payload_hex"] == "04102030"
+    assert opcode_command["ble_base64"] == _ble_frame(
+        opcode_command["opcode"], "04102030"
+    )
+
+    pending = _first_pending(state, command_ids[0])
+    assert any(
+        expectation.get("state", {}).get("color")
+        == {"red": 16, "green": 32, "blue": 48}
+        for expectation in pending
+    )
+    assert any(
+        (
+            isinstance(expectation, dict)
+            and isinstance(expectation.get("op"), dict)
+            and isinstance(expectation["op"].get("command"), list)
+            and expectation["op"]["command"]
+            and expectation["op"]["command"][0][:5] == [0xAA, 0x04, 16, 32, 48]
+        )
+        for expectation in pending
+    )
 
     state.parse(
         {
