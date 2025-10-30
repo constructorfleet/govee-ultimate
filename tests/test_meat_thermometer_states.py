@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
 
 from custom_components.govee_ultimate.state.states import (
     BuzzerState,
-    EarlyWarningOffset,
     EarlyWarningState,
     PresetState,
     ProbeTempState,
@@ -87,7 +87,27 @@ def test_early_warning_state_exposes_setting_and_enabled() -> None:
 
     state.parse({"op": {"command": _build_probe_commands()}})
 
-    assert state.value == {"enabled": True, "setting": EarlyWarningOffset.MEDIUM}
+    assert state.value == {"enabled": True, "setting": "MEDIUM"}
+
+
+def test_early_warning_state_reports_low_setting_and_json_contract() -> None:
+    """Early warning state should expose the low setting as a plain string."""
+
+    device = DummyDevice()
+    state = EarlyWarningState(device=device)
+
+    commands = [list(command) for command in _build_probe_commands()]
+    commands[0][3] = 1
+    commands[0][4] = 1
+
+    state.parse({"op": {"command": commands}})
+
+    expected = {"enabled": True, "setting": "low"}
+
+    assert state.value == expected
+    assert json.dumps(state.value, sort_keys=True) == json.dumps(
+        expected, sort_keys=True
+    )
 
 
 @pytest.mark.parametrize(
