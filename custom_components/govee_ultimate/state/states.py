@@ -2250,15 +2250,29 @@ class TimerState(DeviceOpState[bool | None]):
         return _bool_from_value(next_state), None
 
 
-class FilterLifeState(DeviceState[int | None]):
+class FilterLifeState(DeviceOpState[int | None]):
     """Expose purifier filter life remaining as a percentage."""
 
-    def __init__(self, *, device: object) -> None:
+    def __init__(self, *, device: object, identifier: Sequence[int] = (0x19,)) -> None:
         """Initialise the filter life sensor wrapper."""
 
-        super().__init__(device=device, name="filterLife", initial_value=None)
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": list(identifier)},
+            device=device,
+            name="filterLife",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE | ParseOption.STATE,
+        )
 
-    def parse(self, data: dict[str, Any]) -> None:
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Parse percentage value from opcode payloads."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        self._apply_life_value(payload[-1])
+
+    def parse_state(self, data: dict[str, Any]) -> None:
         """Parse numeric filter life values from state payloads."""
 
         state_section = data.get("state")
@@ -2268,6 +2282,11 @@ class FilterLifeState(DeviceState[int | None]):
         if value is None:
             value = state_section.get("filter_life")
         life = _int_from_value(value)
+        self._apply_life_value(life)
+
+    def _apply_life_value(self, life: int | None) -> None:
+        """Update stored filter life when ``life`` is within valid range."""
+
         if life is None:
             return
         if 0 <= life <= 100:
