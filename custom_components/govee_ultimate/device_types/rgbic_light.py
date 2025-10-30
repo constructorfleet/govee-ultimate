@@ -157,9 +157,7 @@ class RGBICLightDevice(BaseDevice):
         color = self.add_state(ColorRGBState(device_model))
         self.expose_entity(platform="light", state=color)
 
-        color_temperature = self.add_state(
-            ColorTemperatureState(device=device_model, identifier=[0x2B])
-        )
+        color_temperature = self.add_state(ColorTemperatureState(device=device_model))
         self.expose_entity(platform="light", state=color_temperature)
 
         segment_color = self.add_state(

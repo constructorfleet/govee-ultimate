@@ -3555,39 +3555,63 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
         }
 
 
-class ColorTemperatureState(DeviceState[int | None]):
+class ColorTemperatureState(DeviceOpState[int | None]):
     """Represent the color temperature setting for supported lights."""
 
-    def __init__(
-        self,
-        *,
-        device: object,
-        minimum: int = 2000,
-        maximum: int = 9000,
-        identifier: Sequence[int] | None = None,
-    ) -> None:
+    def __init__(self, *, device: object) -> None:
         """Initialise the color temperature state wrapper."""
 
+        entry = _state_entry("color_temperature")
+        status_opcode = int(entry.identifiers["status"]["opcode"], 16)
         super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": [status_opcode]},
             device=device,
             name="colorTemperature",
             initial_value=None,
-            parse_option=ParseOption.NONE,
+            parse_option=ParseOption.OP_CODE | ParseOption.STATE,
+            state_to_command=self._state_to_command,
         )
-        self._minimum = minimum
-        self._maximum = maximum
-        self._identifier = list(identifier) if identifier is not None else []
+        self._command_template = entry.command_templates[0]
+        range_options = entry.parse_options.get("range", {})
+        self._minimum = range_options.get("min", 2000)
+        self._maximum = range_options.get("max", 9000)
+        self._status_opcode = status_opcode
 
-    def set_state(self, next_state: Any) -> list[str]:
-        """Update the stored color temperature when ``next_state`` is valid."""
+    def _in_range(self, value: int | None) -> bool:
+        return value is not None and self._minimum <= value <= self._maximum
+
+    def parse_state(self, data: dict[str, Any]) -> None:
+        """Parse color temperature value from structured payloads."""
+
+        color_temperature = data.get("state", {}).get("colorTem")
+        value = _int_from_value(color_temperature)
+        if self._in_range(value):
+            self._update_state(value)
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Interpret opcode payloads representing Kelvin values."""
+
+        if len(op_command) < 4:
+            return
+        high_byte, low_byte = op_command[2], op_command[3]
+        value = (high_byte << 8) | low_byte
+        if self._in_range(value):
+            self._update_state(value)
+
+    def _state_to_command(self, next_state: Any):
+        """Convert Kelvin requests into command payloads."""
 
         value = _int_from_value(next_state)
-        if value is None:
-            return []
-        if value < self._minimum or value > self._maximum:
-            return []
-        self._update_state(value)
-        return [self.name]
+        if not self._in_range(value):
+            return None
+        command, payload_bytes = _command_payload(
+            self._command_template, {"value": value}
+        )
+        status_sequence = [_REPORT_OPCODE, self._status_opcode, *payload_bytes[1:]]
+        return {
+            "command": command,
+            "status": _status_payload("colorTem", value, status_sequence),
+        }
 
 
 def _index_to_segment_bits(indices: int) -> list[int]:
