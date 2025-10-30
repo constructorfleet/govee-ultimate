@@ -96,7 +96,6 @@ class IceMakerDevice(BaseDevice):
             )
         )
         self.expose_entity(
-            platform="binary_sensor",
+            platform="switch",
             state=make_ice,
-            entity_category=EntityCategory.DIAGNOSTIC,
         )

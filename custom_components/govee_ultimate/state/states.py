@@ -12,6 +12,7 @@ from uuid import uuid4
 from collections.abc import Callable, Mapping, Sequence
 from enum import Enum, IntEnum
 from functools import cache
+from asyncio import QueueEmpty
 from typing import Any
 
 from .. import opcodes
@@ -2684,7 +2685,20 @@ class IceMakerMakingIceState(DeviceOpState[bool | None]):
         if next_state is None:
             return []
         target = "MAKING_ICE" if next_state else "STANDBY"
-        return self._status_state.set_state(target)
+        command_ids = self._status_state.set_state(target)
+        if not command_ids:
+            return []
+        self._transfer_status_commands()
+        return command_ids
+
+    def _transfer_status_commands(self) -> None:
+        """Mirror queued status commands onto the local command queue."""
+        while True:
+            try:
+                payload = self._status_state.command_queue.get_nowait()
+            except QueueEmpty:
+                break
+            self.command_queue.put_nowait(payload)
 
     def _handle_status_update(self, status: str | None) -> None:
         """Apply ``status`` updates to the boolean representation."""
