@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
-import json
-
-from collections.abc import Mapping
-from functools import cache
-from typing import Any
-from collections.abc import Callable
 import itertools
-from enum import Enum
+import json
 import logging
 
+from collections.abc import Callable, Mapping, Sequence
+from enum import Enum, IntEnum
+from functools import cache
+from typing import Any
+
 from .. import opcodes
-from collections.abc import Sequence
 
 from ..state_catalog import CommandTemplate, StateEntry, load_state_catalog
 from .device_state import (
@@ -3668,15 +3667,164 @@ class MicModeState(DeviceOpState[dict[str, Any]]):
         }
 
 
-class DiyModeState(_IdentifierStringState):
+class RGBICModes(IntEnum):
+    """Enumeration of RGBIC mode identifiers."""
+
+    WHOLE_COLOR = 0x02
+    SCENE = 0x04
+    DIY = 0x0A
+    MIC = 0x13
+    SEGMENT_COLOR = 0x15
+
+
+class DiyModeState(DeviceOpState[dict[str, Any]]):
     """Manage DIY scene selections for RGBIC lights."""
 
-    def __init__(
-        self, *, device: object, identifier: Sequence[int] | None = None
-    ) -> None:
+    def __init__(self, *, device: object) -> None:
         """Initialise the DIY mode selector."""
 
-        super().__init__(device=device, name="diyMode", identifier=identifier)
+        super().__init__(
+            op_identifier={
+                "op_type": _REPORT_OPCODE,
+                "identifier": [0x05, RGBICModes.DIY],
+            },
+            device=device,
+            name="diyMode",
+            initial_value={},
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+        self._effects: dict[int, dict[str, Any]] = {}
+        self._effects_by_name: dict[str, dict[str, Any]] = {}
+        self._active_effect_code: int | None = None
+
+    @property
+    def active_effect_code(self) -> int | None:
+        """Return the code for the active DIY effect."""
+
+        return self._active_effect_code
+
+    def update_effects(self, effects: Sequence[Mapping[str, Any]]) -> None:
+        """Store DIY effect metadata provided by catalogue updates."""
+
+        changed = False
+        for effect in effects:
+            code = effect.get("code") if isinstance(effect, Mapping) else None
+            if not isinstance(code, int):
+                continue
+            stored = dict(effect.items())
+            previous = self._effects.get(code)
+            if previous is not None:
+                old_name = previous.get("name")
+                if isinstance(old_name, str):
+                    self._effects_by_name.pop(old_name.strip().upper(), None)
+            if self._effects.get(code) != stored:
+                self._effects[code] = stored
+                changed = True
+            name = stored.get("name")
+            if isinstance(name, str):
+                self._effects_by_name[name.strip().upper()] = stored
+        if changed and self._active_effect_code is not None:
+            active = self._effects.get(self._active_effect_code)
+            if active is not None:
+                self._update_state(dict(active))
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Decode opcode payloads to update the active DIY effect."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) < 2:
+            return
+        effect_code = (payload[1] << 8) | payload[0]
+        self._active_effect_code = effect_code
+        effect = self._effects.get(effect_code)
+        if effect is not None:
+            self._update_state(dict(effect))
+
+    def _state_to_command(self, next_state: Any) -> StateCommandAndStatus | None:
+        """Translate DIY selections into opcode command payloads."""
+
+        effect = self._resolve_effect(next_state)
+        if effect is None:
+            return None
+        code = effect.get("code")
+        if not isinstance(code, int):
+            return None
+        identifier = self._command_identifier()
+        commands = self._rebuild_diy_commands(code, effect.get("diyOpCodeBase64"))
+        if not commands:
+            return None
+        status_sequence = [
+            _REPORT_OPCODE,
+            *identifier,
+            code & 0xFF,
+            (code >> 8) & 0xFF,
+        ]
+        self._active_effect_code = code
+        self._update_state(dict(effect))
+        return {
+            "command": {
+                "type": 1,
+                "cmdVersion": effect.get("cmdVersion", 0),
+                "data": {"command": commands},
+            },
+            "status": [
+                {"op": {"command": [status_sequence]}},
+                {"state": {self.name: dict(effect)}},
+            ],
+        }
+
+    def _resolve_effect(self, candidate: Any) -> dict[str, Any] | None:
+        if isinstance(candidate, Mapping):
+            payload = candidate
+        elif isinstance(candidate, str):
+            payload = {"name": candidate}
+        elif isinstance(candidate, int):
+            payload = {"code": candidate}
+        else:
+            return None
+        code = payload.get("code")
+        if isinstance(code, int):
+            effect = self._effects.get(code)
+            if effect is not None:
+                return effect
+        name = payload.get("name")
+        if isinstance(name, str):
+            return self._effects_by_name.get(name.strip().upper())
+        return None
+
+    def _rebuild_diy_commands(self, code: int, opcode_b64: Any) -> list[list[int]]:
+        if not isinstance(opcode_b64, str):
+            return []
+        try:
+            decoded = list(base64.b64decode(opcode_b64))
+        except (ValueError, TypeError):
+            return []
+        payload = [0x01, 0x02, 0x04]
+        if decoded:
+            payload.extend(decoded[1:])
+        chunks = [payload[idx : idx + 17] for idx in range(0, len(payload), 17)]
+        commands: list[list[int]] = []
+        identifier = self._command_identifier()
+        command_prefix = identifier
+        report_identifier = identifier[:1] if identifier else [0x05]
+        for idx, chunk in enumerate(chunks):
+            terminator = 0xFF if idx == len(chunks) - 1 else idx
+            commands.append(_opcode_frame(0xA3, terminator, *chunk))
+        commands.append(
+            _opcode_frame(
+                0x33,
+                *command_prefix,
+                code & 0xFF,
+                (code >> 8) & 0xFF,
+            )
+        )
+        commands.append(_opcode_frame(0xAA, report_identifier[0], 0x01))
+        return commands
+
+    def _command_identifier(self) -> list[int]:
+        identifier = self._identifier or [0x05, int(RGBICModes.DIY)]
+        return [int(value) for value in identifier]
 
 
 class UnknownState(DeviceOpState[dict[str, Any]]):

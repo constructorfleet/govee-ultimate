@@ -75,7 +75,7 @@ class RGBICLightDevice(BaseDevice):
         )
         self.expose_entity(platform="select", state=mic_mode)
 
-        diy_mode = self.add_state(DiyModeState(device=device_model, identifier=[0x33]))
+        diy_mode = self.add_state(DiyModeState(device=device_model))
         self.expose_entity(platform="select", state=diy_mode)
 
         mode_states = self._register_mode_states(
