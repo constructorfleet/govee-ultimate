@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from custom_components.govee_ultimate.state.device_state import ParseOption
 from custom_components.govee_ultimate.state.states import (
     ConnectedState,
     ControlLockState,
@@ -48,7 +49,12 @@ def temperature_state(device: DummyDevice) -> TemperatureState:
 def humidity_state(device: DummyDevice) -> HumidityState:
     """Return a humidity state bound to a dummy device."""
 
-    return HumidityState(device=device)
+    return HumidityState(
+        device=device,
+        op_type=None,
+        identifier=None,
+        parse_option=ParseOption.STATE,
+    )
 
 
 def test_humidity_state_parses_measurement_payload(
@@ -103,6 +109,16 @@ def test_humidity_state_updates_from_status_code(
         "calibration": -2,
         "range": {"min": 30, "max": 80},
     }
+
+
+def test_humidity_state_does_not_queue_commands_on_parse(
+    humidity_state: HumidityState,
+) -> None:
+    """Parsing humidity payloads does not enqueue commands."""
+
+    humidity_state.parse({"state": {"humidity": 45}})
+
+    assert humidity_state.command_queue.empty()
 
 
 def _next_command(state) -> dict:
