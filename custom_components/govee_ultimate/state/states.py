@@ -796,7 +796,17 @@ class PurifierActiveMode(ModeState):
     ) -> None:
         """Initialise the purifier active mode delegator."""
         filtered_modes = [mode for mode in modes if mode is not None]
+        report_identifier: list[int] | None = None
+        for mode in filtered_modes:
+            identifier = getattr(mode, "_identifier", None)
+            if not isinstance(identifier, Sequence):
+                continue
+            candidate = [int(value) for value in identifier if isinstance(value, int)]
+            if candidate:
+                report_identifier = candidate
+                break
         super().__init__(device=device, modes=filtered_modes, inline=True)
+        self._report_identifier = report_identifier
         self._mode_by_code: dict[int, DeviceState[str]] = {}
         for mode in filtered_modes:
             identifier = getattr(mode, "_mode_identifier", None)
@@ -805,9 +815,29 @@ class PurifierActiveMode(ModeState):
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Update the active mode using inline opcode payloads."""
-        if not op_command:
+        sequence = self._normalise_sequence(op_command)
+        if not sequence:
             return
-        self._set_active_from_sequence(op_command)
+        self._set_active_from_sequence(sequence)
+
+    def _normalise_sequence(self, op_command: Sequence[int]) -> list[int]:
+        """Return ``op_command`` without opcode headers or identifiers."""
+
+        sequence = list(op_command)
+        if not sequence:
+            return []
+        if self._op_type is not None and sequence[0] == self._op_type:
+            stripped = _strip_op_header(sequence, self._op_type, self._identifier)
+            if not stripped:
+                return []
+            sequence = stripped
+        if (
+            self._report_identifier
+            and len(sequence) > len(self._report_identifier)
+            and sequence[: len(self._report_identifier)] == self._report_identifier
+        ):
+            sequence = sequence[len(self._report_identifier) :]
+        return sequence
 
     def activate(self, mode_name: str) -> None:
         """Select the active mode using a human readable name."""

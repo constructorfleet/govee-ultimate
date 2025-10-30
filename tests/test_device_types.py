@@ -973,6 +973,25 @@ def test_purifier_manual_and_custom_modes_process_reports(
     assert delegated_frame[5] == manual_state.value
 
 
+def test_purifier_active_mode_strips_report_header(
+    purifier_model_h7126: MockDeviceModel,
+) -> None:
+    """Active mode parsing should ignore opcode headers when present."""
+
+    device = PurifierDevice(purifier_model_h7126)
+    manual_state = device.states["manual_mode"]
+    mode_state = device.mode_state
+
+    assert isinstance(manual_state, ManualModeState)
+    assert isinstance(mode_state, PurifierActiveMode)
+
+    manual_identifier = getattr(manual_state, "_mode_identifier", [0x01])
+    mode_state.parse_op_command([0xAA, 0x05, int(manual_identifier[0])])
+
+    assert mode_state.active_mode is manual_state
+    assert mode_state.active_identifier == [int(manual_identifier[0])]
+
+
 def test_air_quality_device_registers_environment_states(
     air_quality_model: MockDeviceModel,
 ) -> None:
