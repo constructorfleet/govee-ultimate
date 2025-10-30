@@ -3651,27 +3651,70 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
         }
 
 
-class ColorTemperatureState(DeviceOpState[int | None]):
+class ColorTemperatureState(DeviceOpState[dict[str, Any]]):
     """Represent the color temperature setting for supported lights."""
+
+    _RANGE_KEYS = ("colorTemRange", "colorTemRangeInKelvin", "range")
 
     def __init__(self, *, device: object) -> None:
         """Initialise the color temperature state wrapper."""
 
         entry = _state_entry("color_temperature")
         status_opcode = int(entry.identifiers["status"]["opcode"], 16)
+        range_options = entry.parse_options.get("range", {})
+        self._minimum = _int_from_value(range_options.get("min")) or 2000
+        self._maximum = _int_from_value(range_options.get("max")) or 9000
+        self._current: int | None = None
+        self._command_template = entry.command_templates[0]
+        self._status_opcode = status_opcode
         super().__init__(
             op_identifier={"op_type": _REPORT_OPCODE, "identifier": [status_opcode]},
             device=device,
             name="colorTemperature",
-            initial_value=None,
+            initial_value=self._measurement(),
             parse_option=ParseOption.OP_CODE | ParseOption.STATE,
             state_to_command=self._state_to_command,
         )
-        self._command_template = entry.command_templates[0]
-        range_options = entry.parse_options.get("range", {})
-        self._minimum = range_options.get("min", 2000)
-        self._maximum = range_options.get("max", 9000)
-        self._status_opcode = status_opcode
+
+    def _measurement(self) -> dict[str, Any]:
+        return {
+            "current": self._current,
+            "range": {"min": self._minimum, "max": self._maximum},
+        }
+
+    def _publish(self) -> None:
+        self._update_state(self._measurement())
+
+    def _coerce_command_value(self, next_state: Any) -> int | None:
+        if isinstance(next_state, Mapping):
+            candidate = next_state.get("current")
+        else:
+            candidate = next_state
+        return _int_from_value(candidate)
+
+    def _update_range(self, range_data: Mapping[str, Any]) -> bool:
+        minimum = _int_from_value(range_data.get("min"))
+        maximum = _int_from_value(range_data.get("max"))
+        if minimum is None or maximum is None:
+            return False
+        if minimum > maximum:
+            return False
+        changed = False
+        if minimum != self._minimum or maximum != self._maximum:
+            self._minimum = minimum
+            self._maximum = maximum
+            changed = True
+        if not self._in_range(self._current) and self._current is not None:
+            self._current = None
+            changed = True
+        return changed
+
+    def _extract_range(self, state_data: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        for key in self._RANGE_KEYS:
+            candidate = state_data.get(key)
+            if isinstance(candidate, Mapping):
+                return candidate
+        return None
 
     def _in_range(self, value: int | None) -> bool:
         return value is not None and self._minimum <= value <= self._maximum
@@ -3679,10 +3722,23 @@ class ColorTemperatureState(DeviceOpState[int | None]):
     def parse_state(self, data: dict[str, Any]) -> None:
         """Parse color temperature value from structured payloads."""
 
-        color_temperature = data.get("state", {}).get("colorTem")
+        state_data = data.get("state", {})
+        if isinstance(state_data, Mapping):
+            range_data = self._extract_range(state_data)
+            range_changed = (
+                self._update_range(range_data) if range_data is not None else False
+            )
+            color_temperature = state_data.get("colorTem")
+        else:
+            color_temperature = None
+            range_changed = False
         value = _int_from_value(color_temperature)
-        if self._in_range(value):
-            self._update_state(value)
+        current_changed = False
+        if self._in_range(value) and value != self._current:
+            self._current = value
+            current_changed = True
+        if range_changed or current_changed:
+            self._publish()
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Interpret opcode payloads representing Kelvin values."""
@@ -3691,13 +3747,22 @@ class ColorTemperatureState(DeviceOpState[int | None]):
             return
         high_byte, low_byte = op_command[2], op_command[3]
         value = (high_byte << 8) | low_byte
-        if self._in_range(value):
-            self._update_state(value)
+        if self._in_range(value) and value != self._current:
+            self._current = value
+            self._publish()
+
+    def set_state(self, next_state: Any) -> list[str]:
+        """Queue a Kelvin command when the provided value is valid."""
+
+        value = self._coerce_command_value(next_state)
+        if value is None:
+            return []
+        return super().set_state({"current": value})
 
     def _state_to_command(self, next_state: Any):
         """Convert Kelvin requests into command payloads."""
 
-        value = _int_from_value(next_state)
+        value = self._coerce_command_value(next_state)
         if not self._in_range(value):
             return None
         command, payload_bytes = _command_payload(
