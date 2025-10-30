@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 from collections.abc import Mapping
 from functools import cache
@@ -3111,11 +3112,91 @@ class MicModeState(DeviceOpState[dict[str, Any]]):
             }
         )
 
+    def _coerce_next_state(self, next_state: Any) -> Mapping[str, Any] | None:
+        if isinstance(next_state, Mapping):
+            return next_state
+        if isinstance(next_state, str):
+            token = next_state.strip()
+            if not token:
+                return None
+            try:
+                decoded = json.loads(token)
+            except ValueError:
+                return self._parse_assignment_string(token)
+            return self._mapping_from_json(decoded)
+        return None
+
+    def _parse_assignment_string(self, token: str) -> Mapping[str, Any] | None:
+        pairs: dict[str, Any] = {}
+        normalised = token.replace(";", ",")
+        segments = [segment for segment in normalised.split(",") if segment]
+        if not segments:
+            return None
+        if len(segments) == 1 and "=" not in segments[0]:
+            try:
+                mic_scene = int(segments[0], 0)
+            except ValueError:
+                return None
+            return {"micScene": mic_scene}
+        for segment in segments:
+            if "=" not in segment:
+                continue
+            key, value = segment.split("=", 1)
+            key = key.strip()
+            raw_value = value.strip()
+            if not key:
+                continue
+            lowered = raw_value.lower()
+            if lowered in {"true", "false"}:
+                pairs[key] = lowered == "true"
+                continue
+            try:
+                pairs[key] = int(raw_value, 0)
+                continue
+            except ValueError:
+                pass
+            try:
+                pairs[key] = float(raw_value)
+                continue
+            except ValueError:
+                pairs[key] = raw_value
+        if pairs:
+            return pairs
+        return None
+
+    def _mapping_from_json(self, decoded: Any) -> Mapping[str, Any] | None:
+        if isinstance(decoded, Mapping):
+            return decoded
+        if isinstance(decoded, Sequence) and not isinstance(
+            decoded, str | bytes | Mapping
+        ):
+            pairs = self._pairs_from_sequence(decoded)
+            if pairs:
+                return pairs
+        if isinstance(decoded, int | float):
+            return {"micScene": int(decoded)}
+        return None
+
+    def _pairs_from_sequence(self, decoded: Sequence[Any]) -> dict[str, Any]:
+        pairs: dict[str, Any] = {}
+        for entry in decoded:
+            if (
+                isinstance(entry, Sequence)
+                and not isinstance(entry, str | bytes | Mapping)
+                and len(entry) >= 2
+            ):
+                key = entry[0]
+                if isinstance(key, str):
+                    pairs[key] = entry[1]
+        return pairs
+
     def _state_to_command(
         self, next_state: Any
     ) -> StateCommandAndStatus | None:  # type: ignore[override]
-        if not isinstance(next_state, Mapping):
+        resolved_next = self._coerce_next_state(next_state)
+        if resolved_next is None:
             return None
+        next_state = resolved_next
 
         current = self.value if isinstance(self.value, Mapping) else {}
 
