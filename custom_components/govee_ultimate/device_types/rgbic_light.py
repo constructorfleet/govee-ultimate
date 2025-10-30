@@ -150,6 +150,7 @@ class RGBICLightDevice(BaseDevice):
 
         active = self.add_state(ActiveState(device_model))
         self.expose_entity(platform="binary_sensor", state=active)
+        self.alias_state_with_entity("active", active)
 
         brightness = self.add_state(BrightnessState(device_model))
         self.expose_entity(platform="light", state=brightness)

@@ -528,6 +528,7 @@ class HumidifierDevice(BaseDevice):
             state=active,
             entity_category=EntityCategory.DIAGNOSTIC,
         )
+        self.alias_state_with_entity("active", active)
 
         shortage = self.add_state(WaterShortageState(device=device_model))
         # Maintain backwards compatibility with snake_case update payloads.

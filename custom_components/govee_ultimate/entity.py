@@ -56,7 +56,8 @@ class GoveeStateEntity(CoordinatorEntity, Generic[StateT]):
         self._publisher: _AsyncPublisher | None = None
         if not hasattr(self, "_written_states"):
             self._written_states: list[Any] = []
-        unique_id = f"{device_id}-{self._state.name}"
+        unique_suffix = entity.name_override or self._state.name
+        unique_id = f"{device_id}-{unique_suffix}"
         self._attr_unique_id = unique_id
         self.unique_id = unique_id
         if entity.translation_key:

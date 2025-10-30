@@ -422,7 +422,8 @@ def test_ice_maker_device_registers_states_and_entities(
     states = device.states
     assert isinstance(states["power"], PowerState)
     assert isinstance(states["isConnected"], ConnectedState)
-    assert isinstance(states["active"], ActiveState)
+    assert isinstance(states["isActive"], ActiveState)
+    assert states["active"] is states["isActive"]
     assert isinstance(states["temperature"], IceMakerTemperatureState)
     assert isinstance(states["nuggetSize"], IceMakerNuggetSizeState)
     assert isinstance(states["basketFull"], IceMakerBasketFullState)
@@ -439,9 +440,12 @@ def test_ice_maker_device_registers_states_and_entities(
     assert connected_entity.platform == "binary_sensor"
     assert connected_entity.entity_category is EntityCategory.DIAGNOSTIC
 
-    active_entity = entities["active"]
+    active_entity = entities["isActive"]
     assert active_entity.platform == "binary_sensor"
     assert active_entity.entity_category is EntityCategory.DIAGNOSTIC
+    alias_entity = entities["active"]
+    assert alias_entity.state is active_entity.state
+    assert alias_entity.name_override == "active"
 
     basket_entity = entities["basketFull"]
     assert basket_entity.platform == "binary_sensor"
@@ -544,7 +548,7 @@ def test_rgbic_light_registers_expected_states(
     assert set(states) >= {
         "power",
         "isConnected",
-        "active",
+        "isActive",
         "brightness",
         "color",
         "colorTemperature",
@@ -558,6 +562,8 @@ def test_rgbic_light_registers_expected_states(
     assert isinstance(states["brightness"], BrightnessState)
     assert isinstance(states["color"], ColorRGBState)
     assert isinstance(states["colorTemperature"], ColorTemperatureState)
+    assert isinstance(states["isActive"], ActiveState)
+    assert states["active"] is states["isActive"]
     assert isinstance(states["segmentColor"], SegmentColorState)
     assert isinstance(states["lightEffect"], LightEffectState)
     assert isinstance(states["micMode"], MicModeState)
@@ -668,7 +674,8 @@ def test_rgb_light_registers_expected_states(
     } <= set(states)
     assert isinstance(states["power"], PowerState)
     assert isinstance(states["isConnected"], ConnectedState)
-    assert isinstance(states["active"], ActiveState)
+    assert isinstance(states["isActive"], ActiveState)
+    assert states["active"] is states["isActive"]
     assert isinstance(states["brightness"], BrightnessState)
     assert isinstance(states["color"], ColorRGBState)
     assert isinstance(states["colorTemperature"], ColorTemperatureState)
@@ -688,7 +695,10 @@ def test_rgb_light_registers_expected_states(
     assert ha_entities["color"].platform == "light"
     assert ha_entities["colorTemperature"].platform == "light"
     assert ha_entities["isConnected"].platform == "binary_sensor"
-    assert ha_entities["active"].platform == "binary_sensor"
+    assert ha_entities["isActive"].platform == "binary_sensor"
+    alias_entity = ha_entities["active"]
+    assert alias_entity.state is ha_entities["isActive"].state
+    assert alias_entity.name_override == "active"
 
 
 def test_device_states_expose_home_assistant_entities(

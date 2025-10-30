@@ -3475,7 +3475,7 @@ class ActiveState(DeviceOpState[bool | None]):
         super().__init__(
             op_identifier={"op_type": _REPORT_OPCODE, "identifier": [status_opcode]},
             device=device,
-            name="active",
+            name="isActive",
             initial_value=None,
             parse_option=ParseOption.OP_CODE | ParseOption.STATE,
             state_to_command=self._state_to_command,
@@ -3486,9 +3486,13 @@ class ActiveState(DeviceOpState[bool | None]):
     def parse_state(self, data: dict[str, Any]) -> None:
         """Extract active flag from state payloads."""
         state_payload = data.get("state", {})
-        active = state_payload.get("active")
-        if not isinstance(active, bool):
+        active = None
+        if isinstance(state_payload, Mapping):
             active = state_payload.get("isOn")
+            if not isinstance(active, bool):
+                active = state_payload.get("isActive")
+            if not isinstance(active, bool):
+                active = state_payload.get("active")
         if isinstance(active, bool):
             self._update_state(active)
 
@@ -3511,7 +3515,7 @@ class ActiveState(DeviceOpState[bool | None]):
         status_sequence = [_REPORT_OPCODE, self._status_opcode, payload_bytes[-1]]
         return {
             "command": command,
-            "status": _status_payload("active", value, status_sequence),
+            "status": _status_payload("isActive", value, status_sequence),
         }
 
 

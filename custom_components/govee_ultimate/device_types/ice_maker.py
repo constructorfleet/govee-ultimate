@@ -47,6 +47,7 @@ class IceMakerDevice(BaseDevice):
             state=active,
             entity_category=EntityCategory.DIAGNOSTIC,
         )
+        self.alias_state_with_entity("active", active)
 
         status = self.add_state(IceMakerStatusState(device=device_model))
         self._status_state = status

@@ -57,6 +57,7 @@ class HomeAssistantEntity:
     state: DeviceState[Any]
     translation_key: str | None = None
     entity_category: EntityCategory | None = None
+    name_override: str | None = None
 
     @property
     def options(self) -> list[str]:
@@ -89,14 +90,34 @@ class BaseDevice:
 
         self._states[alias] = state
 
-    def alias_entity(self, alias: str, state: DeviceState[Any]) -> None:
+    def alias_state_with_entity(self, alias: str, state: DeviceState[Any]) -> None:
+        """Alias ``state`` and mirror its entity under ``alias``."""
+
+        self.alias_state(alias, state)
+        self.alias_entity(alias, state, keep_original=True)
+
+    def alias_entity(
+        self, alias: str, state: DeviceState[Any], *, keep_original: bool = False
+    ) -> None:
         """Expose the entity registered for ``state`` under ``alias``."""
 
         if alias == state.name:
             return
-        entity = self._ha_entities.pop(state.name, None)
-        if entity is not None:
-            self._ha_entities[alias] = entity
+        entity = self._ha_entities.get(state.name)
+        if entity is None:
+            return
+        alias_entity = HomeAssistantEntity(
+            platform=entity.platform,
+            state=entity.state,
+            translation_key=entity.translation_key,
+            entity_category=entity.entity_category,
+            name_override=alias,
+        )
+        if keep_original:
+            self._ha_entities[alias] = alias_entity
+            return
+        self._ha_entities.pop(state.name, None)
+        self._ha_entities[alias] = alias_entity
 
     def expose_entity(
         self,

@@ -78,6 +78,7 @@ class PurifierDevice(BaseDevice):
             state=active,
             entity_category=EntityCategory.DIAGNOSTIC,
         )
+        self.alias_state_with_entity("active", active)
 
         mode_states: list[DeviceState[str] | None] = []
         manual_state: PurifierManualModeState | None = None
