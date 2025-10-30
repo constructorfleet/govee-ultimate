@@ -64,6 +64,18 @@ def test_battery_level_state_rejects_out_of_range_values(device: DummyDevice) ->
     assert state.value == 85
 
 
+def test_battery_level_state_preserves_fractional_values(device: DummyDevice) -> None:
+    """Decimal battery percentages should be stored without truncation."""
+
+    state = BatteryLevelState(device=device)
+
+    state.parse({"battery": 0.5})
+    assert state.value == 0.5
+
+    state.parse({"state": {"battery": "99.4"}})
+    assert state.value == 99.4
+
+
 def test_temperature_state_parses_simple_payload(device: DummyDevice) -> None:
     """Scalar temperature values should update the measurement state."""
 
