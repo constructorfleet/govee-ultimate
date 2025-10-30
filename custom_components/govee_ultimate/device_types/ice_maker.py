@@ -74,6 +74,12 @@ class IceMakerDevice(BaseDevice):
         self._scheduled_start_state = self.add_state(
             IceMakerScheduledStartState(device=device_model)
         )
+        self.expose_entity(
+            platform="sensor",
+            state=self._scheduled_start_state,
+            translation_key="ice_maker_scheduled_start",
+            entity_category=EntityCategory.CONFIG,
+        )
 
         temperature = self.add_state(IceMakerTemperatureState(device=device_model))
         self.expose_entity(
