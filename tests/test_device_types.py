@@ -15,7 +15,9 @@ from custom_components.govee_ultimate.device_types.hygrometer import HygrometerD
 from custom_components.govee_ultimate.device_types.presence import PresenceDevice
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
-from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
+from custom_components.govee_ultimate.device_types import (
+    rgbic_light as rgbic_light_module,
+)
 from custom_components.govee_ultimate.device_types.meat_thermometer import (
     MeatThermometerDevice,
 )
@@ -30,7 +32,6 @@ from custom_components.govee_ultimate.state import (
     EnablePresenceState,
     HumidityState,
     MMWavePresenceState,
-    ModeState,
     PowerState,
     TemperatureState,
 )
@@ -68,6 +69,7 @@ from custom_components.govee_ultimate.state.states import (
     PurifierCustomModeState,
     PurifierActiveMode,
     AutoModeState,
+    RGBICModes,
 )
 
 
@@ -534,7 +536,7 @@ def test_rgbic_light_registers_expected_states(
 ) -> None:
     """RGBIC devices should expose the expected core light states."""
 
-    device = RGBICLightDevice(rgbic_device_model)
+    device = rgbic_light_module.RGBICLightDevice(rgbic_device_model)
 
     states = device.states
     assert set(states) >= {
@@ -560,15 +562,20 @@ def test_rgbic_light_registers_expected_states(
     assert isinstance(states["diyMode"], DiyModeState)
 
     mode_state = device.mode_state
-    assert isinstance(mode_state, ModeState)
-    mode_names = {mode.name for mode in mode_state.modes}
-    assert mode_names == {
-        "color_whole",
-        "color_segment",
-        "scene",
-        "mic",
-        "diy",
+    assert isinstance(mode_state, rgbic_light_module.RGBICModeState)
+    mode_types = {type(mode) for mode in mode_state.modes}
+    assert mode_types == {
+        ColorRGBState,
+        SegmentColorState,
+        LightEffectState,
+        MicModeState,
+        DiyModeState,
     }
+    assert mode_state.resolve_mode("color_whole") is states["color"]
+    assert mode_state.resolve_mode("color_segment") is states["segmentColor"]
+    assert mode_state.resolve_mode("scene") is states["lightEffect"]
+    assert mode_state.resolve_mode("mic") is states["micMode"]
+    assert mode_state.resolve_mode("diy") is states["diyMode"]
 
     light_entities = device.light_entities
     assert light_entities.primary is states["power"]
@@ -578,6 +585,66 @@ def test_rgbic_light_registers_expected_states(
         states["colorTemperature"],
         states["segmentColor"],
     }
+
+
+def test_rgbic_mode_state_maps_active_identifiers(
+    rgbic_device_model: MockDeviceModel,
+) -> None:
+    """RGBIC mode state should translate identifiers to concrete states."""
+
+    device = rgbic_light_module.RGBICLightDevice(rgbic_device_model)
+    mode_state = device.mode_state
+    color_state = device.states["color"]
+    segment_state = device.states["segmentColor"]
+    light_effect = device.states["lightEffect"]
+    mic_mode = device.states["micMode"]
+    diy_mode = device.states["diyMode"]
+
+    mode_state.parse_op_command([0xAA, 0x05, int(RGBICModes.WHOLE_COLOR)])
+    assert mode_state.active_mode is color_state
+
+    mode_state.parse_op_command([0xAA, 0x05, int(RGBICModes.SEGMENT_COLOR)])
+    assert mode_state.active_mode is segment_state
+
+    mode_state.parse_op_command([0xAA, 0x05, int(RGBICModes.SCENE)])
+    assert mode_state.active_mode is light_effect
+
+    mode_state.parse_op_command([0xAA, 0x05, int(RGBICModes.MIC), 0x01])
+    assert mode_state.active_mode is mic_mode
+
+    mode_state.parse_op_command([0xAA, 0x05, int(RGBICModes.DIY), 0x00, 0x01])
+    assert mode_state.active_mode is diy_mode
+
+
+def test_rgbic_mode_state_delegates_to_selected_state(
+    rgbic_device_model: MockDeviceModel,
+) -> None:
+    """Commands routed through the mode state should invoke the target state."""
+
+    device = rgbic_light_module.RGBICLightDevice(rgbic_device_model)
+    mode_state = device.mode_state
+    mic_mode = device.states["micMode"]
+
+    mic_mode.parse_op_command(
+        [
+            0xAA,
+            0x05,
+            int(RGBICModes.MIC),
+            0x02,
+            0x32,
+            0x01,
+            0x00,
+            0x10,
+            0x20,
+            0x30,
+        ]
+    )
+
+    command_ids = mode_state.set_state(mic_mode)
+
+    assert command_ids
+    frame = _next_command_frame(mic_mode)
+    assert frame[:3] == [0x33, 0x05, int(RGBICModes.MIC)]
 
 
 def test_rgb_light_registers_expected_states(
@@ -629,7 +696,7 @@ def test_device_states_expose_home_assistant_entities(
 ) -> None:
     """Each device should expose a Home Assistant entity mapping per state."""
 
-    light_device = RGBICLightDevice(rgbic_device_model)
+    light_device = rgbic_light_module.RGBICLightDevice(rgbic_device_model)
     humidifier_device = HumidifierDevice(humidifier_model_h7142)
     purifier_device = PurifierDevice(purifier_model_h7126)
 
