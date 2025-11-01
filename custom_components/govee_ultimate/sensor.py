@@ -13,7 +13,7 @@ from .entity import (
     build_platform_entities,
     resolve_coordinator,
 )
-from .state.states import IceMakerScheduledStartState, SceneModeState
+from .state.states import EarlyWarningState, IceMakerScheduledStartState, SceneModeState
 
 
 class GoveeSensorEntity(GoveeStateEntity, SensorEntity):
@@ -24,6 +24,46 @@ class GoveeSensorEntity(GoveeStateEntity, SensorEntity):
         """Return the latest sensor reading."""
 
         return self._state.value
+
+    @property
+    def entity_category(self) -> str | None:
+        """Expose the resolved entity category for test stubs."""
+
+        return getattr(self, "_attr_entity_category", None)
+
+
+class GoveeEarlyWarningSensorEntity(GoveeSensorEntity):
+    """Expose parsed early warning metadata for meat thermometers."""
+
+    _state: EarlyWarningState
+
+    def _current_value(self) -> Mapping[str, Any] | None:
+        """Return the parsed early warning payload when available."""
+
+        value = self._state.value
+        if isinstance(value, Mapping):
+            return value
+        return None
+
+    @property
+    def native_value(self) -> Any:
+        """Return the configured early warning offset when available."""
+
+        value = self._current_value()
+        if value is not None:
+            setting = value.get("setting")
+            if isinstance(setting, str):
+                return setting
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the entire early warning payload as attributes."""
+
+        value = self._current_value()
+        if value is not None:
+            return dict(value)
+        return {}
 
 
 class GoveeIceMakerScheduledStartSensorEntity(GoveeSensorEntity):
@@ -183,6 +223,8 @@ def _sensor_entity_factory(coordinator: Any, device_id: str, entity: Any) -> Any
     """Return a specialised entity for known sensor state types."""
 
     state = entity.state
+    if isinstance(state, EarlyWarningState):
+        return GoveeEarlyWarningSensorEntity(coordinator, device_id, entity)
     if isinstance(state, IceMakerScheduledStartState):
         return GoveeIceMakerScheduledStartSensorEntity(coordinator, device_id, entity)
     if isinstance(state, SceneModeState):
