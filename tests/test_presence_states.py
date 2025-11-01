@@ -2,6 +2,26 @@
 
 from __future__ import annotations
 
+import sys
+from types import ModuleType, SimpleNamespace
+
+
+if "homeassistant.components.binary_sensor" not in sys.modules:
+    binary_sensor_module = ModuleType("homeassistant.components.binary_sensor")
+
+    class _BinarySensorEntity:
+        _attr_is_on: bool | None = None
+
+        @property
+        def is_on(self) -> bool | None:
+            return self._attr_is_on
+
+    binary_sensor_module.BinarySensorEntity = _BinarySensorEntity  # type: ignore[attr-defined]
+    sys.modules["homeassistant.components.binary_sensor"] = binary_sensor_module
+
+
+from custom_components.govee_ultimate.binary_sensor import GoveeBinarySensorEntity
+from custom_components.govee_ultimate.device_types.base import HomeAssistantEntity
 from custom_components.govee_ultimate.state.states import (
     BiologicalPresenceState,
     DetectionSettingsState,
@@ -16,6 +36,22 @@ class DummyDevice:
     def add_status_listener(self, _callback):  # type: ignore[no-untyped-def]
         """Accept a listener without storing it."""
         return None
+
+
+def test_presence_binary_sensor_uses_detected_flag() -> None:
+    """Binary sensor entities expose the detected flag from mapping states."""
+
+    device = DummyDevice()
+    state = MMWavePresenceState(device)
+    entity = HomeAssistantEntity(platform="binary_sensor", state=state)
+    coordinator = SimpleNamespace()
+    binary_sensor = GoveeBinarySensorEntity(coordinator, "device-id", entity)
+
+    state._update_state({"detected": False})
+    assert binary_sensor.is_on is False
+
+    state._update_state({"detected": True})
+    assert binary_sensor.is_on is True
 
 
 def test_mmwave_presence_parses_detection_distance_and_duration() -> None:
