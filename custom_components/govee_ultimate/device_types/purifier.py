@@ -82,10 +82,22 @@ class PurifierDevice(BaseDevice):
         mode_states: list[DeviceState[str] | None] = []
         manual_state: PurifierManualModeState | None = None
         custom_state: PurifierCustomModeState | None = None
+
+        def _register_mode_sensor(state: DeviceState[Any] | None) -> None:
+            if state is None:
+                return
+            self.expose_entity(
+                platform="sensor",
+                state=state,
+                entity_category=EntityCategory.DIAGNOSTIC,
+            )
+
         if model_id == "H7126":
             manual_state = self.add_state(PurifierManualModeState(device_model))
             custom_state = self.add_state(PurifierCustomModeState(device_model))
             mode_states.extend([manual_state, custom_state])
+            _register_mode_sensor(manual_state)
+            _register_mode_sensor(custom_state)
 
         auto = self.add_state(
             DeviceState(
@@ -97,6 +109,7 @@ class PurifierDevice(BaseDevice):
         )
         setattr(auto, "_mode_identifier", [0x03])
         mode_states.append(auto)
+        _register_mode_sensor(auto)
 
         self._mode_state = self.add_state(PurifierActiveMode(device_model, mode_states))
         self.expose_entity(platform="select", state=self._mode_state)
