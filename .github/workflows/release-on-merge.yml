@@ -39,7 +39,7 @@ jobs:
         id: prepare
         run: |
           python -m scripts.prepare_release \
-            --manifest custom_components/govee_ultimate/manifest.json \
+            --manifest custom_components/govee/manifest.json \
             --github-output "$GITHUB_OUTPUT"
 
       - name: "Commit version bump"
