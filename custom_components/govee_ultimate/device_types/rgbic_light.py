@@ -155,8 +155,10 @@ class RGBICLightDevice(BaseDevice):
         brightness = self.add_state(BrightnessState(device_model))
         self.expose_entity(platform="light", state=brightness)
 
-        color = self.add_state(ColorRGBState(device_model))
-        self.expose_entity(platform="light", state=color)
+        color_rgb = self.add_state(ColorRGBState(device_model))
+        self.expose_entity(platform="light", state=color_rgb)
+        self.alias_state("color", color_rgb)
+        self.alias_entity("color", color_rgb, keep_canonical=True)
 
         color_temperature = self.add_state(ColorTemperatureState(device=device_model))
         self.expose_entity(platform="light", state=color_temperature)
@@ -182,7 +184,7 @@ class RGBICLightDevice(BaseDevice):
         self._mode_state = self.add_state(
             RGBICModeState(
                 device=device_model,
-                color_state=color,
+                color_state=color_rgb,
                 segment_state=segment_color,
                 light_effect_state=light_effect,
                 mic_mode_state=mic_mode,
@@ -193,7 +195,7 @@ class RGBICLightDevice(BaseDevice):
 
         self._light_entities = LightEntities(
             primary=power,
-            supporting=(brightness, color, color_temperature, segment_color),
+            supporting=(brightness, color_rgb, color_temperature, segment_color),
         )
 
     @property

@@ -3581,7 +3581,7 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
         super().__init__(
             op_identifier={"op_type": _REPORT_OPCODE, "identifier": [status_opcode]},
             device=device,
-            name="color",
+            name="colorRGB",
             initial_value=None,
             parse_option=ParseOption.OP_CODE | ParseOption.STATE,
             state_to_command=self._state_to_command,
@@ -3605,7 +3605,8 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
 
     def parse_state(self, data: dict[str, Any]) -> None:
         """Parse colour channel data from structured payloads."""
-        colour = data.get("state", {}).get("color")
+        state_payload = data.get("state", {})
+        colour = state_payload.get("colorRGB") or state_payload.get("color")
         validated = self._validate_channels(colour)
         if validated is not None:
             self._update_state(validated)
@@ -3636,7 +3637,7 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
         ]
         return {
             "command": [self._colorwc_command(channels), command],
-            "status": _status_payload("color", channels, status_sequence),
+            "status": _status_payload("colorRGB", channels, status_sequence),
         }
 
     def _colorwc_command(self, channels: Mapping[str, int]) -> dict[str, Any]:

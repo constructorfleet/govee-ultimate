@@ -49,6 +49,12 @@ def _first_pending(state, command_id: str) -> Sequence[dict[str, object]]:
     return pending
 
 
+def _rgb_channels(red: int, green: int, blue: int) -> dict[str, int]:
+    """Return a canonical RGB channel mapping for assertions."""
+
+    return {"red": red, "green": green, "blue": blue}
+
+
 def test_power_state_parses_nested_booleans() -> None:
     """Power state accepts top-level or nested boolean payloads."""
 
@@ -239,7 +245,7 @@ def test_color_rgb_state_requires_complete_channels() -> None:
     # Missing blue channel -> command should be skipped
     assert state.set_state({"red": 16, "green": 32}) == []
 
-    command_ids = state.set_state({"red": 16, "green": 32, "blue": 48})
+    command_ids = state.set_state(_rgb_channels(16, 32, 48))
     assert command_ids
 
     command_payloads = _drain(state.command_queue)
@@ -260,8 +266,7 @@ def test_color_rgb_state_requires_complete_channels() -> None:
 
     pending = _first_pending(state, command_ids[0])
     assert any(
-        expectation.get("state", {}).get("color")
-        == {"red": 16, "green": 32, "blue": 48}
+        expectation.get("state", {}).get("colorRGB") == _rgb_channels(16, 32, 48)
         for expectation in pending
     )
     assert any(
@@ -278,11 +283,15 @@ def test_color_rgb_state_requires_complete_channels() -> None:
     state.parse(
         {
             "op": {"command": [[0xAA, 0x04, 0x10, 0x20, 0x30]]},
-            "state": {"color": {"red": 16, "green": 32, "blue": 48}},
+            "state": {"colorRGB": _rgb_channels(16, 32, 48)},
         }
     )
 
-    assert state.value == {"red": 16, "green": 32, "blue": 48}
+    assert state.value == _rgb_channels(16, 32, 48)
+
+    state.parse({"cmd": "status", "state": {"color": _rgb_channels(32, 16, 8)}})
+
+    assert state.value == _rgb_channels(32, 16, 8)
 
 
 def test_state_handlers_expose_method_docstrings() -> None:
