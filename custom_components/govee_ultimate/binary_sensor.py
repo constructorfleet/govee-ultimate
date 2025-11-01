@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
@@ -12,6 +13,9 @@ from .entity import (
     build_platform_entities,
     resolve_coordinator,
 )
+
+_EXPLICIT_BINARY_FLAGS = ("detected", "is_on", "active", "enabled")
+_MISSING = object()
 
 
 class GoveeBinarySensorEntity(GoveeStateEntity, BinarySensorEntity):
@@ -24,6 +28,13 @@ class GoveeBinarySensorEntity(GoveeStateEntity, BinarySensorEntity):
         value = self._state.value
         if isinstance(value, bool) or value is None:
             return value
+        if isinstance(value, Mapping):
+            for key in _EXPLICIT_BINARY_FLAGS:
+                flag = value.get(key, _MISSING)
+                if flag is _MISSING:
+                    continue
+                if isinstance(flag, bool) or flag is None:
+                    return flag
         return bool(value)
 
 
