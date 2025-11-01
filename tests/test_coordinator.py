@@ -59,6 +59,7 @@ from custom_components.govee.coordinator import (
     DeviceMetadata,
     GoveeDataUpdateCoordinator,
 )
+from custom_components.govee.state import DeviceOpState, ParseOption
 from custom_components.govee.device_types.air_quality import AirQualityDevice
 from custom_components.govee.device_types.humidifier import HumidifierDevice
 from custom_components.govee.device_types.ice_maker import IceMakerDevice
@@ -546,6 +547,27 @@ class FakeIoTClient:
         return []
 
 
+class StubOpState(DeviceOpState[bool | None]):
+    """Capture opcode payloads processed during tests."""
+
+    def __init__(self, device: object) -> None:
+        """Initialise the stub state with permissive opcode filtering."""
+
+        super().__init__(
+            op_identifier={"op_type": 0xAA, "identifier": []},
+            device=device,
+            name="stubOp",
+            initial_value=None,
+            parse_option=ParseOption.OP_CODE,
+        )
+        self.commands: list[list[int]] = []
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Record opcode commands forwarded by the coordinator."""
+
+        self.commands.append(list(op_command))
+
+
 def test_coordinator_inherits_home_assistant_data_update_coordinator() -> None:
     """The integration coordinator must extend Home Assistant's base class."""
 
@@ -840,6 +862,55 @@ async def test_iot_state_updates_flow_to_devices() -> None:
 
     device = coordinator.devices["device-iot"]
     assert device.states["power"].value is True
+
+
+@pytest.mark.asyncio
+async def test_account_topic_payload_updates_connected_and_opcode_state() -> None:
+    """Account topic payloads should update connected/opcode states immediately."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-iot",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Humidifier",
+                "channels": {"iot": {"topic": "accounts/123/devices/device-iot"}},
+            }
+        ]
+    )
+    iot_client = FakeIoTClient()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=iot_client,
+        iot_state_enabled=True,
+    )
+
+    await coordinator.async_discover_devices()
+    device = coordinator.devices["device-iot"]
+    stub_state = device.add_state(StubOpState(device=device.device))
+
+    payload = {
+        "device": "device-iot",
+        "msg": {
+            "data": {
+                "state": {"connected": True},
+                "op": {"command": [[0xAA, 0x01, 0x01]]},
+            }
+        },
+    }
+
+    await coordinator._handle_iot_update(("device-iot", payload))
+
+    connected_state = device.states["isConnected"]
+    assert connected_state.value is True
+    assert stub_state.commands == [[0xAA, 0x01, 0x01]]
 
 
 @pytest.mark.asyncio
