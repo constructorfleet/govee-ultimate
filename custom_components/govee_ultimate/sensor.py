@@ -8,11 +8,8 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_platform
-
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers import entity_platform
-import voluptuous as vol
 
 from .entity import (
     GoveeStateEntity,
