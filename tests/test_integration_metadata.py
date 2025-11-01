@@ -7,11 +7,18 @@ import json
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 def _load_json_pairs(path: Path) -> tuple[list[str], dict[str, Any]]:
     pairs = json.loads(path.read_text(), object_pairs_hook=lambda items: items)
     keys = [key for key, _ in pairs]
     return keys, dict(pairs)
+
+
+def _load_services_yaml() -> dict[str, Any]:
+    services_path = Path("custom_components/govee_ultimate/services.yaml")
+    return yaml.safe_load(services_path.read_text())
 
 
 def test_manifest_keys_sorted_and_issue_tracker_present() -> None:
@@ -31,6 +38,20 @@ def test_services_yaml_exists_for_registered_services() -> None:
 
     services_yaml = Path("custom_components/govee_ultimate/services.yaml")
     assert services_yaml.exists()
+
+
+def test_services_yaml_documents_ice_maker_schedule_service() -> None:
+    """The schedule service should be documented for the ice maker sensor."""
+
+    services = _load_services_yaml()
+
+    schedule_entry = services.get("set_schedule")
+    assert schedule_entry is not None
+    fields = schedule_entry.get("fields", {})
+    assert fields.get("enabled", {}).get("required") is True
+    for field_name in ("hour_start", "minute_start", "nugget_size"):
+        assert field_name in fields
+        assert fields[field_name].get("required") in (False, None)
 
 
 def test_config_schema_defined_for_async_setup() -> None:

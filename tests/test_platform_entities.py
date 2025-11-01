@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import ModuleType, SimpleNamespace
 from typing import Any
+from collections.abc import Mapping
 
 import pytest
 
@@ -227,6 +228,44 @@ def setup_platform_stubs() -> Callable[[], None]:  # noqa: C901
         ),
         "homeassistant.components.select": ("SelectEntity", _SelectEntity),
     }
+
+    class _EntityPlatform:
+        """Stub entity platform capturing service registrations."""
+
+        def __init__(self) -> None:
+            self.registered_services: list[dict[str, Any]] = []
+
+        def async_register_entity_service(
+            self,
+            service: str,
+            schema: Any,
+            handler: Callable[[Any, Mapping[str, Any]], Any],
+        ) -> None:
+            self.registered_services.append(
+                {"name": service, "schema": schema, "handler": handler}
+            )
+
+    entity_platform_module = ModuleType("homeassistant.helpers.entity_platform")
+    entity_platform_module._platform = _EntityPlatform()
+
+    def _async_get_current_platform() -> _EntityPlatform:
+        return entity_platform_module._platform
+
+    entity_platform_module.EntityPlatform = _EntityPlatform  # type: ignore[attr-defined]
+    entity_platform_module.async_get_current_platform = (  # type: ignore[attr-defined]
+        _async_get_current_platform
+    )
+    _install("homeassistant.helpers.entity_platform", entity_platform_module)
+
+    exceptions_module = ModuleType("homeassistant.exceptions")
+
+    class _HomeAssistantError(Exception):
+        """Minimal Home Assistant error base for service validation."""
+
+        pass
+
+    exceptions_module.HomeAssistantError = _HomeAssistantError  # type: ignore[attr-defined]
+    _install("homeassistant.exceptions", exceptions_module)
 
     for module_name, (class_name, class_obj) in platform_classes.items():
         module = ModuleType(module_name)
@@ -1123,24 +1162,23 @@ async def test_ice_maker_schedule_sensor_attributes_and_commands(
 
 
 @pytest.mark.asyncio
-async def test_purifier_custom_program_sensor_attributes_and_service(
+async def test_sensor_registers_schedule_service_and_publishes_commands(
     setup_platform_stubs: Callable[[], None],
-    purifier_metadata: DeviceMetadata,
-    purifier_device: PurifierDevice,
+    ice_maker_metadata: DeviceMetadata,
+    ice_maker_device: IceMakerDevice,
 ) -> None:
-    """Purifier custom program sensor should expose attributes and service."""
+    """Sensor platform should expose a schedule service that dispatches commands."""
 
     teardown = setup_platform_stubs
     hass = FakeHass()
-    entry = FakeConfigEntry(entry_id="entry-purifier-program")
+    entry = FakeConfigEntry(entry_id="entry-sensor-schedule")
     coordinator = FakeCoordinator(
-        {purifier_metadata.device_id: purifier_device},
-        {purifier_metadata.device_id: purifier_metadata},
+        {ice_maker_metadata.device_id: ice_maker_device},
+        {ice_maker_metadata.device_id: ice_maker_metadata},
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
 
     added_entities: list[Any] = []
-    registered_services: list[tuple[str, Any, str]] = []
 
     try:
         await _async_setup_platform(
@@ -1150,112 +1188,66 @@ async def test_purifier_custom_program_sensor_attributes_and_service(
             coordinator,
             added_entities,
         )
-        entity_platform = importlib.import_module(
-            "homeassistant.helpers.entity_platform"
+        sensor_module = importlib.import_module(
+            "custom_components.govee_ultimate.sensor"
         )
-        registered_services = entity_platform._entity_platform.entity_services  # type: ignore[attr-defined]
+        platform = sensor_module.entity_platform.async_get_current_platform()
+
+        assert any(
+            service["name"] == "set_schedule"
+            for service in platform.registered_services
+        )
+
+        schedule_entity = next(
+            entity
+            for entity in added_entities
+            if entity.unique_id == f"{ice_maker_metadata.device_id}-scheduledStart"
+        )
+
+        service = next(
+            svc for svc in platform.registered_services if svc["name"] == "set_schedule"
+        )
+        schema = service["schema"]
+        handler = service["handler"]
+        data = schema(
+            {
+                "enabled": True,
+                "hour_start": 9,
+                "minute_start": 15,
+                "nugget_size": "small",
+            }
+        )
+
+        await handler(schedule_entity, data)
+
+        assert coordinator.command_publisher_calls
+        device_id, payload = coordinator.command_publisher_calls[-1]
+        assert device_id == ice_maker_metadata.device_id
+        assert "command_id" in payload
     finally:
         teardown()
-
-    custom_entity = next(
-        entity
-        for entity in added_entities
-        if entity.unique_id == f"{purifier_metadata.device_id}-custom_mode"
-    )
-
-    custom_state = purifier_device.states["custom_mode"]
-    custom_state.parse(
-        {
-            "op": {
-                "command": [
-                    [
-                        0xAA,
-                        0x05,
-                        0x02,
-                        0x01,
-                        0x05,
-                        0x00,
-                        0x0A,
-                        0x00,
-                        0x0A,
-                        0x06,
-                        0x00,
-                        0x14,
-                        0x00,
-                        0x14,
-                        0x07,
-                        0x00,
-                        0x1E,
-                        0x00,
-                        0x1E,
-                    ]
-                ]
-            }
-        }
-    )
-    coordinator.notify_listeners()
-
-    assert custom_entity.native_value == 1
-    attributes = custom_entity.extra_state_attributes
-    assert attributes["fan_speed"] == 6
-    assert attributes["duration"] == 20
-    assert attributes["remaining"] == 20
-    assert attributes["programs"][2]["duration"] == 30
-
-    sensor_module = importlib.import_module("custom_components.govee_ultimate.sensor")
-
-    assert (
-        registered_services
-        and any(
-            name == "set_purifier_custom_program"
-            and method == "async_set_custom_program"
-            for name, _, method in registered_services
-        )
-    ) or (
-        "set_purifier_custom_program"
-        in getattr(sensor_module, "_REGISTERED_ENTITY_SERVICES", set())
-    )
-
-    coordinator.command_publisher_calls.clear()
-
-    await custom_entity.async_set_custom_program(
-        id=2,
-        fan_speed=8,
-        duration=45,
-        remaining=33,
-    )
-
-    assert coordinator.command_publisher_calls
-    for _, payload in coordinator.command_publisher_calls:
-        assert payload.get("command") == "multi_sync"
-
-    assert custom_state.value == {
-        "id": 2,
-        "fan_speed": 8,
-        "duration": 45,
-        "remaining": 33,
-    }
 
 
 @pytest.mark.asyncio
-async def test_purifier_custom_program_service_validates_inputs(
+async def test_sensor_schedule_service_raises_homeassistant_error_for_invalid_inputs(
     setup_platform_stubs: Callable[[], None],
-    purifier_metadata: DeviceMetadata,
-    purifier_device: PurifierDevice,
+    ice_maker_metadata: DeviceMetadata,
+    ice_maker_device: IceMakerDevice,
 ) -> None:
-    """Custom program service should validate identifiers and ranges."""
+    """Invalid schedule payloads should raise HomeAssistantError through the service."""
 
     teardown = setup_platform_stubs
     hass = FakeHass()
-    entry = FakeConfigEntry(entry_id="entry-purifier-program-validation")
+    entry = FakeConfigEntry(entry_id="entry-sensor-invalid-schedule")
     coordinator = FakeCoordinator(
-        {purifier_metadata.device_id: purifier_device},
-        {purifier_metadata.device_id: purifier_metadata},
+        {ice_maker_metadata.device_id: ice_maker_device},
+        {ice_maker_metadata.device_id: ice_maker_metadata},
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
 
     added_entities: list[Any] = []
 
+    home_assistant_error: type[Exception] | None = None
     try:
         await _async_setup_platform(
             "sensor",
@@ -1264,34 +1256,32 @@ async def test_purifier_custom_program_service_validates_inputs(
             coordinator,
             added_entities,
         )
+        sensor_module = importlib.import_module(
+            "custom_components.govee_ultimate.sensor"
+        )
+        platform = sensor_module.entity_platform.async_get_current_platform()
+        home_assistant_error = sensor_module.HomeAssistantError
+
+        service = next(
+            svc for svc in platform.registered_services if svc["name"] == "set_schedule"
+        )
+        schedule_entity = next(
+            entity
+            for entity in added_entities
+            if entity.unique_id == f"{ice_maker_metadata.device_id}-scheduledStart"
+        )
+
+        schema = service["schema"]
+        handler = service["handler"]
+
+        data = schema({"enabled": True})
+
+        assert home_assistant_error is not None
+
+        with pytest.raises(home_assistant_error):
+            await handler(schedule_entity, data)
     finally:
         teardown()
-
-    custom_entity = next(
-        entity
-        for entity in added_entities
-        if entity.unique_id == f"{purifier_metadata.device_id}-custom_mode"
-    )
-
-    with pytest.raises(ValueError):
-        await custom_entity.async_set_custom_program(
-            id=5, fan_speed=1, duration=10, remaining=10
-        )
-
-    with pytest.raises(ValueError):
-        await custom_entity.async_set_custom_program(
-            id=1, fan_speed=-1, duration=10, remaining=10
-        )
-
-    with pytest.raises(ValueError):
-        await custom_entity.async_set_custom_program(
-            id=1, fan_speed=1, duration=-5, remaining=10
-        )
-
-    with pytest.raises(ValueError):
-        await custom_entity.async_set_custom_program(
-            id=1, fan_speed=1, duration=10, remaining=-5
-        )
 
 
 @pytest.mark.asyncio

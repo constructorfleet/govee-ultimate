@@ -8,3 +8,31 @@ reauthenticate:
       description: Unique identifier of the config entry to reauthenticate.
       required: false
       example: entry-1234
+set_schedule:
+  name: Set scheduled start
+  description: Update the scheduled start configuration for a Govee ice maker.
+  target:
+    entity:
+      integration: govee_ultimate
+      domain: sensor
+  fields:
+    enabled:
+      name: Enabled
+      description: Whether the scheduled start should be active.
+      required: true
+      example: true
+    hour_start:
+      name: Start hour
+      description: Hour of day (0-23) to schedule when enabling the feature.
+      required: false
+      example: 9
+    minute_start:
+      name: Start minute
+      description: Minute of the hour (0-59) to schedule when enabling the feature.
+      required: false
+      example: 15
+    nugget_size:
+      name: Nugget size
+      description: Ice nugget size to use when the schedule runs.
+      required: false
+      example: MEDIUM
