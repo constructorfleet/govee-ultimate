@@ -191,6 +191,26 @@ def setup_platform_stubs() -> Callable[[], None]:  # noqa: C901
         ) -> None:  # pragma: no cover - stub
             raise NotImplementedError
 
+    entity_platform_module = ModuleType("homeassistant.helpers.entity_platform")
+
+    class _EntityPlatform:
+        def __init__(self) -> None:
+            self.entity_services: list[tuple[str, Any, str]] = []
+
+        def async_register_entity_service(
+            self, name: str, schema: Any, method: str
+        ) -> None:
+            self.entity_services.append((name, schema, method))
+
+    _entity_platform = _EntityPlatform()
+
+    def async_get_current_platform() -> _EntityPlatform:
+        return _entity_platform
+
+    entity_platform_module.async_get_current_platform = async_get_current_platform
+    entity_platform_module._entity_platform = _entity_platform  # type: ignore[attr-defined]
+    _install("homeassistant.helpers.entity_platform", entity_platform_module)
+
     platform_classes = {
         "homeassistant.components.light": ("LightEntity", _LightEntity),
         "homeassistant.components.humidifier": ("HumidifierEntity", _HumidifierEntity),
@@ -1065,6 +1085,178 @@ async def test_ice_maker_schedule_sensor_attributes_and_commands(
     assert coordinator.command_publisher_calls
     for _, payload in coordinator.command_publisher_calls:
         assert "state" not in payload
+
+
+@pytest.mark.asyncio
+async def test_purifier_custom_program_sensor_attributes_and_service(
+    setup_platform_stubs: Callable[[], None],
+    purifier_metadata: DeviceMetadata,
+    purifier_device: PurifierDevice,
+) -> None:
+    """Purifier custom program sensor should expose attributes and service."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-purifier-program")
+    coordinator = FakeCoordinator(
+        {purifier_metadata.device_id: purifier_device},
+        {purifier_metadata.device_id: purifier_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+    registered_services: list[tuple[str, Any, str]] = []
+
+    try:
+        await _async_setup_platform(
+            "sensor",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+        entity_platform = importlib.import_module(
+            "homeassistant.helpers.entity_platform"
+        )
+        registered_services = entity_platform._entity_platform.entity_services  # type: ignore[attr-defined]
+    finally:
+        teardown()
+
+    custom_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{purifier_metadata.device_id}-custom_mode"
+    )
+
+    custom_state = purifier_device.states["custom_mode"]
+    custom_state.parse(
+        {
+            "op": {
+                "command": [
+                    [
+                        0xAA,
+                        0x05,
+                        0x02,
+                        0x01,
+                        0x05,
+                        0x00,
+                        0x0A,
+                        0x00,
+                        0x0A,
+                        0x06,
+                        0x00,
+                        0x14,
+                        0x00,
+                        0x14,
+                        0x07,
+                        0x00,
+                        0x1E,
+                        0x00,
+                        0x1E,
+                    ]
+                ]
+            }
+        }
+    )
+    coordinator.notify_listeners()
+
+    assert custom_entity.native_value == 1
+    attributes = custom_entity.extra_state_attributes
+    assert attributes["fan_speed"] == 6
+    assert attributes["duration"] == 20
+    assert attributes["remaining"] == 20
+    assert attributes["programs"][2]["duration"] == 30
+
+    sensor_module = importlib.import_module("custom_components.govee_ultimate.sensor")
+
+    assert (
+        registered_services
+        and any(
+            name == "set_purifier_custom_program"
+            and method == "async_set_custom_program"
+            for name, _, method in registered_services
+        )
+    ) or (
+        "set_purifier_custom_program"
+        in getattr(sensor_module, "_REGISTERED_ENTITY_SERVICES", set())
+    )
+
+    coordinator.command_publisher_calls.clear()
+
+    await custom_entity.async_set_custom_program(
+        id=2,
+        fan_speed=8,
+        duration=45,
+        remaining=33,
+    )
+
+    assert coordinator.command_publisher_calls
+    for _, payload in coordinator.command_publisher_calls:
+        assert payload.get("command") == "multi_sync"
+
+    assert custom_state.value == {
+        "id": 2,
+        "fan_speed": 8,
+        "duration": 45,
+        "remaining": 33,
+    }
+
+
+@pytest.mark.asyncio
+async def test_purifier_custom_program_service_validates_inputs(
+    setup_platform_stubs: Callable[[], None],
+    purifier_metadata: DeviceMetadata,
+    purifier_device: PurifierDevice,
+) -> None:
+    """Custom program service should validate identifiers and ranges."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-purifier-program-validation")
+    coordinator = FakeCoordinator(
+        {purifier_metadata.device_id: purifier_device},
+        {purifier_metadata.device_id: purifier_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "sensor",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    custom_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{purifier_metadata.device_id}-custom_mode"
+    )
+
+    with pytest.raises(ValueError):
+        await custom_entity.async_set_custom_program(
+            id=5, fan_speed=1, duration=10, remaining=10
+        )
+
+    with pytest.raises(ValueError):
+        await custom_entity.async_set_custom_program(
+            id=1, fan_speed=-1, duration=10, remaining=10
+        )
+
+    with pytest.raises(ValueError):
+        await custom_entity.async_set_custom_program(
+            id=1, fan_speed=1, duration=-5, remaining=10
+        )
+
+    with pytest.raises(ValueError):
+        await custom_entity.async_set_custom_program(
+            id=1, fan_speed=1, duration=10, remaining=-5
+        )
 
 
 @pytest.mark.asyncio
