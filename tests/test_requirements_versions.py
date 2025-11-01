@@ -10,6 +10,7 @@ from packaging.requirements import Requirement
 REQUIREMENTS_PATH = Path("requirements.txt")
 
 EXPECTED_RUNTIME_PACKAGES = (
+    "paho-mqtt",
     "cryptography",
     "httpx",
     "packaging",

@@ -1,154 +1,233 @@
-"""MQTT IoT client for Home Assistant integration."""
+"""AWS IoT client used for account-level MQTT updates."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import timedelta
+import asyncio
 import json
+import os
+import ssl
+import tempfile
 import time
 import uuid
+from dataclasses import dataclass
+from datetime import timedelta
+from pathlib import Path
 from collections.abc import Callable, Sequence
 from typing import Any
+from urllib.parse import urlparse
 
 
-EMPTY_JSON = "{}"
+try:  # pragma: no cover - prefer real MQTT client when available
+    import paho.mqtt.client as _paho
+except ImportError:  # pragma: no cover - patched in unit tests
+    _paho = None  # type: ignore[assignment]
+
+
+_AMAZON_CA_PATH = (
+    Path(__file__).resolve().parents[2] / "lib" / "data" / "iot" / "iot.config.ts"
+)
 
 
 @dataclass(frozen=True, slots=True)
 class IoTClientConfig:
     """Runtime configuration for the IoT client."""
 
-    enabled: bool
-    state_topic: str
-    command_topic: str
-    refresh_topic: str
-    qos: int = 0
+    endpoint: str
+    account_topic: str
+    client_id: str
+    certificate: str
+    private_key: str
+    qos: int = 1
     command_ttl: timedelta = timedelta(seconds=30)
-    debug: bool = False
+
+
+def _load_amazon_root_ca() -> str:
+    """Load the Amazon Root CA certificate bundled with the project."""
+
+    contents = _AMAZON_CA_PATH.read_text(encoding="utf-8")
+    start = contents.find("`-----BEGIN CERTIFICATE-----")
+    end = contents.find("-----END CERTIFICATE-----`", start)
+    if start == -1 or end == -1:
+        raise ValueError("Amazon Root CA not found in iot.config.ts")
+    certificate = contents[start + 1 : end + len("-----END CERTIFICATE-----")]
+    return certificate.strip()
+
+
+def _create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
+    """Create a TLS context configured with the Amazon root CA."""
+
+    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    context.load_verify_locations(cadata=ca_certificate)
+    return context
+
+
+def _apply_cert_chain(
+    context: ssl.SSLContext, *, certificate: str, private_key: str
+) -> None:
+    """Load certificate material into ``context`` from in-memory values."""
+
+    cert_file = tempfile.NamedTemporaryFile("w", delete=False)
+    key_file = tempfile.NamedTemporaryFile("w", delete=False)
+    try:
+        cert_file.write(certificate.strip())
+        cert_file.flush()
+        key_file.write(private_key.strip())
+        key_file.flush()
+        context.load_cert_chain(certfile=cert_file.name, keyfile=key_file.name)
+    finally:
+        cert_file.close()
+        key_file.close()
+        os.unlink(cert_file.name)
+        os.unlink(key_file.name)
+
+
+def _create_paho_client(client_id: str) -> Any:
+    """Instantiate a Paho MQTT client for the provided ``client_id``."""
+
+    if _paho is None:  # pragma: no cover - dependency is optional in tests
+        raise RuntimeError("paho-mqtt is required for IoT connectivity")
+    return _paho.Client(client_id=client_id, protocol=getattr(_paho, "MQTTv311", 4))
+
+
+def _parse_endpoint(endpoint: str) -> tuple[str, int]:
+    """Extract host and port from an AWS IoT endpoint URI."""
+
+    parsed = urlparse(endpoint)
+    host = parsed.hostname or endpoint
+    port = parsed.port or 8883
+    return host, port
+
+
+def _build_refresh_payload(account_topic: str) -> dict[str, Any]:
+    """Create the refresh payload matching the TypeScript implementation."""
+
+    return {
+        "topic": account_topic,
+        "msg": {
+            "accountTopic": account_topic,
+            "cmd": "status",
+            "cmdVersion": 0,
+            "transaction": _new_transaction(),
+            "type": 0,
+        },
+    }
+
+
+def _new_transaction() -> str:
+    """Generate a transaction identifier compatible with the upstream service."""
+
+    millis = int(time.time() * 1000)
+    return f"u_{millis}"
 
 
 class IoTClient:
-    """Thin wrapper around Home Assistant's MQTT helper."""
+    """Async wrapper around the AWS IoT MQTT connection."""
 
     def __init__(
         self,
         *,
-        mqtt: Any,
         config: IoTClientConfig,
         on_device_update: Callable[[tuple[str, dict[str, Any]]], Any],
         logger: Any | None = None,
         monotonic: Callable[[], float] | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
-        """Bind MQTT helper, configuration, and update callback."""
+        """Bind configuration and callbacks for MQTT handling."""
 
-        self._mqtt = mqtt
         self._config = config
         self._on_device_update = on_device_update
         self._logger = logger
         self._monotonic = monotonic or time.monotonic
+        self._loop = loop or asyncio.get_event_loop()
+        self._mqtt_client: Any | None = None
+        self._device_filter: set[str] | None = None
         self._pending_commands: dict[str, float] = {}
-        self._subscriptions: dict[str, Callable[[], None]] = {}
-        self._state_topics: dict[str, str] = {}
-
-    async def async_start(self, device_ids: Sequence[str]) -> None:
-        """Subscribe to topics for ``device_ids`` if the client is enabled."""
-
-        if not self._config.enabled:
-            return
-        for device_id in device_ids:
-            await self._subscribe_device(device_id)
-
-    def _wrap_state_callback(self, device_id: str) -> Callable[[str, Any], Any]:
-        """Return an MQTT callback that routes payloads to the consumer."""
-
-        def _callback(topic: str, payload: Any) -> None:
-            data = self._decode_payload(device_id, payload)
-            self._emit_update(device_id, data)
-
-        return _callback
 
     @property
     def pending_commands(self) -> dict[str, float]:
-        """Expose a copy of pending command expiry timestamps."""
+        """Return a copy of the pending command expiry mapping."""
 
         return dict(self._pending_commands)
+
+    async def async_start(self, device_ids: Sequence[str] | None = None) -> None:
+        """Establish the MQTT connection and subscribe to the account topic."""
+
+        if self._mqtt_client is not None:
+            return
+
+        ca_certificate = _load_amazon_root_ca()
+        context = _create_ssl_context(ca_certificate)
+        _apply_cert_chain(
+            context,
+            certificate=self._config.certificate,
+            private_key=self._config.private_key,
+        )
+
+        client = _create_paho_client(self._config.client_id)
+        client.tls_set_context(context)
+        client.on_connect = self._handle_connect
+        client.on_message = self._handle_message
+        client.message_callback_add(self._config.account_topic, self._handle_message)
+        host, port = _parse_endpoint(self._config.endpoint)
+        client.connect_async(host, port, keepalive=60)
+        client.loop_start()
+
+        self._device_filter = set(device_ids) if device_ids else None
+        self._mqtt_client = client
 
     def set_update_callback(
         self, callback: Callable[[tuple[str, dict[str, Any]]], Any]
     ) -> None:
-        """Override the update callback used for state messages."""
+        """Replace the update callback used for device state notifications."""
 
         self._on_device_update = callback
 
-    def _emit_update(self, device_id: str, payload: Any) -> None:
-        """Dispatch a processed update to the registered callback."""
+    def _handle_connect(
+        self, client: Any, _userdata: Any, _flags: Any, rc: int
+    ) -> None:
+        """Subscribe to the account topic once the connection succeeds."""
+
+        if rc != 0:
+            if self._logger is not None:
+                self._logger.error("IoT connection failed with code %s", rc)
+            return
+        client.subscribe(self._config.account_topic, self._config.qos)
+
+    def _handle_message(self, _client: Any, _userdata: Any, message: Any) -> None:
+        """Process incoming MQTT messages on the account topic."""
+
+        try:
+            payload = self._decode_payload(message.payload)
+        except Exception:  # pragma: no cover - defensive parsing
+            if self._logger is not None:
+                self._logger.exception("Failed to decode IoT payload")
+            return
+
+        device_id = self._extract_device_id(payload)
+        if device_id is None:
+            return
+        if self._device_filter and device_id not in self._device_filter:
+            return
+
+        self._loop.call_soon_threadsafe(self._emit_update, device_id, payload)
+
+    @staticmethod
+    def _extract_device_id(payload: dict[str, Any]) -> str | None:
+        """Extract a device identifier from the IoT payload."""
+
+        if "device" in payload and isinstance(payload["device"], str):
+            return payload["device"]
+        if "deviceId" in payload and isinstance(payload["deviceId"], str):
+            return payload["deviceId"]
+        return None
+
+    def _emit_update(self, device_id: str, payload: dict[str, Any]) -> None:
+        """Dispatch updates to the registered callback."""
 
         self._on_device_update((device_id, payload))
 
-    async def async_update_config(
-        self, config: IoTClientConfig, device_ids: Sequence[str]
-    ) -> None:
-        """Update runtime configuration and refresh subscriptions."""
-
-        self._config = config
-        current = set(self._subscriptions)
-        desired = set(device_ids)
-
-        for removed in current - desired:
-            self._unsubscribe_device(removed)
-
-        if not self._config.enabled:
-            self._unsubscribe_all()
-            return
-
-        for device_id in device_ids:
-            topic = self._format_topic(self._config.state_topic, device_id)
-            if self._state_topics.get(device_id) == topic:
-                continue
-            self._unsubscribe_device(device_id)
-            await self._subscribe_device(device_id)
-
-    async def async_publish_command(
-        self, device_id: str, payload: dict[str, Any], *, retain: bool = False
-    ) -> str:
-        """Publish ``payload`` to the device command topic and track expiry."""
-
-        if not self._config.enabled:
-            msg = "IoT client is disabled"
-            raise RuntimeError(msg)
-
-        command_id = payload.get("command_id") or uuid.uuid4().hex
-        message = dict(payload)
-        message["command_id"] = command_id
-        topic = self._format_topic(self._config.command_topic, device_id)
-        expires_at = self._monotonic() + self._config.command_ttl.total_seconds()
-        self._pending_commands[command_id] = expires_at
-        await self._mqtt.async_publish(
-            topic,
-            json.dumps(message),
-            qos=self._config.qos,
-            retain=retain,
-        )
-        return command_id
-
-    async def async_request_refresh(self, device_id: str) -> None:
-        """Publish a refresh request for ``device_id``."""
-
-        if not self._config.enabled:
-            msg = "IoT client is disabled"
-            raise RuntimeError(msg)
-
-        topic = self._format_topic(self._config.refresh_topic, device_id)
-        await self._mqtt.async_publish(topic, EMPTY_JSON, qos=self._config.qos)
-
-    @staticmethod
-    def _format_topic(template: str, device_id: str) -> str:
-        """Format an MQTT topic template with ``device_id`` safely."""
-
-        return template.format(device_id=device_id)
-
     def expire_pending_commands(self) -> list[str]:
-        """Remove expired command entries and return their identifiers."""
+        """Remove expired commands and return their identifiers."""
 
         now = self._monotonic()
         expired = [
@@ -157,49 +236,99 @@ class IoTClient:
             if expiry <= now
         ]
         for command_id in expired:
-            del self._pending_commands[command_id]
-        if expired and self._logger and self._config.debug:
+            self._pending_commands.pop(command_id, None)
+        if expired and self._logger is not None:
             self._logger.debug("Expired IoT commands: %s", expired)
         return expired
 
-    def _decode_payload(self, device_id: str, payload: Any) -> Any:
-        """Best-effort JSON decode for MQTT payloads."""
+    def _track_command(self, command_id: str) -> str:
+        """Track ``command_id`` for expiry management in tests."""
 
-        data = payload
-        if isinstance(payload, bytes | bytearray):
-            data = payload.decode()
-        if isinstance(data, str):
-            try:
-                return json.loads(data)
-            except json.JSONDecodeError:
-                if self._logger and self._config.debug:
-                    self._logger.debug(
-                        "Failed to decode IoT payload for %s: %s", device_id, data
-                    )
-        return data
+        expires_at = self._monotonic() + self._config.command_ttl.total_seconds()
+        self._pending_commands[command_id] = expires_at
+        return command_id
 
-    async def _subscribe_device(self, device_id: str) -> None:
-        """Subscribe to the state topic for ``device_id``."""
+    async def async_publish_command(
+        self, topic: str, payload: dict[str, Any], *, retain: bool = False
+    ) -> str:
+        """Publish a command message to ``topic`` and track expiry."""
 
-        topic = self._format_topic(self._config.state_topic, device_id)
-        callback = self._wrap_state_callback(device_id)
-        unsubscribe = await self._mqtt.async_subscribe(
-            topic, callback, qos=self._config.qos
+        if self._mqtt_client is None:
+            raise RuntimeError("IoT client is not connected")
+
+        command_id = payload.get("command_id") or uuid.uuid4().hex
+        message = self._build_command_message(topic, payload, command_id)
+        expires_at = self._monotonic() + self._config.command_ttl.total_seconds()
+        self._pending_commands[command_id] = expires_at
+        self._mqtt_client.publish(
+            topic,
+            json.dumps(message),
+            qos=self._config.qos,
+            retain=retain,
         )
-        self._state_topics[device_id] = topic
-        if callable(unsubscribe):
-            self._subscriptions[device_id] = unsubscribe
+        return command_id
 
-    def _unsubscribe_device(self, device_id: str) -> None:
-        """Remove any stored subscription for ``device_id``."""
+    def _build_command_message(
+        self, topic: str, payload: dict[str, Any], command_id: str
+    ) -> dict[str, Any]:
+        """Create a command payload matching the upstream IoT contract."""
 
-        unsubscribe = self._subscriptions.pop(device_id, None)
-        if unsubscribe is not None:
-            unsubscribe()
-        self._state_topics.pop(device_id, None)
+        if "topic" in payload and "msg" in payload:
+            message = json.loads(json.dumps(payload))
+        else:
+            message = {
+                "topic": topic,
+                "msg": {
+                    "accountTopic": self._config.account_topic,
+                    "cmd": payload.get("cmd") or "ptReal",
+                    "cmdVersion": payload.get("cmdVersion")
+                    or payload.get("cmd_version", 0),
+                    "data": payload.get("data", payload),
+                    "transaction": _new_transaction(),
+                    "type": payload.get("type", 1),
+                },
+            }
+        msg = message.setdefault("msg", {})
+        if isinstance(msg, dict):
+            msg.setdefault("accountTopic", self._config.account_topic)
+            msg.setdefault("transaction", _new_transaction())
+        message.setdefault("topic", topic)
+        message.setdefault("commandId", command_id)
+        return message
 
-    def _unsubscribe_all(self) -> None:
-        """Unsubscribe from all tracked device topics."""
+    async def async_request_refresh(self, topic: str) -> None:
+        """Publish a refresh request to ``topic``."""
 
-        for device_id in list(self._subscriptions):
-            self._unsubscribe_device(device_id)
+        if self._mqtt_client is None:
+            raise RuntimeError("IoT client is not connected")
+
+        payload = _build_refresh_payload(self._config.account_topic)
+        payload["topic"] = topic
+        self._mqtt_client.publish(
+            topic,
+            json.dumps(payload),
+            qos=self._config.qos,
+            retain=False,
+        )
+
+    def _decode_payload(self, payload: bytes | bytearray | str) -> dict[str, Any]:
+        """Decode a JSON payload from the MQTT broker."""
+
+        if isinstance(payload, (bytes, bytearray)):
+            text = payload.decode("utf-8")
+        else:
+            text = str(payload)
+        decoded = json.loads(text)
+        if not isinstance(decoded, dict):
+            raise TypeError("IoT payload must be an object")
+        return decoded
+
+    async def async_stop(self) -> None:
+        """Disconnect the MQTT client and stop the network loop."""
+
+        if self._mqtt_client is None:
+            return
+        client = self._mqtt_client
+        self._mqtt_client = None
+        client.loop_stop()
+        client.disconnect()

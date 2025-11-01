@@ -87,12 +87,6 @@ TOKEN_REFRESH_INTERVAL = timedelta(minutes=5)
 _REAUTH_SERVICE_REGISTERED = False
 _SERVICES_KEY = f"{DOMAIN}_services_registered"
 
-_DEFAULT_IOT_TOPICS: dict[str, str] = {
-    "iot_state_topic": "govee/{device_id}/state",
-    "iot_command_topic": "govee/{device_id}/command",
-    "iot_refresh_topic": "govee/{device_id}/refresh",
-}
-
 if httpx is not None:  # pragma: no branch - defined when httpx is available
     HTTP_ERROR = httpx.HTTPError
 else:  # pragma: no cover - stubbed during unit tests
@@ -159,7 +153,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     device_registry = _get_device_registry(hass)
     entity_registry = _get_entity_registry(hass)
     iot_client, iot_state_enabled, iot_command_enabled, iot_refresh_enabled = (
-        await _async_prepare_iot_runtime(hass, entry)
+        await _async_prepare_iot_runtime(hass, entry, auth)
     )
 
     coordinator_class = _get_coordinator_class()
@@ -446,7 +440,7 @@ async def _async_stop_iot_client(client: Any) -> None:
 
 
 async def _async_prepare_iot_runtime(
-    hass: Any, entry: Any
+    hass: Any, entry: Any, auth: Any
 ) -> tuple[Any | None, bool, bool, bool]:
     """Create the IoT client when enabled in the configuration entry."""
 
@@ -466,50 +460,48 @@ async def _async_prepare_iot_runtime(
     command_enabled = _flag("iot_command_enabled", "enable_iot_commands")
     refresh_enabled = _flag("iot_refresh_enabled", "enable_iot_refresh")
 
+    if not (state_enabled or command_enabled or refresh_enabled):
+        return None, False, False, False
+
     try:
         from .iot_client import IoTClient, IoTClientConfig
     except ImportError:  # pragma: no cover - dependency is optional in tests
         return None, False, False, False
 
-    mqtt_client = await _async_get_mqtt_client(hass)
-    if mqtt_client is None:
+    get_bundle = getattr(auth, "async_get_iot_bundle", None)
+    if not callable(get_bundle):
         return None, False, False, False
 
-    state_topic = options.get("iot_state_topic", _DEFAULT_IOT_TOPICS["iot_state_topic"])
-    command_topic = options.get(
-        "iot_command_topic", _DEFAULT_IOT_TOPICS["iot_command_topic"]
-    )
-    refresh_topic = options.get(
-        "iot_refresh_topic", _DEFAULT_IOT_TOPICS["iot_refresh_topic"]
-    )
+    bundle = await get_bundle()
+    if bundle is None:
+        return None, False, False, False
 
+    account_id = getattr(bundle, "account_id", None)
+    raw_client_id = getattr(bundle, "client_id", None)
+    endpoint = getattr(bundle, "endpoint", None)
+    account_topic = getattr(bundle, "topic", None)
+    certificate = getattr(bundle, "certificate", None)
+    private_key = getattr(bundle, "private_key", None)
+
+    if not all([raw_client_id, endpoint, account_topic, certificate, private_key]):
+        return None, False, False, False
+
+    client_id = (
+        f"AP/{account_id}/a{raw_client_id}" if account_id is not None else raw_client_id
+    )
     config = IoTClientConfig(
-        enabled=state_enabled or command_enabled or refresh_enabled,
-        state_topic=state_topic,
-        command_topic=command_topic,
-        refresh_topic=refresh_topic,
+        endpoint=endpoint,
+        account_topic=account_topic,
+        client_id=client_id,
+        certificate=certificate,
+        private_key=private_key,
     )
 
     iot_client = IoTClient(
-        mqtt=mqtt_client,
         config=config,
         on_device_update=lambda update: None,
     )
     return iot_client, state_enabled, command_enabled, refresh_enabled
-
-
-async def _async_get_mqtt_client(hass: Any) -> Any | None:
-    """Attempt to retrieve the Home Assistant MQTT client."""
-
-    try:  # pragma: no cover - optional dependency in tests
-        from homeassistant.components import mqtt
-    except ImportError:
-        return None
-
-    getter = getattr(mqtt, "async_get_mqtt", None)
-    if getter is None:
-        return None
-    return await getter(hass)
 
 
 async def _async_ensure_reauth_service(hass: Any) -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Awaitable, Callable
 import sys
 from types import ModuleType, SimpleNamespace
@@ -1284,10 +1283,10 @@ async def test_async_setup_entry_enables_iot_client_when_requested(
 
 
 @pytest.mark.asyncio
-async def test_async_prepare_iot_runtime_uses_options(
+async def test_async_prepare_iot_runtime_uses_iot_bundle(
     tmp_path, tmp_path_factory, request, monkeypatch
 ) -> None:
-    """IoT runtime preparation should honour entry options for topics and flags."""
+    """IoT runtime preparation should build the client from the auth bundle."""
 
     hass = FakeHass(config_dir=str(tmp_path))
     entry = FakeConfigEntry(
@@ -1305,32 +1304,46 @@ async def test_async_prepare_iot_runtime_uses_options(
         "iot_state_enabled": False,
         "iot_command_enabled": True,
         "iot_refresh_enabled": False,
-        "iot_state_topic": "state/{device_id}",
-        "iot_command_topic": "command/{device_id}",
-        "iot_refresh_topic": "refresh/{device_id}",
     }
 
-    fake_mqtt = SimpleNamespace(published=[])
+    bundle = SimpleNamespace(
+        account_id="acct-1",
+        client_id="client-1",
+        topic="accounts/123",
+        endpoint="ssl://broker.example:8883",
+        certificate="CERT",
+        private_key="KEY",
+    )
 
-    async def fake_get_mqtt(hass: Any) -> Any:
-        return fake_mqtt
+    captured: dict[str, Any] = {}
+
+    class FakeIoT:
+        def __init__(self, *, config: Any, on_device_update: Any) -> None:
+            captured["config"] = config
+            captured["callback"] = on_device_update
 
     monkeypatch.setattr(
-        integration, "_async_get_mqtt_client", fake_get_mqtt, raising=False
+        "custom_components.govee.iot_client.IoTClient",
+        FakeIoT,
+        raising=False,
     )
 
-    iot_client, state_enabled, command_enabled, refresh_enabled = (
-        await integration._async_prepare_iot_runtime(hass, entry)
+    class FakeAuth:
+        async def async_get_iot_bundle(self) -> Any | None:
+            return bundle
+
+    client, state_enabled, command_enabled, refresh_enabled = (
+        await integration._async_prepare_iot_runtime(hass, entry, FakeAuth())
     )
 
+    assert isinstance(client, FakeIoT)
     assert state_enabled is False
     assert command_enabled is True
     assert refresh_enabled is False
-
-    config = getattr(iot_client, "_config")
-    assert config.state_topic == "state/{device_id}"
-    assert config.command_topic == "command/{device_id}"
-    assert config.refresh_topic == "refresh/{device_id}"
+    assert captured["config"].account_topic == "accounts/123"
+    assert captured["config"].endpoint == "ssl://broker.example:8883"
+    assert captured["config"].certificate == "CERT"
+    assert captured["config"].private_key == "KEY"
 
 
 @pytest.mark.asyncio
@@ -1357,6 +1370,15 @@ async def test_mqtt_flow_updates_state_and_publishes_commands(
         "iot_refresh_enabled": False,
     }
 
+    bundle = SimpleNamespace(
+        account_id="acct-1",
+        client_id="client-1",
+        endpoint="ssl://broker.example:8883",
+        topic="accounts/123",
+        certificate="CERT",
+        private_key="KEY",
+    )
+
     class FakeClient:
         async def aclose(self) -> None:
             pass
@@ -1369,6 +1391,9 @@ async def test_mqtt_flow_updates_state_and_publishes_commands(
 
         async def async_initialize(self) -> None:
             pass
+
+        async def async_get_iot_bundle(self) -> Any | None:
+            return bundle
 
     class FakeApiClient:
         def __init__(self, hass: Any, client: Any, auth: Any) -> None:
@@ -1383,13 +1408,7 @@ async def test_mqtt_flow_updates_state_and_publishes_commands(
                     "category": "Home Appliances",
                     "category_group": "Air Treatment",
                     "device_name": "Humidifier",
-                    "channels": {
-                        "iot": {
-                            "state_topic": "state/device-iot",
-                            "command_topic": "command/device-iot",
-                            "refresh_topic": "refresh/device-iot",
-                        }
-                    },
+                    "channels": {"iot": {"topic": "accounts/123/devices/device-iot"}},
                 }
             ]
 
@@ -1405,44 +1424,34 @@ async def test_mqtt_flow_updates_state_and_publishes_commands(
         async def async_get_or_create(self, *args: Any, **kwargs: Any) -> Any:
             return SimpleNamespace()
 
-    class FakeMQTT:
-        def __init__(self) -> None:
-            self.subscriptions: list[tuple[str, Callable[..., Any], int]] = []
-            self.published: list[tuple[str, str, int, bool]] = []
+    class FakeIoTClient:
+        def __init__(self, *, config: Any, on_device_update: Any) -> None:
+            self.config = config
+            self.update_callback = on_device_update
+            self.started = 0
+            self.commands: list[tuple[str, dict[str, Any]]] = []
+            self.refreshes: list[str] = []
 
-        async def async_subscribe(
-            self, topic: str, callback: Callable[[str, Any], Any], qos: int = 0
-        ) -> Callable[[], None]:
-            self.subscriptions.append((topic, callback, qos))
-            return lambda: None
+        async def async_start(self) -> None:
+            self.started += 1
 
-        async def async_publish(
-            self, topic: str, payload: str, qos: int = 0, retain: bool = False
+        def set_update_callback(
+            self, callback: Callable[[tuple[str, dict[str, Any]]], Any]
         ) -> None:
-            self.published.append((topic, payload, qos, retain))
+            self.update_callback = callback
 
-    mqtt = FakeMQTT()
+        async def async_publish_command(
+            self, topic: str, payload: dict[str, Any], *, retain: bool = False
+        ) -> str:
+            self.commands.append((topic, dict(payload)))
+            return "cmd-1"
 
-    async def fake_get_mqtt(hass: Any) -> Any:
-        return mqtt
-
-    async def fake_get_async_client(
-        hass: Any, *, verify_ssl: bool = True
-    ) -> FakeClient:
-        return FakeClient()
+        async def async_request_refresh(self, topic: str) -> None:
+            self.refreshes.append(topic)
 
     monkeypatch.setattr(integration, "_get_auth_class", lambda: FakeAuth, raising=False)
     monkeypatch.setattr(
         integration, "_get_device_client_class", lambda: FakeApiClient, raising=False
-    )
-    monkeypatch.setattr(
-        sys.modules["homeassistant.helpers.httpx_client"],
-        "get_async_client",
-        fake_get_async_client,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        integration, "_async_get_mqtt_client", fake_get_mqtt, raising=False
     )
     monkeypatch.setattr(
         integration,
@@ -1457,17 +1466,48 @@ async def test_mqtt_flow_updates_state_and_publishes_commands(
         raising=False,
     )
 
+    iot_instances: list[FakeIoTClient] = []
+
+    def _fake_iot_factory(*, config: Any, on_device_update: Any) -> FakeIoTClient:
+        client = FakeIoTClient(config=config, on_device_update=on_device_update)
+        iot_instances.append(client)
+        return client
+
+    monkeypatch.setattr(
+        "custom_components.govee.iot_client.IoTClient",
+        _fake_iot_factory,
+        raising=False,
+    )
+
+    async def fake_get_async_client(
+        hass: Any, *, verify_ssl: bool = True
+    ) -> FakeClient:
+        return FakeClient()
+
+    monkeypatch.setattr(
+        sys.modules["homeassistant.helpers.httpx_client"],
+        "get_async_client",
+        fake_get_async_client,
+        raising=False,
+    )
+
     assert await integration.async_setup_entry(hass, entry) is True
 
     stored = hass.data[DOMAIN][entry.entry_id]
     coordinator = stored["coordinator"]
+    assert iot_instances
+    iot_client = iot_instances[0]
+    assert iot_client.started == 1
+    assert iot_client.config.account_topic == "accounts/123"
 
-    assert mqtt.subscriptions
-    topic, callback, qos = mqtt.subscriptions[0]
-    assert topic == "govee/device-iot/state"
-    assert qos == 0
+    publisher = coordinator.get_command_publisher("device-iot")
+    await publisher({"opcode": "0x20"})
+    assert iot_client.commands
+    command_topic, payload = iot_client.commands[0]
+    assert command_topic == "accounts/123/devices/device-iot"
 
-    callback(topic, json.dumps({"power": {"isOn": True}}))
+    callback = iot_client.update_callback
+    callback(("device-iot", {"power": {"isOn": True}}))
     await asyncio.sleep(0)
     device = coordinator.devices["device-iot"]
     assert device.states["power"].value is True
@@ -1475,11 +1515,10 @@ async def test_mqtt_flow_updates_state_and_publishes_commands(
     publisher = coordinator.get_command_publisher("device-iot", channel="iot")
     await publisher({"command_id": "cmd-1", "payload": "value"})
 
-    assert mqtt.published
-    published_topic, payload, qos, retain = mqtt.published[0]
-    assert published_topic == "govee/device-iot/command"
-    assert qos == 0
-    assert retain is False
+    assert len(iot_client.commands) == 2
+    command_topic, payload = iot_client.commands[1]
+    assert command_topic == "accounts/123/devices/device-iot"
+    assert payload["command_id"] == "cmd-1"
 
 
 @pytest.mark.asyncio
