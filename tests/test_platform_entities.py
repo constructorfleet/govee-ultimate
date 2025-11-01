@@ -195,6 +195,26 @@ def setup_platform_stubs() -> Callable[[], None]:  # noqa: C901
         ) -> None:  # pragma: no cover - stub
             raise NotImplementedError
 
+    entity_platform_module = ModuleType("homeassistant.helpers.entity_platform")
+
+    class _EntityPlatform:
+        def __init__(self) -> None:
+            self.entity_services: list[tuple[str, Any, str]] = []
+
+        def async_register_entity_service(
+            self, name: str, schema: Any, method: str
+        ) -> None:
+            self.entity_services.append((name, schema, method))
+
+    _entity_platform = _EntityPlatform()
+
+    def async_get_current_platform() -> _EntityPlatform:
+        return _entity_platform
+
+    entity_platform_module.async_get_current_platform = async_get_current_platform
+    entity_platform_module._entity_platform = _entity_platform  # type: ignore[attr-defined]
+    _install("homeassistant.helpers.entity_platform", entity_platform_module)
+
     platform_classes = {
         "homeassistant.components.light": ("LightEntity", _LightEntity),
         "homeassistant.components.humidifier": ("HumidifierEntity", _HumidifierEntity),

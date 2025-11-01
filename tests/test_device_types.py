@@ -905,6 +905,7 @@ def test_purifier_mode_states_expose_diagnostic_entities(
     assert custom_entity.platform == "sensor"
     assert custom_entity.entity_category is EntityCategory.DIAGNOSTIC
     assert custom_entity.state is custom_state
+    assert custom_entity.translation_key == "purifier_custom_program"
 
     custom_state.parse(
         {
