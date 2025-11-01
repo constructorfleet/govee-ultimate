@@ -56,7 +56,9 @@ def _load_amazon_root_ca() -> str:
 def _create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
     """Create a TLS context configured with the Amazon root CA."""
 
-    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
     context.load_verify_locations(cadata=ca_certificate)
     return context
 
@@ -314,7 +316,7 @@ class IoTClient:
     def _decode_payload(self, payload: bytes | bytearray | str) -> dict[str, Any]:
         """Decode a JSON payload from the MQTT broker."""
 
-        if isinstance(payload, (bytes, bytearray)):
+        if isinstance(payload, bytes | bytearray):
             text = payload.decode("utf-8")
         else:
             text = str(payload)

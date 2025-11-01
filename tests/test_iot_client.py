@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import ssl
 from collections.abc import Callable
 from datetime import timedelta
@@ -167,6 +168,41 @@ async def test_iot_client_connects_with_tls_and_subscribes(
     assert fake_client.tls_context.ca_data == "FAKE-CA"
     assert fake_client.tls_context.cert_chain is not None
     assert updates == []
+
+
+def test_create_ssl_context_validates_server_certificates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TLS contexts must validate the remote server certificate chain."""
+
+    import custom_components.govee.iot_client as iot_client
+
+    importlib.reload(iot_client)
+
+    recorded: dict[str, ssl.Purpose] = {}
+
+    class InspectContext(FakeSSLContext):
+        def __init__(self) -> None:
+            super().__init__()
+            self.check_hostname = True
+            self.verify_mode = ssl.CERT_REQUIRED
+
+    def _fake_create_default_context(purpose: ssl.Purpose) -> InspectContext:
+        recorded["purpose"] = purpose
+        return InspectContext()
+
+    monkeypatch.setattr(
+        iot_client.ssl,
+        "create_default_context",
+        _fake_create_default_context,
+    )
+
+    context = iot_client._create_ssl_context("CA-DATA")
+
+    assert recorded["purpose"] == ssl.Purpose.SERVER_AUTH
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.ca_data == "CA-DATA"
 
 
 @pytest.mark.asyncio
