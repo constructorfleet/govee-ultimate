@@ -35,6 +35,11 @@
       "early_warning_setting": {
         "name": "Early warning setting"
       }
+    },
+    "select": {
+      "scene_mode": {
+        "name": "Scene mode"
+      }
     }
   }
 }
