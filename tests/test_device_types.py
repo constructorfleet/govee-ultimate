@@ -1084,6 +1084,8 @@ def test_meat_thermometer_registers_probes_and_presets(
     assert ha_entities["buzzer"].translation_key == "buzzer"
     assert ha_entities["temperatureUnit"].platform == "sensor"
     assert ha_entities["temperatureUnit"].translation_key == "temperature_unit"
+    assert ha_entities["earlyWarning"].platform == "sensor"
+    assert ha_entities["earlyWarning"].entity_category == EntityCategory.DIAGNOSTIC
     assert ha_entities["earlyWarningEnabled"].platform == "binary_sensor"
     assert ha_entities["earlyWarningEnabled"].entity_category == EntityCategory.CONFIG
     assert ha_entities["earlyWarningEnabled"].translation_key == "early_warning_enabled"

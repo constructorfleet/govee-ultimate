@@ -45,6 +45,9 @@ from custom_components.govee_ultimate.coordinator import DeviceMetadata
 from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
 from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
 from custom_components.govee_ultimate.device_types.ice_maker import IceMakerDevice
+from custom_components.govee_ultimate.device_types.meat_thermometer import (
+    MeatThermometerDevice,
+)
 from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
 from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
 from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
@@ -418,6 +421,38 @@ def air_quality_device(air_quality_metadata: DeviceMetadata) -> AirQualityDevice
         model_name=air_quality_metadata.device_name,
     )
     return AirQualityDevice(model)
+
+
+@pytest.fixture
+def meat_thermometer_metadata() -> DeviceMetadata:
+    """Return metadata for meat thermometer platform tests."""
+
+    return DeviceMetadata(
+        device_id="meat-thermometer-1",
+        model="H7480",
+        sku="H7480",
+        category="Home Improvement",
+        category_group="Kitchen",
+        device_name="WiFi Meat Thermometer",
+        manufacturer="Govee",
+        channels={"iot": {"topic": "state"}},
+    )
+
+
+@pytest.fixture
+def meat_thermometer_device(
+    meat_thermometer_metadata: DeviceMetadata,
+) -> MeatThermometerDevice:
+    """Return a configured meat thermometer device."""
+
+    model = SimpleNamespace(
+        model=meat_thermometer_metadata.model,
+        sku=meat_thermometer_metadata.sku,
+        category=meat_thermometer_metadata.category,
+        category_group=meat_thermometer_metadata.category_group,
+        model_name=meat_thermometer_metadata.device_name,
+    )
+    return MeatThermometerDevice(model)
 
 
 @dataclass
@@ -1320,6 +1355,54 @@ async def test_air_quality_sensors_register_measurement_entities(
     assert temperature_entity.native_value == {"current": 21.5}
     assert humidity_entity.native_value == {"current": 45}
     assert pm25_entity.native_value == {"current": 8}
+
+
+@pytest.mark.asyncio
+async def test_meat_thermometer_early_warning_sensor_exposes_full_state(
+    setup_platform_stubs: Callable[[], None],
+    meat_thermometer_metadata: DeviceMetadata,
+    meat_thermometer_device: MeatThermometerDevice,
+) -> None:
+    """Meat thermometer early warning sensor should surface parsed metadata."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-meat-thermometer-sensor")
+    coordinator = FakeCoordinator(
+        {meat_thermometer_metadata.device_id: meat_thermometer_device},
+        {meat_thermometer_metadata.device_id: meat_thermometer_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "sensor",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    early_warning_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{meat_thermometer_metadata.device_id}-earlyWarning"
+    )
+
+    early_warning_state = meat_thermometer_device.states["earlyWarning"]
+    early_warning_state._update_state({"enabled": True, "setting": "MEDIUM"})
+    coordinator.notify_listeners()
+
+    assert early_warning_entity.native_value == "MEDIUM"
+    assert early_warning_entity.extra_state_attributes == {
+        "enabled": True,
+        "setting": "MEDIUM",
+    }
+    assert early_warning_entity.entity_category == "diagnostic"
 
 
 @pytest.mark.asyncio

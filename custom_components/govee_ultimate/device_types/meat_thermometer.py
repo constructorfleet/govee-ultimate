@@ -47,6 +47,11 @@ class MeatThermometerDevice(BaseDevice):
         )
 
         early_warning = self.add_state(EarlyWarningState(device=device_model))
+        self.expose_entity(
+            platform="sensor",
+            state=early_warning,
+            entity_category=EntityCategory.DIAGNOSTIC,
+        )
         early_warning_enabled = self.add_state(
             EarlyWarningEnabledState(source=early_warning)
         )
