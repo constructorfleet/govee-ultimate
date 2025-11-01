@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -13,7 +13,7 @@ from .entity import (
     build_platform_entities,
     resolve_coordinator,
 )
-from .state.states import IceMakerScheduledStartState
+from .state.states import IceMakerScheduledStartState, SceneModeState
 
 
 class GoveeSensorEntity(GoveeStateEntity, SensorEntity):
@@ -141,12 +141,52 @@ class GoveeIceMakerScheduledStartSensorEntity(GoveeSensorEntity):
             await publisher(command_payload)
 
 
+class GoveeSceneModeSensorEntity(GoveeSensorEntity):
+    """Expose scene metadata for RGB light devices."""
+
+    _state: SceneModeState
+
+    def _current_scene_value(self) -> Mapping[str, Any] | None:
+        """Return the current scene metadata when available."""
+
+        value = self._state.value
+        if isinstance(value, Mapping):
+            return value
+        return None
+
+    @property
+    def native_value(self) -> Any:
+        """Return the active scene identifier when available."""
+
+        value = self._current_scene_value()
+        if value is None:
+            return None
+        scene_id = value.get("sceneId")
+        if isinstance(scene_id, int):
+            return scene_id
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the latest scene identifier metadata."""
+
+        value = self._current_scene_value()
+        if value is None:
+            return {}
+        return {
+            "sceneId": value.get("sceneId"),
+            "sceneParamId": value.get("sceneParamId"),
+        }
+
+
 def _sensor_entity_factory(coordinator: Any, device_id: str, entity: Any) -> Any:
     """Return a specialised entity for known sensor state types."""
 
     state = entity.state
     if isinstance(state, IceMakerScheduledStartState):
         return GoveeIceMakerScheduledStartSensorEntity(coordinator, device_id, entity)
+    if isinstance(state, SceneModeState):
+        return GoveeSceneModeSensorEntity(coordinator, device_id, entity)
     return GoveeSensorEntity(coordinator, device_id, entity)
 
 

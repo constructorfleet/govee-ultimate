@@ -697,6 +697,10 @@ def test_rgb_light_registers_expected_states(
     assert ha_entities["colorTemperature"].platform == "light"
     assert ha_entities["isConnected"].platform == "binary_sensor"
     assert ha_entities["active"].platform == "binary_sensor"
+    scene_mode_sensor = ha_entities["sceneMode"]
+    assert scene_mode_sensor.platform == "sensor"
+    assert scene_mode_sensor.translation_key == "scene_mode_metadata"
+    assert scene_mode_sensor.state is states["sceneMode"]
     scene_select = ha_entities["lightEffect"]
     assert scene_select.platform == "select"
     assert scene_select.translation_key == "scene_mode"
