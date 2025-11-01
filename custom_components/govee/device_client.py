@@ -170,6 +170,12 @@ class DeviceListClient:
                 GoveeDevice.from_storage(item) for item in cached.get("devices", [])
             ]
 
+    async def async_get_devices(self) -> list[dict[str, Any]]:
+        """Return metadata payloads compatible with ``DeviceMetadata``."""
+
+        devices = await self.async_fetch_devices()
+        return [self._adapt_device(device) for device in devices]
+
     async def _migrate_legacy_storage(self) -> None:
         """Migrate persisted device storage files from the legacy namespace."""
 
@@ -217,6 +223,40 @@ class DeviceListClient:
             bluetooth=self._parse_bluetooth(settings),
             state=self._parse_state(settings, data),
         )
+
+    def _adapt_device(self, device: GoveeDevice) -> dict[str, Any]:
+        """Convert a ``GoveeDevice`` into coordinator metadata payload."""
+
+        channels: dict[str, dict[str, Any]] = {}
+        if isinstance(device.iot_topic, str) and device.iot_topic:
+            channels["iot"] = {"topic": device.iot_topic}
+        if device.bluetooth is not None:
+            channels["ble"] = {"mac": device.bluetooth.mac}
+
+        name = device.name or device.model
+
+        payload = {
+            "device_id": device.id,
+            "model": device.model,
+            "sku": device.model,
+            "category": "",
+            "category_group": "",
+            "device_name": name,
+            "manufacturer": "Govee",
+            "channels": channels,
+        }
+
+        for alias, key in (
+            ("deviceId", "device_id"),
+            ("deviceModel", "model"),
+            ("deviceSku", "sku"),
+            ("categoryGroup", "category_group"),
+            ("category_group_name", "category_group"),
+            ("deviceName", "device_name"),
+        ):
+            payload[alias] = payload[key]
+
+        return payload
 
     def _parse_wifi(self, settings: dict[str, Any]) -> WiFiInfo | None:
         if not (

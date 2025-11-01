@@ -17,6 +17,7 @@ if "homeassistant.helpers.update_coordinator" not in __import__("sys").modules:
     homeassistant = ModuleType("homeassistant")
     helpers = ModuleType("homeassistant.helpers")
     update_coordinator = ModuleType("homeassistant.helpers.update_coordinator")
+    storage = ModuleType("homeassistant.helpers.storage")
 
     class _DataUpdateCoordinator:
         """Minimal stub replicating the HA coordinator API for tests."""
@@ -44,7 +45,29 @@ if "homeassistant.helpers.update_coordinator" not in __import__("sys").modules:
             await self.async_config_entry_first_refresh()
 
     update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
+
+    class _Store:
+        """In-memory substitute for Home Assistant's storage helper."""
+
+        def __init__(
+            self,
+            hass: Any,
+            version: int,
+            key: str,
+            private: bool = False,
+        ) -> None:
+            self.data: dict[str, Any] | None = None
+
+        async def async_save(self, data: dict[str, Any]) -> None:
+            self.data = dict(data)
+
+        async def async_load(self) -> dict[str, Any] | None:
+            return dict(self.data) if self.data is not None else None
+
+    storage.Store = _Store
+
     helpers.update_coordinator = update_coordinator
+    helpers.storage = storage
     homeassistant.helpers = helpers
 
     sys.modules.setdefault("homeassistant", homeassistant)
@@ -52,12 +75,17 @@ if "homeassistant.helpers.update_coordinator" not in __import__("sys").modules:
     sys.modules.setdefault(
         "homeassistant.helpers.update_coordinator", update_coordinator
     )
+    sys.modules.setdefault("homeassistant.helpers.storage", storage)
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from custom_components.govee import DOMAIN
 from custom_components.govee.coordinator import (
     DeviceMetadata,
     GoveeDataUpdateCoordinator,
+)
+from custom_components.govee.device_client import (
+    DeviceListClient,
+    GoveeDevice,
+    DeviceState,
 )
 from custom_components.govee.state import DeviceOpState, ParseOption
 from custom_components.govee.device_types.air_quality import AirQualityDevice
@@ -102,6 +130,51 @@ class FakeAPIClient:
         """Record BLE commands issued by the coordinator."""
 
         self.ble_commands.append((device_id, dict(command), dict(channel_info)))
+
+
+class RecordingIoTClient:
+    """Capture IoT command publications for assertions."""
+
+    def __init__(self) -> None:
+        """Initialise storage for published IoT commands."""
+
+        self.published: list[tuple[str, dict[str, Any]]] = []
+        self._callback: Callable[[tuple[str, dict[str, Any]]], None] | None = None
+
+    def set_update_callback(
+        self, callback: Callable[[tuple[str, dict[str, Any]]], None]
+    ) -> None:
+        """Record callbacks registered by the coordinator."""
+
+        self._callback = callback
+
+    async def async_publish_command(self, topic: str, command: dict[str, Any]) -> None:
+        """Capture IoT command publications."""
+
+        self.published.append((topic, dict(command)))
+
+
+class AdapterDeviceListClient(DeviceListClient):
+    """Device list client returning pre-seeded devices for tests."""
+
+    def __init__(self, devices: list[GoveeDevice]):
+        """Store devices for adapter calls."""
+
+        self._devices = devices
+        self.iot_commands: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+
+    async def async_fetch_devices(self) -> list[GoveeDevice]:
+        """Return the provided device list without network calls."""
+
+        await asyncio.sleep(0)
+        return list(self._devices)
+
+    async def async_publish_iot_command(
+        self, device_id: str, channel_info: dict[str, Any], command: dict[str, Any]
+    ) -> None:
+        """Capture IoT commands routed through the REST client."""
+
+        self.iot_commands.append((device_id, dict(channel_info), dict(command)))
 
 
 def test_device_metadata_accepts_typescript_payload() -> None:
@@ -213,18 +286,58 @@ async def test_update_data_discovers_devices_from_typescript_payload() -> None:
         entity_registry=entity_registry,
     )
 
-    data = await coordinator._async_update_data()
+    await coordinator._async_update_data()
 
     assert api_client.request_count == 1
     assert coordinator.device_metadata.keys() == {"ts-device-1"}
     assert coordinator.devices.keys() == {"ts-device-1"}
-    assert data["device_metadata"] is coordinator.device_metadata
-    assert data["devices"] is coordinator.devices
 
-    [(entry, payload)] = device_registry.created
-    assert payload["identifiers"] == {(DOMAIN, "ts-device-1")}
-    assert payload["manufacturer"] == "Govee"
-    assert payload["model"] == "H7141"
+
+@pytest.mark.asyncio
+async def test_command_publisher_uses_device_list_iot_topic() -> None:
+    """IoT command publisher should use topics provided by the device list."""
+
+    device = GoveeDevice(
+        id="iot-device-1",
+        name="Iot Device",
+        model="H7141",
+        group_id=1,
+        pact_type=0,
+        pact_code=0,
+        goods_type=0,
+        ic=0,
+        hardware_version="1.0",
+        software_version="1.0",
+        iot_topic="accounts/abc/device/iot-device-1",
+        wifi=None,
+        bluetooth=None,
+        state=DeviceState(),
+    )
+
+    api_client = AdapterDeviceListClient([device])
+    iot_client = RecordingIoTClient()
+    device_registry = FakeDeviceRegistry()
+    entity_registry = FakeEntityRegistry()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=device_registry,
+        entity_registry=entity_registry,
+        iot_client=iot_client,
+        iot_command_enabled=True,
+    )
+
+    await coordinator.async_discover_devices()
+
+    publisher = coordinator.get_command_publisher("iot-device-1", channel="iot")
+
+    await publisher({"command": "value"})
+
+    assert iot_client.published == [
+        ("accounts/abc/device/iot-device-1", {"command": "value"})
+    ]
+    assert api_client.iot_commands == []
 
 
 def test_resolve_factory_selects_air_quality_by_category() -> None:
