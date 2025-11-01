@@ -379,13 +379,10 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
     ) -> str:
         """Determine the IoT topic for ``device_id``."""
 
-        topic = channel_info.get("topic")
+        iot_channel = metadata.channels.get("iot", {})
+        topic = channel_info.get("topic") or iot_channel.get("topic")
         if isinstance(topic, str) and topic:
             return topic
-        device = getattr(self.devices.get(device_id), "device", None)
-        fallback = getattr(device, "iot_topic", None)
-        if isinstance(fallback, str) and fallback:
-            return fallback
         raise KeyError(f"No IoT topic available for {device_id}")
 
     def _schedule_iot_update(self, update: tuple[str, dict[str, Any]]) -> None:

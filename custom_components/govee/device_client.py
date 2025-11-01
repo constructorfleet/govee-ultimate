@@ -231,7 +231,10 @@ class DeviceListClient:
         if isinstance(device.iot_topic, str) and device.iot_topic:
             channels["iot"] = {"topic": device.iot_topic}
         if device.bluetooth is not None:
-            channels["ble"] = {"mac": device.bluetooth.mac}
+            ble_channel: dict[str, Any] = {"mac": device.bluetooth.mac}
+            if device.bluetooth.name:
+                ble_channel["name"] = device.bluetooth.name
+            channels["ble"] = ble_channel
 
         name = device.name or device.model
 
