@@ -47,6 +47,11 @@ class RGBLightDevice(BaseDevice):
         self.expose_entity(platform="light", state=color_temperature)
 
         self._scene_mode_state = self.add_state(SceneModeState(device=device_model))
+        self.expose_entity(
+            platform="sensor",
+            state=self._scene_mode_state,
+            translation_key="scene_mode_metadata",
+        )
         self._scene_select_state = self.add_state(LightEffectState(device=device_model))
         self.expose_entity(
             platform="select",

@@ -34,6 +34,9 @@
       },
       "early_warning_setting": {
         "name": "Early warning setting"
+      },
+      "scene_mode_metadata": {
+        "name": "Scene metadata"
       }
     }
   }

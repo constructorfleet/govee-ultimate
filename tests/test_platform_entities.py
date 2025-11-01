@@ -952,6 +952,53 @@ async def test_sensor_entity_tracks_state_updates(
 
 
 @pytest.mark.asyncio
+async def test_rgb_light_scene_mode_sensor_reports_scene_metadata(
+    setup_platform_stubs: Callable[[], None],
+    rgb_light_metadata: DeviceMetadata,
+    rgb_light_device: RGBLightDevice,
+) -> None:
+    """RGB light scene sensors should reflect scene metadata values."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-rgb-scene-sensor")
+    coordinator = FakeCoordinator(
+        {rgb_light_metadata.device_id: rgb_light_device},
+        {rgb_light_metadata.device_id: rgb_light_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "sensor",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+    finally:
+        teardown()
+
+    scene_entity = next(
+        entity
+        for entity in added_entities
+        if entity.unique_id == f"{rgb_light_metadata.device_id}-sceneMode"
+    )
+
+    scene_state = rgb_light_device.states["sceneMode"]
+    scene_state._update_state({"sceneId": 258, "sceneParamId": 513})
+    coordinator.notify_listeners()
+
+    assert scene_entity.native_value == 258
+    assert scene_entity.extra_state_attributes == {
+        "sceneId": 258,
+        "sceneParamId": 513,
+    }
+
+
+@pytest.mark.asyncio
 async def test_ice_maker_schedule_sensor_attributes_and_commands(
     setup_platform_stubs: Callable[[], None],
     ice_maker_metadata: DeviceMetadata,
