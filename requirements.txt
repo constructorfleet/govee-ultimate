@@ -4,5 +4,5 @@ packaging==25.0
 pydantic==2.12.3
 PyYAML==6.0.2
 pytest==8.4.1
-ruff==0.0.292
+ruff==0.14.3
 voluptuous==0.13.1
