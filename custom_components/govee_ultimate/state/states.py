@@ -4039,6 +4039,7 @@ class SceneModeState(DeviceOpState[dict[str, int]]):
             name="sceneMode",
             initial_value={"sceneId": None, "sceneParamId": None},
         )
+        self._listeners: list[Callable[[dict[str, int]], None]] = []
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Decode the reported scene identifier and parameters."""
@@ -4049,6 +4050,26 @@ class SceneModeState(DeviceOpState[dict[str, int]]):
         scene_id = int.from_bytes(payload[0:2], "big")
         scene_param_id = int.from_bytes(payload[2:4], "big")
         self._update_state({"sceneId": scene_id, "sceneParamId": scene_param_id})
+
+    def register_listener(self, callback: Callable[[dict[str, int]], None]) -> None:
+        """Register ``callback`` for scene identifier updates."""
+
+        if callback not in self._listeners:
+            self._listeners.append(callback)
+
+    def unregister_listener(self, callback: Callable[[dict[str, int]], None]) -> None:
+        """Remove ``callback`` when present."""
+
+        if callback in self._listeners:
+            self._listeners.remove(callback)
+
+    def _notify_listeners(self) -> None:
+        for listener in list(self._listeners):
+            listener(self.value)
+
+    def _update_state(self, value: dict[str, int]) -> None:  # type: ignore[override]
+        super()._update_state(value)
+        self._notify_listeners()
 
 
 class _IdentifierStringState(DeviceState[str | None]):
@@ -4107,6 +4128,9 @@ class LightEffectState(_IdentifierStringState):
             str(value).strip().upper(): str(key).upper()
             for key, value in value_map.items()
         }
+        self._code_to_option = {
+            str(key).upper(): str(value).strip() for key, value in value_map.items()
+        }
         self._command_template = entry.command_templates[0]
         status_opcode = int(entry.identifiers["status"]["opcode"], 16)
         self._status_opcode = status_opcode
@@ -4136,6 +4160,26 @@ class LightEffectState(_IdentifierStringState):
             "command": command,
             "status": _status_payload(self.name, token, status_sequence),
         }
+
+    def option_for_code(self, scene_id: Any) -> str | None:
+        """Return the catalogued option for ``scene_id`` when known."""
+
+        if isinstance(scene_id, int):
+            code = f"{scene_id:04X}"
+        elif isinstance(scene_id, str):
+            code = scene_id.strip().upper()
+        else:
+            return None
+        return self._code_to_option.get(code)
+
+    def update_from_scene_id(self, scene_id: Any) -> None:
+        """Synchronise the stored option with the provided ``scene_id``."""
+
+        option = self.option_for_code(scene_id)
+        if option is None:
+            self._update_state(None)
+            return
+        self._update_state(option)
 
 
 _RGBIC_MIC_IDENTIFIER = [0x05, 0x13]

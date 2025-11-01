@@ -669,6 +669,7 @@ def test_rgb_light_registers_expected_states(
         "color",
         "colorTemperature",
         "sceneMode",
+        "lightEffect",
     } <= set(states)
     assert isinstance(states["power"], PowerState)
     assert isinstance(states["isConnected"], ConnectedState)
@@ -678,6 +679,7 @@ def test_rgb_light_registers_expected_states(
     assert states["color"] is states["colorRGB"]
     assert isinstance(states["colorTemperature"], ColorTemperatureState)
     assert isinstance(states["sceneMode"], SceneModeState)
+    assert isinstance(states["lightEffect"], LightEffectState)
 
     light_entities = device.light_entities
     assert light_entities.primary is states["power"]
@@ -695,6 +697,27 @@ def test_rgb_light_registers_expected_states(
     assert ha_entities["colorTemperature"].platform == "light"
     assert ha_entities["isConnected"].platform == "binary_sensor"
     assert ha_entities["active"].platform == "binary_sensor"
+    scene_select = ha_entities["lightEffect"]
+    assert scene_select.platform == "select"
+    assert scene_select.translation_key == "scene_mode"
+    assert scene_select.options == ["sunrise", "sunset", "candle"]
+
+
+def test_rgb_light_scene_select_enqueues_command(
+    rgb_light_device_model: MockDeviceModel,
+) -> None:
+    """Selecting a scene should enqueue the expected opcode payload."""
+
+    device = RGBLightDevice(rgb_light_device_model)
+    scene_select = device.states["lightEffect"]
+
+    command_ids = scene_select.set_state("sunrise")
+
+    assert command_ids
+    command = scene_select.command_queue.get_nowait()
+    assert command["name"] == "set_scene"
+    assert command["opcode"] == "0x05"
+    assert command["payload_hex"].upper() == "050001"
 
 
 def test_device_states_expose_home_assistant_entities(

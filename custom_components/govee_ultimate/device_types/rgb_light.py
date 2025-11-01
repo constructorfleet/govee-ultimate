@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from custom_components.govee_ultimate.state import (
@@ -10,6 +11,7 @@ from custom_components.govee_ultimate.state import (
     ColorRGBState,
     ColorTemperatureState,
     ConnectedState,
+    LightEffectState,
     PowerState,
 )
 from custom_components.govee_ultimate.state.states import SceneModeState
@@ -45,11 +47,30 @@ class RGBLightDevice(BaseDevice):
         self.expose_entity(platform="light", state=color_temperature)
 
         self._scene_mode_state = self.add_state(SceneModeState(device=device_model))
+        self._scene_select_state = self.add_state(LightEffectState(device=device_model))
+        self.expose_entity(
+            platform="select",
+            state=self._scene_select_state,
+            translation_key="scene_mode",
+        )
+
+        self._scene_mode_state.register_listener(self._handle_scene_mode_update)
+        self._handle_scene_mode_update(self._scene_mode_state.value)
 
         self._light_entities = LightEntities(
             primary=power,
             supporting=(brightness, color_rgb, color_temperature),
         )
+
+    def _handle_scene_mode_update(self, value: Mapping[str, Any] | None) -> None:
+        """Synchronise the scene select state with the latest identifiers."""
+
+        scene_id = None
+        if isinstance(value, Mapping):
+            raw_scene_id = value.get("sceneId")
+            if isinstance(raw_scene_id, int | str):
+                scene_id = raw_scene_id
+        self._scene_select_state.update_from_scene_id(scene_id)
 
     @property
     def light_entities(self) -> LightEntities:
