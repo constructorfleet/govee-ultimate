@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 from collections.abc import Callable
 
-from custom_components.govee_ultimate.state.device_state import (
+from custom_components.govee.state.device_state import (
     DeviceOpState,
     DeviceState,
     ParseOption,

@@ -54,18 +54,18 @@ if "homeassistant.helpers.update_coordinator" not in __import__("sys").modules:
     )
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from custom_components.govee_ultimate import DOMAIN
-from custom_components.govee_ultimate.coordinator import (
+from custom_components.govee import DOMAIN
+from custom_components.govee.coordinator import (
     DeviceMetadata,
     GoveeDataUpdateCoordinator,
 )
-from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
-from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
-from custom_components.govee_ultimate.device_types.ice_maker import IceMakerDevice
-from custom_components.govee_ultimate.device_types.hygrometer import HygrometerDevice
-from custom_components.govee_ultimate.device_types.presence import PresenceDevice
-from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
-from custom_components.govee_ultimate.device_types.meat_thermometer import (
+from custom_components.govee.device_types.air_quality import AirQualityDevice
+from custom_components.govee.device_types.humidifier import HumidifierDevice
+from custom_components.govee.device_types.ice_maker import IceMakerDevice
+from custom_components.govee.device_types.hygrometer import HygrometerDevice
+from custom_components.govee.device_types.presence import PresenceDevice
+from custom_components.govee.device_types.purifier import PurifierDevice
+from custom_components.govee.device_types.meat_thermometer import (
     MeatThermometerDevice,
 )
 
@@ -609,8 +609,8 @@ async def test_discovery_creates_devices_and_registers_entries() -> None:
         next(iter(data["identifiers"])) for _, data in device_registry.created
     }
     assert identifiers == {
-        ("govee_ultimate", "device-1"),
-        ("govee_ultimate", "device-2"),
+        ("govee", "device-1"),
+        ("govee", "device-2"),
     }
 
 
@@ -654,7 +654,7 @@ async def test_discovery_registers_home_assistant_entities() -> None:
         if entry["unique_id"] == "device-1-power"
     )
     assert power_entry["domain"] == "humidifier"
-    assert power_entry["platform"] == "govee_ultimate"
+    assert power_entry["platform"] == "govee"
     assert power_entry["device_id"] == device_entry.id
     assert power_entry["entity_category"] is None
 

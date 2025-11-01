@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from custom_components.govee_ultimate.auth import GoveeAuthManager, TokenDetails
+from custom_components.govee.auth import GoveeAuthManager, TokenDetails
 
 
 class StubHass:
@@ -63,7 +63,7 @@ async def test_auth_manager_login_saves_tokens(tmp_path_factory, request):
     assert tokens.refresh_token == "refresh-token"
     assert tokens.expires_at > datetime.now(timezone.utc)
 
-    storage_file = tmp_path / ".storage" / "govee_ultimate_auth"
+    storage_file = tmp_path / ".storage" / "govee_auth"
     assert json.loads(storage_file.read_text()) == {
         "email": "user@example.com",
         "access_token": "access-token",
@@ -98,7 +98,7 @@ async def test_auth_manager_refreshes_tokens(tmp_path_factory, request):
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=10),
     )
 
-    storage_file = tmp_path / ".storage" / "govee_ultimate_auth"
+    storage_file = tmp_path / ".storage" / "govee_auth"
     storage_file.parent.mkdir(parents=True, exist_ok=True)
     storage_file.write_text(
         json.dumps(
@@ -159,7 +159,7 @@ async def test_auth_manager_login_failure(tmp_path_factory, request):
         refresh_token="cached-refresh",
         expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
     )
-    storage_file = tmp_path / ".storage" / "govee_ultimate_auth"
+    storage_file = tmp_path / ".storage" / "govee_auth"
     storage_file.parent.mkdir(parents=True, exist_ok=True)
     storage_file.write_text(
         json.dumps(
@@ -205,7 +205,7 @@ async def test_auth_manager_refresh_failure_clears_state(tmp_path_factory, reque
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=10),
     )
 
-    storage_file = tmp_path / ".storage" / "govee_ultimate_auth"
+    storage_file = tmp_path / ".storage" / "govee_auth"
     storage_file.parent.mkdir(parents=True, exist_ok=True)
     storage_file.write_text(json.dumps(expiring.as_storage()))
 
@@ -225,6 +225,40 @@ async def test_auth_manager_refresh_failure_clears_state(tmp_path_factory, reque
     assert not storage_file.exists()
 
     await client.aclose()
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auth_manager_migrates_legacy_storage(tmp_path_factory, request):
+    """Legacy storage files should be migrated to the new key on initialize."""
+
+    tmp_path = tmp_path_factory.mktemp("hass_auth_migrate")
+    loop = asyncio.get_running_loop()
+    hass = StubHass(loop, str(tmp_path))
+
+    legacy_file = tmp_path / ".storage" / "govee_ultimate_auth"
+    legacy_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_payload = {
+        "email": "user@example.com",
+        "access_token": "legacy-access",
+        "refresh_token": "legacy-refresh",
+        "expires_at": datetime.now(timezone.utc).isoformat(),
+    }
+    legacy_file.write_text(json.dumps(legacy_payload))
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+        base_url="https://app2.govee.com",
+    )
+
+    manager = GoveeAuthManager(hass, client)
+    await manager.async_initialize()
+
+    new_file = tmp_path / ".storage" / "govee_auth"
+    assert new_file.exists()
+    assert not legacy_file.exists()
+    assert manager.tokens == TokenDetails.from_storage(legacy_payload)
 
     await client.aclose()
 

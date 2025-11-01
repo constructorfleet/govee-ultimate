@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from custom_components.govee_ultimate.device_client import DeviceListClient, GoveeDevice
+from custom_components.govee.device_client import DeviceListClient, GoveeDevice
 
 
 class StubHass:
@@ -135,7 +135,7 @@ async def test_device_list_client_fetches_and_persists(tmp_path_factory, request
     assert device.state.temperature.min == pytest.approx(15.0)
     assert device.state.temperature.max == pytest.approx(28.0)
 
-    storage_file = tmp_path / ".storage" / "govee_ultimate_devices"
+    storage_file = tmp_path / ".storage" / "govee_devices"
     saved = json.loads(storage_file.read_text())
     assert saved["devices"][0]["id"] == "AA:BB:CC"
     assert saved["devices"][0]["state"]["online"] is True
@@ -198,6 +198,59 @@ async def test_device_list_client_uses_fallback(tmp_path_factory, request):
     assert devices[0].name == "Cached Device"
 
     await failure_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_device_list_client_migrates_legacy_storage(tmp_path_factory, request):
+    """Legacy device storage should be migrated to the new key before use."""
+
+    tmp_path = tmp_path_factory.mktemp("devices_migrate")
+    loop = asyncio.get_running_loop()
+    hass = StubHass(loop, str(tmp_path))
+    auth = StubAuthManager()
+
+    legacy_file = tmp_path / ".storage" / "govee_ultimate_devices"
+    legacy_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_payload = {
+        "devices": [
+            {
+                "id": "AA:BB:CC",
+                "name": "Cached Device",
+                "model": "H1234",
+                "group_id": 1,
+                "pact_type": 2,
+                "pact_code": 3,
+                "goods_type": 4,
+                "ic": 5,
+                "hardware_version": "1.0",
+                "software_version": "1.2",
+                "iot_topic": None,
+                "wifi": None,
+                "bluetooth": None,
+                "state": {"online": True},
+            }
+        ]
+    }
+    legacy_file.write_text(json.dumps(legacy_payload))
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(500)),
+        base_url="https://app2.govee.com",
+    )
+
+    device_client = DeviceListClient(hass, client, auth)
+
+    devices = await device_client.async_fetch_devices()
+
+    assert len(devices) == 1
+    assert devices[0].name == "Cached Device"
+
+    new_file = tmp_path / ".storage" / "govee_devices"
+    assert new_file.exists()
+    assert not legacy_file.exists()
+    assert json.loads(new_file.read_text()) == legacy_payload
+
+    await client.aclose()
 
 
 @pytest.mark.parametrize(

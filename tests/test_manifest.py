@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-MANIFEST_PATH = Path("custom_components/govee_ultimate/manifest.json")
+MANIFEST_PATH = Path("custom_components/govee/manifest.json")
 
 
 def _load_manifest() -> dict[str, Any]:
@@ -18,7 +18,7 @@ def test_manifest_declares_requirements_and_dependencies() -> None:
     """Ensure the manifest exposes domain, requirements, and MQTT dependency."""
 
     manifest = _load_manifest()
-    assert manifest["domain"] == "govee_ultimate"
+    assert manifest["domain"] == "govee"
     assert sorted(manifest["requirements"]) == ["httpx", "pydantic"]
     assert "mqtt" in manifest.get("dependencies", [])
 

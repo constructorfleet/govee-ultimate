@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from custom_components.govee_ultimate.state.states import MicModeState
+from custom_components.govee.state.states import MicModeState
 
 REPORT_OPCODE = 0xAA
 RGBIC_MIC_IDENTIFIER = [0x05, 0x13]

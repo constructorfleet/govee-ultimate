@@ -7,21 +7,21 @@ from typing import Any
 
 import pytest
 
-from custom_components.govee_ultimate.device_types.base import EntityCategory
-from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
-from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
-from custom_components.govee_ultimate.device_types.ice_maker import IceMakerDevice
-from custom_components.govee_ultimate.device_types.hygrometer import HygrometerDevice
-from custom_components.govee_ultimate.device_types.presence import PresenceDevice
-from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
-from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
-from custom_components.govee_ultimate.device_types import (
+from custom_components.govee.device_types.base import EntityCategory
+from custom_components.govee.device_types.air_quality import AirQualityDevice
+from custom_components.govee.device_types.humidifier import HumidifierDevice
+from custom_components.govee.device_types.ice_maker import IceMakerDevice
+from custom_components.govee.device_types.hygrometer import HygrometerDevice
+from custom_components.govee.device_types.presence import PresenceDevice
+from custom_components.govee.device_types.purifier import PurifierDevice
+from custom_components.govee.device_types.rgb_light import RGBLightDevice
+from custom_components.govee.device_types import (
     rgbic_light as rgbic_light_module,
 )
-from custom_components.govee_ultimate.device_types.meat_thermometer import (
+from custom_components.govee.device_types.meat_thermometer import (
     MeatThermometerDevice,
 )
-from custom_components.govee_ultimate.state import (
+from custom_components.govee.state import (
     ActiveState,
     BatteryLevelState,
     BiologicalPresenceState,
@@ -35,7 +35,7 @@ from custom_components.govee_ultimate.state import (
     PowerState,
     TemperatureState,
 )
-from custom_components.govee_ultimate.state.states import (
+from custom_components.govee.state.states import (
     ColorTemperatureState,
     ControlLockState,
     DisplayScheduleState,

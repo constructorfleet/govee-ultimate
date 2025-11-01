@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 import pytest
 
-from custom_components.govee_ultimate.state.states import DiyModeState, RGBICModes
+from custom_components.govee.state.states import DiyModeState, RGBICModes
 
 
 def _dummy_effect(name: str, code: int, payload: bytes) -> dict[str, object]:

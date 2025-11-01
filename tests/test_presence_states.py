@@ -20,9 +20,9 @@ if "homeassistant.components.binary_sensor" not in sys.modules:
     sys.modules["homeassistant.components.binary_sensor"] = binary_sensor_module
 
 
-from custom_components.govee_ultimate.binary_sensor import GoveeBinarySensorEntity
-from custom_components.govee_ultimate.device_types.base import HomeAssistantEntity
-from custom_components.govee_ultimate.state.states import (
+from custom_components.govee.binary_sensor import GoveeBinarySensorEntity
+from custom_components.govee.device_types.base import HomeAssistantEntity
+from custom_components.govee.state.states import (
     BiologicalPresenceState,
     DetectionSettingsState,
     EnablePresenceState,

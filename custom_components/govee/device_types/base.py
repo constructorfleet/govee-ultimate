@@ -7,7 +7,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any
 
-from custom_components.govee_ultimate.state import (
+from custom_components.govee.state import (
     ConnectedState,
     DeviceState,
     ModeState,

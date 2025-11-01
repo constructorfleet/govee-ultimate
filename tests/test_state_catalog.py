@@ -1,6 +1,6 @@
 """Unit tests for the Ultimate Govee state catalog dataset."""
 
-from custom_components.govee_ultimate.state_catalog import load_state_catalog
+from custom_components.govee.state_catalog import load_state_catalog
 
 
 def test_power_state_entry_includes_identifiers_and_templates():
@@ -64,7 +64,7 @@ def test_enable_presence_entry_maps_boolean_flags():
 def test_state_catalog_module_is_documented():
     """Modules, models, and stubs carry documentation strings."""
 
-    import custom_components.govee_ultimate.state_catalog as module
+    import custom_components.govee.state_catalog as module
     import pydantic
 
     assert module.__doc__

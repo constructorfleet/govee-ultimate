@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from custom_components.govee_ultimate.state import states
-from custom_components.govee_ultimate.state.states import (
+from custom_components.govee.state import states
+from custom_components.govee.state.states import (
     BuzzerState,
     EarlyWarningState,
     EarlyWarningEnabledState,

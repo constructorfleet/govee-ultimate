@@ -11,8 +11,11 @@ import httpx
 
 from homeassistant.helpers.storage import Store
 
+from .storage import async_migrate_storage_file
+
 STORAGE_VERSION = 1
-STORAGE_KEY = "govee_ultimate_auth"
+STORAGE_KEY = "govee_auth"
+LEGACY_STORAGE_KEY = "govee_ultimate_auth"
 REFRESH_OFFSET = timedelta(seconds=60)
 LOGIN_ENDPOINT = "/v1/account/login"
 REFRESH_ENDPOINT = "/v1/account/refresh-token"
@@ -89,6 +92,7 @@ class GoveeAuthManager:
     async def async_initialize(self) -> None:
         """Load persisted tokens from disk."""
 
+        await self._migrate_legacy_storage()
         data = await self._store.async_load()
         if not data:
             return
@@ -162,3 +166,8 @@ class GoveeAuthManager:
         self._tokens = None
         async with self._store_lock:
             await self._store.async_remove()
+
+    async def _migrate_legacy_storage(self) -> None:
+        """Migrate legacy storage files written under the previous domain name."""
+
+        await async_migrate_storage_file(self._hass, LEGACY_STORAGE_KEY, STORAGE_KEY)

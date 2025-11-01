@@ -7,10 +7,10 @@ This repository is the Home Assistant custom component port of the [`constructor
 - Purpose: expose the same capabilities within Home Assistant through a custom component integration.
 - Alignment: maintain feature parity and consistent API semantics with the upstream library where applicable.
 - Protocol coverage: op codes map directly to the BLE and cloud command identifiers defined in the upstream library; keep the
-  catalogue (`custom_components/govee_ultimate/data/opcode_catalog.json`) synchronized with the source repository when new
+  catalogue (`custom_components/govee/data/opcode_catalog.json`) synchronized with the source repository when new
   command types land.
-- Device states: state models are data driven via `custom_components/govee_ultimate/data/device_states.json` and
-  `custom_components/govee_ultimate/state/states.py`, mirroring the TypeScript definitions of device types, report op codes, and
+- Device states: state models are data driven via `custom_components/govee/data/device_states.json` and
+  `custom_components/govee/state/states.py`, mirroring the TypeScript definitions of device types, report op codes, and
   setter command templates.
 
 ## Contributor Notes

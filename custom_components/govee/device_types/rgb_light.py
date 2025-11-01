@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from custom_components.govee_ultimate.state import (
+from custom_components.govee.state import (
     ActiveState,
     BrightnessState,
     ColorRGBState,
@@ -14,7 +14,7 @@ from custom_components.govee_ultimate.state import (
     LightEffectState,
     PowerState,
 )
-from custom_components.govee_ultimate.state.states import SceneModeState
+from custom_components.govee.state.states import SceneModeState
 
 from .base import BaseDevice, LightEntities
 

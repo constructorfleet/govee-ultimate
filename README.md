@@ -18,8 +18,8 @@ instance.
 ## Installation
 
 1. Ensure Home Assistant 2023.8 or newer is installed.
-2. Copy the `custom_components/govee_ultimate` directory from this repository to
-   `<config>/custom_components/govee_ultimate` within your Home Assistant
+2. Copy the `custom_components/govee` directory from this repository to
+   `<config>/custom_components/govee` within your Home Assistant
    configuration directory.
 3. Restart Home Assistant to load the integration.
 4. Use the Home Assistant UI to add the **Govee Ultimate** integration and

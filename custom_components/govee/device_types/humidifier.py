@@ -8,7 +8,7 @@ from collections.abc import Callable
 from asyncio import QueueEmpty
 import types
 
-from custom_components.govee_ultimate.state import (
+from custom_components.govee.state import (
     ActiveState,
     AutoModeState,
     CustomModeState,
@@ -24,7 +24,7 @@ from custom_components.govee_ultimate.state import (
     TimerState,
     WaterShortageState,
 )
-from custom_components.govee_ultimate.state.states import HumidityState
+from custom_components.govee.state.states import HumidityState
 
 from .base import BaseDevice, EntityCategory, HumidifierEntities
 

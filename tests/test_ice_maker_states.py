@@ -6,8 +6,8 @@ import datetime as dt
 
 import pytest
 
-from custom_components.govee_ultimate import opcodes
-from custom_components.govee_ultimate.state.states import (
+from custom_components.govee import opcodes
+from custom_components.govee.state.states import (
     IceMakerBasketFullState,
     IceMakerMakingIceState,
     IceMakerNuggetSizeState,

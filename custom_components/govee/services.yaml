@@ -13,7 +13,7 @@ set_schedule:
   description: Update the scheduled start configuration for a Govee ice maker.
   target:
     entity:
-      integration: govee_ultimate
+      integration: govee
       domain: sensor
   fields:
     enabled:

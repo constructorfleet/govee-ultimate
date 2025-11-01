@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from custom_components.govee_ultimate.state import (
+from custom_components.govee.state import (
     ActiveState,
     BrightnessState,
     ColorTemperatureState,
@@ -17,7 +17,7 @@ from custom_components.govee_ultimate.state import (
     PowerState,
     SegmentColorState,
 )
-from custom_components.govee_ultimate.state.states import RGBICModes
+from custom_components.govee.state.states import RGBICModes
 
 from .base import BaseDevice, LightEntities
 

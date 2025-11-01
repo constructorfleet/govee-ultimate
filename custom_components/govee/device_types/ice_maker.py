@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from custom_components.govee_ultimate.state import (
+from custom_components.govee.state import (
     ActiveState,
     ConnectedState,
     PowerState,
 )
-from custom_components.govee_ultimate.state.states import (
+from custom_components.govee.state.states import (
     IceMakerBasketFullState,
     IceMakerMakingIceState,
     IceMakerNuggetSizeState,
