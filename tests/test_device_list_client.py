@@ -144,6 +144,74 @@ async def test_device_list_client_fetches_and_persists(tmp_path_factory, request
 
 
 @pytest.mark.asyncio
+async def test_device_list_client_serializes_device_metadata(tmp_path_factory, request):
+    """``async_get_devices`` should expose metadata with IoT and BLE channels."""
+
+    tmp_path = tmp_path_factory.mktemp("devices_metadata")
+    loop = asyncio.get_running_loop()
+    hass = StubHass(loop, str(tmp_path))
+    auth = StubAuthManager()
+
+    response_payload = {
+        "status": 200,
+        "message": "ok",
+        "devices": [
+            {
+                "device": "AA:BB:CC",
+                "deviceName": "Test Device",
+                "sku": "H1234",
+                "groupId": 4,
+                "deviceExt": {
+                    "deviceSettings": {
+                        "versionSoft": "1.2.3",
+                        "versionHard": "2.3.4",
+                        "topic": "accounts/abc/device/AA:BB:CC",
+                        "bleName": "BLE Device",
+                        "address": "AA:BB:CC:DD",
+                    },
+                    "deviceData": {},
+                },
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer access-token"
+        return httpx.Response(200, json=response_payload)
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://app2.govee.com"
+    )
+    device_client = DeviceListClient(hass, client, auth)
+
+    metadata = await device_client.async_get_devices()
+
+    assert metadata == [
+        {
+            "device_id": "AA:BB:CC",
+            "deviceId": "AA:BB:CC",
+            "model": "H1234",
+            "deviceModel": "H1234",
+            "sku": "H1234",
+            "deviceSku": "H1234",
+            "category": "",
+            "categoryGroup": "",
+            "category_group": "",
+            "category_group_name": "",
+            "device_name": "Test Device",
+            "deviceName": "Test Device",
+            "manufacturer": "Govee",
+            "channels": {
+                "iot": {"topic": "accounts/abc/device/AA:BB:CC"},
+                "ble": {"mac": "AA:BB:CC:DD", "name": "BLE Device"},
+            },
+        }
+    ]
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_device_list_client_uses_fallback(tmp_path_factory, request):
     """If the REST call fails the client should fall back to cached data."""
 

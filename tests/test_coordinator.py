@@ -85,7 +85,6 @@ from custom_components.govee.coordinator import (
 from custom_components.govee.device_client import (
     DeviceListClient,
     GoveeDevice,
-    DeviceState,
 )
 from custom_components.govee.state import DeviceOpState, ParseOption
 from custom_components.govee.device_types.air_quality import AirQualityDevice
@@ -297,24 +296,24 @@ async def test_update_data_discovers_devices_from_typescript_payload() -> None:
 async def test_command_publisher_uses_device_list_iot_topic() -> None:
     """IoT command publisher should use topics provided by the device list."""
 
-    device = GoveeDevice(
-        id="iot-device-1",
-        name="Iot Device",
-        model="H7141",
-        group_id=1,
-        pact_type=0,
-        pact_code=0,
-        goods_type=0,
-        ic=0,
-        hardware_version="1.0",
-        software_version="1.0",
-        iot_topic="accounts/abc/device/iot-device-1",
-        wifi=None,
-        bluetooth=None,
-        state=DeviceState(),
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "iot-device-1",
+                "model": "H7141",
+                "sku": "H7141",
+                "category": "",
+                "category_group": "",
+                "device_name": "Iot Device",
+                "manufacturer": "Govee",
+                "channels": {
+                    "iot": {
+                        "commandTopic": "accounts/abc/device/iot-device-1",
+                    }
+                },
+            }
+        ]
     )
-
-    api_client = AdapterDeviceListClient([device])
     iot_client = RecordingIoTClient()
     device_registry = FakeDeviceRegistry()
     entity_registry = FakeEntityRegistry()
