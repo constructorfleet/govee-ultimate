@@ -171,18 +171,12 @@ _DEFAULT_IOT_OPTIONS: dict[str, Any] = {
     "iot_state_enabled": True,
     "iot_command_enabled": False,
     "iot_refresh_enabled": False,
-    "iot_state_topic": "govee/{device_id}/state",
-    "iot_command_topic": "govee/{device_id}/command",
-    "iot_refresh_topic": "govee/{device_id}/refresh",
 }
 
 _IOT_OPTION_FIELD_TYPES: dict[str, type[Any]] = {
     "iot_state_enabled": bool,
     "iot_command_enabled": bool,
     "iot_refresh_enabled": bool,
-    "iot_state_topic": str,
-    "iot_command_topic": str,
-    "iot_refresh_topic": str,
 }
 
 

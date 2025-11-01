@@ -1,373 +1,332 @@
-"""Tests for the Home Assistant MQTT IoT client wrapper."""
+"""Tests for the AWS IoT MQTT client wrapper."""
 
 from __future__ import annotations
 
+import asyncio
+import importlib
+import ssl
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
 import pytest
 
 
-@dataclass
-class FakeSubscription:
-    """Record a subscription request against the fake MQTT client."""
-
-    topic: str
-    qos: int
-    callback: Callable[[str, Any], Any]
-    unsubscribed: bool = False
-
-
-class FakeMQTT:
-    """Minimal MQTT stub mimicking the Home Assistant helper API."""
+class FakeSSLContext:
+    """Capture TLS configuration applied to the MQTT connection."""
 
     def __init__(self) -> None:
-        """Initialise storage for subscriptions and publications."""
+        """Initialise fake TLS storage."""
+        self.ca_data: str | None = None
+        self.cert_chain: tuple[str, str] | None = None
 
-        self.subscriptions: list[FakeSubscription] = []
-        self.published: list[tuple[str, str | bytes, int, bool]] = []
+    def load_verify_locations(self, *, cadata: str) -> None:  # type: ignore[override]
+        """Record the certificate authority bundle."""
+        self.ca_data = cadata
 
-    async def async_subscribe(
-        self,
-        topic: str,
-        callback: Callable[[str, Any], Any],
-        qos: int = 0,
-    ) -> Callable[[], None]:
-        """Record a subscription request and return an unsubscribe hook."""
+    def load_cert_chain(self, certfile: str, keyfile: str) -> None:  # type: ignore[override]
+        """Capture the certificate/key material written to disk."""
+        with open(certfile, encoding="utf-8") as cert_fp:
+            certificate = cert_fp.read().strip()
+        with open(keyfile, encoding="utf-8") as key_fp:
+            private_key = key_fp.read().strip()
+        self.cert_chain = (certificate, private_key)
 
-        subscription = FakeSubscription(topic, qos, callback)
-        self.subscriptions.append(subscription)
 
-        def _unsubscribe() -> None:
-            subscription.unsubscribed = True
+class FakePahoClient:
+    """Minimal stand-in for the Paho MQTT client."""
 
-        return _unsubscribe
+    def __init__(self, client_id: str, protocol: int | None = None) -> None:
+        """Store client metadata for later inspection."""
+        self.client_id = client_id
+        self.protocol = protocol
+        self.tls_context: FakeSSLContext | None = None
+        self.connected: bool = False
+        self.subscriptions: list[tuple[str, int]] = []
+        self.published: list[tuple[str, str, int, bool]] = []
+        self.on_connect: Callable[..., None] | None = None
+        self.on_message: Callable[..., None] | None = None
 
-    async def async_publish(
-        self,
-        topic: str,
-        payload: str | bytes,
-        qos: int = 0,
-        retain: bool = False,
-    ) -> None:
-        """Capture a publish request for assertions."""
+    def tls_set_context(self, context: FakeSSLContext) -> None:
+        """Attach the TLS context used when establishing a connection."""
+        self.tls_context = context
 
+    def username_pw_set(
+        self, username: str | None = None, password: str | None = None
+    ) -> None:  # noqa: ARG002
+        """Paho compatibility shim for username/password authentication."""
+
+    def connect_async(self, host: str, port: int, keepalive: int) -> None:
+        """Record asynchronous connection details."""
+        self.connected = True
+        self._connect_args = (host, port, keepalive)
+
+    def loop_start(self) -> None:
+        """Simulate starting the network loop and invoking callbacks."""
+        if self.on_connect:
+            self.on_connect(self, None, None, 0)
+
+    def subscribe(self, topic: str, qos: int) -> None:
+        """Capture subscription requests."""
+        self.subscriptions.append((topic, qos))
+
+    def message_callback_add(self, topic: str, callback: Callable[..., None]) -> None:
+        """Register the message handler for ``topic``."""
+        self.on_message = callback
+
+    def publish(self, topic: str, payload: str, qos: int, retain: bool) -> None:
+        """Record published messages for assertions."""
         self.published.append((topic, payload, qos, retain))
 
+    def disconnect(self) -> None:
+        """Flag the MQTT client as disconnected."""
+        self.connected = False
 
-class FakeClock:
-    """Simple monotonic clock controllable by tests."""
 
-    def __init__(self, initial: float = 0.0) -> None:
-        """Start the clock at ``initial`` seconds."""
+class FakeMonotonic:
+    """Deterministic monotonic clock for TTL calculations."""
 
-        self.value = initial
+    def __init__(self, value: float = 0.0) -> None:
+        """Initialise the fake clock with ``value`` seconds."""
+        self.value = value
 
     def __call__(self) -> float:
-        """Return the current clock value."""
-
+        """Return the current monotonic reading."""
         return self.value
 
 
-@pytest.mark.asyncio
-async def test_iot_client_subscribes_to_state_topics_on_start() -> None:
-    """Client should subscribe to each device state topic when started."""
+def _make_config(**overrides: Any) -> Any:
+    """Build an ``IoTClientConfig`` with standard defaults for tests."""
 
-    from custom_components.govee.iot_client import (
-        IoTClient,
-        IoTClientConfig,
+    from custom_components.govee.iot_client import IoTClientConfig
+
+    base: dict[str, Any] = {
+        "endpoint": "ssl://broker.example:8883",
+        "account_topic": "accounts/123",
+        "client_id": "account-client",
+        "certificate": "-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----",
+        "command_ttl": timedelta(seconds=30),
+        "qos": 1,
+    }
+    base.update(overrides)
+    return IoTClientConfig(**base)
+
+
+@pytest.fixture(autouse=True)
+def _patch_paho(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure the IoT client under test receives the fake MQTT delegate."""
+
+    monkeypatch.setitem(ssl._PROTOCOL_NAMES, ssl.PROTOCOL_TLS_CLIENT, "TLS")
+
+    def _fake_ssl_context(ca: str) -> FakeSSLContext:
+        context = FakeSSLContext()
+        context.load_verify_locations(cadata=ca)
+        return context
+
+    monkeypatch.setattr(
+        "custom_components.govee.iot_client._create_ssl_context",
+        _fake_ssl_context,
     )
 
-    mqtt = FakeMQTT()
+    def _fake_client_factory(client_id: str) -> FakePahoClient:
+        return FakePahoClient(client_id)
+
+    monkeypatch.setattr(
+        "custom_components.govee.iot_client._create_paho_client",
+        _fake_client_factory,
+    )
+
+
+@pytest.mark.asyncio
+async def test_iot_client_connects_with_tls_and_subscribes(
+    monkeypatch: pytest.MonkeyPatch, _patch_paho: None
+) -> None:
+    """Client should configure TLS and subscribe to the account topic."""
+
+    monkeypatch.setattr(
+        "custom_components.govee.iot_client._load_amazon_root_ca",
+        lambda: "FAKE-CA",
+    )
+
+    from custom_components.govee.iot_client import IoTClient
+
     updates: list[tuple[str, dict[str, Any]]] = []
 
     client = IoTClient(
-        mqtt=mqtt,
-        config=IoTClientConfig(
-            enabled=True,
-            state_topic="govee/state/{device_id}",
-            command_topic="govee/command/{device_id}",
-            refresh_topic="govee/refresh/{device_id}",
-            qos=1,
-            command_ttl=timedelta(seconds=30),
-            debug=False,
-        ),
+        config=_make_config(),
         on_device_update=updates.append,
     )
 
-    await client.async_start(["device-1", "device-2"])
+    await client.async_start()
 
-    topics = [sub.topic for sub in mqtt.subscriptions]
-    assert topics == [
-        "govee/state/device-1",
-        "govee/state/device-2",
-    ]
-    assert all(sub.qos == 1 for sub in mqtt.subscriptions)
+    assert client._mqtt_client is not None
+    fake_client: FakePahoClient = client._mqtt_client  # type: ignore[assignment]
+    assert fake_client.client_id == "account-client"
+    assert fake_client.subscriptions == [("accounts/123", 1)]
+    assert fake_client.tls_context is not None
+    assert fake_client.tls_context.ca_data == "FAKE-CA"
+    assert fake_client.tls_context.cert_chain is not None
     assert updates == []
 
 
-@pytest.mark.asyncio
-async def test_state_callback_deserialises_json_payload() -> None:
-    """The state callback should JSON-decode payloads before forwarding."""
+def test_create_ssl_context_validates_server_certificates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TLS contexts must validate the remote server certificate chain."""
 
-    from custom_components.govee.iot_client import (
-        IoTClient,
-        IoTClientConfig,
+    import custom_components.govee.iot_client as iot_client
+
+    importlib.reload(iot_client)
+
+    recorded: dict[str, ssl.Purpose] = {}
+
+    class InspectContext(FakeSSLContext):
+        def __init__(self) -> None:
+            super().__init__()
+            self.check_hostname = True
+            self.verify_mode = ssl.CERT_REQUIRED
+
+    def _fake_create_default_context(purpose: ssl.Purpose) -> InspectContext:
+        recorded["purpose"] = purpose
+        return InspectContext()
+
+    monkeypatch.setattr(
+        iot_client.ssl,
+        "create_default_context",
+        _fake_create_default_context,
     )
 
-    mqtt = FakeMQTT()
+    context = iot_client._create_ssl_context("CA-DATA")
+
+    assert recorded["purpose"] == ssl.Purpose.SERVER_AUTH
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.ca_data == "CA-DATA"
+
+
+@pytest.mark.asyncio
+async def test_state_messages_forward_device_payload(
+    monkeypatch: pytest.MonkeyPatch, _patch_paho: None
+) -> None:
+    """Incoming MQTT messages should be parsed and forwarded to the callback."""
+
+    monkeypatch.setattr(
+        "custom_components.govee.iot_client._load_amazon_root_ca",
+        lambda: "FAKE-CA",
+    )
+
+    from custom_components.govee.iot_client import IoTClient
+
     updates: list[tuple[str, dict[str, Any]]] = []
 
     client = IoTClient(
-        mqtt=mqtt,
-        config=IoTClientConfig(
-            enabled=True,
-            state_topic="state/{device_id}",
-            command_topic="command/{device_id}",
-            refresh_topic="refresh/{device_id}",
-            qos=0,
-            command_ttl=timedelta(seconds=5),
-            debug=False,
-        ),
+        config=_make_config(),
         on_device_update=updates.append,
     )
 
-    await client.async_start(["device-3"])
-    assert len(mqtt.subscriptions) == 1
-
-    subscription = mqtt.subscriptions[0]
-    subscription.callback(subscription.topic, '{"battery":80}')
-
-    assert updates == [("device-3", {"battery": 80})]
-
-
-@pytest.mark.asyncio
-async def test_set_update_callback_replaces_listener() -> None:
-    """The update callback should be replaceable at runtime."""
-
-    from custom_components.govee.iot_client import (
-        IoTClient,
-        IoTClientConfig,
+    await client.async_start()
+    fake_client: FakePahoClient = client._mqtt_client  # type: ignore[assignment]
+    assert fake_client.on_message is not None
+    fake_client.on_message(
+        fake_client,
+        None,
+        type(
+            "Payload",
+            (),
+            {"payload": b'{"device":"device-42","state":{"connected":true}}'},
+        )(),
     )
+    await asyncio.sleep(0)
 
-    mqtt = FakeMQTT()
-    first: list[tuple[str, dict[str, Any]]] = []
-    second: list[tuple[str, dict[str, Any]]] = []
-
-    client = IoTClient(
-        mqtt=mqtt,
-        config=IoTClientConfig(
-            enabled=True,
-            state_topic="state/{device_id}",
-            command_topic="command/{device_id}",
-            refresh_topic="refresh/{device_id}",
-            qos=0,
-            command_ttl=timedelta(seconds=5),
-            debug=False,
-        ),
-        on_device_update=first.append,
-    )
-
-    await client.async_start(["device-4"])
-    client.set_update_callback(second.append)
-
-    subscription = mqtt.subscriptions[0]
-    subscription.callback(subscription.topic, '{"online":true}')
-
-    assert first == []
-    assert second == [("device-4", {"online": True})]
-
-
-@pytest.mark.asyncio
-async def test_update_config_resubscribes_with_new_topics() -> None:
-    """Configuration updates should adjust subscriptions accordingly."""
-
-    from custom_components.govee.iot_client import (
-        IoTClient,
-        IoTClientConfig,
-    )
-
-    mqtt = FakeMQTT()
-    client = IoTClient(
-        mqtt=mqtt,
-        config=IoTClientConfig(
-            enabled=True,
-            state_topic="state/{device_id}",
-            command_topic="command/{device_id}",
-            refresh_topic="refresh/{device_id}",
-            qos=0,
-            command_ttl=timedelta(seconds=5),
-            debug=False,
-        ),
-        on_device_update=lambda update: None,
-    )
-
-    await client.async_start(["device-7"])
-    first_sub = mqtt.subscriptions[0]
-
-    await client.async_update_config(
-        IoTClientConfig(
-            enabled=True,
-            state_topic="new/{device_id}",
-            command_topic="command/{device_id}",
-            refresh_topic="refresh/{device_id}",
-            qos=1,
-            command_ttl=timedelta(seconds=5),
-            debug=False,
-        ),
-        ["device-7"],
-    )
-
-    assert first_sub.unsubscribed is True
-    assert mqtt.subscriptions[-1].topic == "new/device-7"
-
-
-@pytest.mark.asyncio
-async def test_update_config_disables_all_subscriptions() -> None:
-    """Disabling the client should remove existing subscriptions."""
-
-    from custom_components.govee.iot_client import (
-        IoTClient,
-        IoTClientConfig,
-    )
-
-    mqtt = FakeMQTT()
-    client = IoTClient(
-        mqtt=mqtt,
-        config=IoTClientConfig(
-            enabled=True,
-            state_topic="state/{device_id}",
-            command_topic="command/{device_id}",
-            refresh_topic="refresh/{device_id}",
-            qos=0,
-            command_ttl=timedelta(seconds=5),
-            debug=False,
-        ),
-        on_device_update=lambda update: None,
-    )
-
-    await client.async_start(["device-8"])
-    first_sub = mqtt.subscriptions[0]
-
-    await client.async_update_config(
-        IoTClientConfig(
-            enabled=False,
-            state_topic="state/{device_id}",
-            command_topic="command/{device_id}",
-            refresh_topic="refresh/{device_id}",
-            qos=0,
-            command_ttl=timedelta(seconds=5),
-            debug=False,
-        ),
-        ["device-8"],
-    )
-
-    assert first_sub.unsubscribed is True
-
-
-@pytest.mark.asyncio
-async def test_publish_command_serialises_payload_and_tracks_pending() -> None:
-    """Client should publish commands with generated identifiers and TTL."""
-
-    from custom_components.govee.iot_client import (
-        IoTClient,
-        IoTClientConfig,
-    )
-
-    mqtt = FakeMQTT()
-    client = IoTClient(
-        mqtt=mqtt,
-        config=IoTClientConfig(
-            enabled=True,
-            state_topic="state/{device_id}",
-            command_topic="command/{device_id}",
-            refresh_topic="refresh/{device_id}",
-            qos=0,
-            command_ttl=timedelta(seconds=10),
-            debug=False,
-        ),
-        on_device_update=lambda update: None,
-        monotonic=lambda: 100.0,
-    )
-
-    await client.async_start(["device-1"])
-
-    command_id = await client.async_publish_command("device-1", {"power": True})
-
-    assert mqtt.published == [
-        (
-            "command/device-1",
-            '{"power": true, "command_id": "' + command_id + '"}',
-            0,
-            False,
-        )
+    assert updates == [
+        ("device-42", {"device": "device-42", "state": {"connected": True}})
     ]
-    assert client.pending_commands == {command_id: pytest.approx(110.0)}
 
 
 @pytest.mark.asyncio
-async def test_expire_pending_commands_returns_ids() -> None:
-    """Expiry pruning should drop stale commands using the configured TTL."""
+async def test_publish_command_serialises_payload_and_tracks_pending(
+    monkeypatch: pytest.MonkeyPatch,
+    _patch_paho: None,
+) -> None:
+    """Commands should include generated identifiers and track TTL expiry."""
 
-    from custom_components.govee.iot_client import (
-        IoTClient,
-        IoTClientConfig,
+    monkeypatch.setattr(
+        "custom_components.govee.iot_client._load_amazon_root_ca",
+        lambda: "FAKE-CA",
     )
 
-    mqtt = FakeMQTT()
-    clock = FakeClock(25.0)
+    from custom_components.govee.iot_client import IoTClient
+
+    clock = FakeMonotonic(10.0)
     client = IoTClient(
-        mqtt=mqtt,
-        config=IoTClientConfig(
-            enabled=True,
-            state_topic="state/{device_id}",
-            command_topic="command/{device_id}",
-            refresh_topic="refresh/{device_id}",
-            qos=0,
-            command_ttl=timedelta(seconds=5),
-            debug=False,
-        ),
-        on_device_update=lambda update: None,
+        config=_make_config(),
+        on_device_update=lambda *_: None,
         monotonic=clock,
     )
 
-    await client.async_start(["device-1"])
-    command_id = await client.async_publish_command("device-1", {"fan": "auto"})
+    await client.async_start()
+    command_id = await client.async_publish_command(
+        "devices/device-42/command",
+        {"cmd": "turn", "value": 1},
+    )
 
-    clock.value = 32.0
-    expired = client.expire_pending_commands()
-
-    assert expired == [command_id]
-    assert client.pending_commands == {}
+    fake_client: FakePahoClient = client._mqtt_client  # type: ignore[assignment]
+    assert fake_client.published[0][0] == "devices/device-42/command"
+    assert command_id in client.pending_commands
 
 
 @pytest.mark.asyncio
-async def test_request_refresh_publishes_to_refresh_topic() -> None:
-    """Refresh requests should be published to the configured topic."""
+async def test_refresh_requests_publish_expected_payload(
+    monkeypatch: pytest.MonkeyPatch, _patch_paho: None
+) -> None:
+    """Refresh requests should publish the AWS IoT message body."""
 
-    from custom_components.govee.iot_client import (
-        IoTClient,
-        IoTClientConfig,
+    monkeypatch.setattr(
+        "custom_components.govee.iot_client._load_amazon_root_ca",
+        lambda: "FAKE-CA",
     )
 
-    mqtt = FakeMQTT()
+    from custom_components.govee.iot_client import IoTClient
+
     client = IoTClient(
-        mqtt=mqtt,
-        config=IoTClientConfig(
-            enabled=True,
-            state_topic="state/{device_id}",
-            command_topic="command/{device_id}",
-            refresh_topic="refresh/{device_id}",
-            qos=1,
-            command_ttl=timedelta(seconds=10),
-            debug=False,
-        ),
-        on_device_update=lambda update: None,
+        config=_make_config(),
+        on_device_update=lambda *_: None,
     )
 
-    await client.async_start(["device-9"])
-    await client.async_request_refresh("device-9")
+    await client.async_start()
+    await client.async_request_refresh("devices/device-42/refresh")
 
-    assert mqtt.published[-1] == ("refresh/device-9", "{}", 1, False)
+    fake_client: FakePahoClient = client._mqtt_client  # type: ignore[assignment]
+    topic, payload, qos, retain = fake_client.published[-1]
+    assert topic == "devices/device-42/refresh"
+    assert qos == 1
+    assert retain is False
+    assert "cmd" in payload
+
+
+def test_expire_pending_commands_drops_stale_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Expired entries should be pruned when the TTL elapses."""
+
+    monkeypatch.setattr(
+        "custom_components.govee.iot_client._load_amazon_root_ca",
+        lambda: "FAKE-CA",
+    )
+
+    from custom_components.govee.iot_client import IoTClient
+
+    clock = FakeMonotonic(50.0)
+    client = IoTClient(
+        config=_make_config(command_ttl=timedelta(seconds=5)),
+        on_device_update=lambda *_: None,
+        monotonic=clock,
+    )
+
+    pending_id = client._track_command("cmd-id")
+    clock.value = 60.0
+    expired = client.expire_pending_commands()
+
+    assert expired == [pending_id]
+    assert client.pending_commands == {}

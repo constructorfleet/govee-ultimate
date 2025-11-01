@@ -115,8 +115,7 @@ def test_device_metadata_accepts_typescript_payload() -> None:
         "deviceName": "Bedroom Humidifier",
         "channels": {
             "iot": {
-                "stateTopic": "state/ts-device-1",
-                "commandTopic": "command/ts-device-1",
+                "topic": "accounts/123/device/ts-device-1",
             }
         },
     }
@@ -130,8 +129,7 @@ def test_device_metadata_accepts_typescript_payload() -> None:
     assert metadata.category_group == "Air Treatment"
     assert metadata.device_name == "Bedroom Humidifier"
     assert metadata.manufacturer == "Govee"
-    assert metadata.channels["iot"]["state_topic"] == "state/ts-device-1"
-    assert metadata.channels["iot"]["command_topic"] == "command/ts-device-1"
+    assert metadata.channels["iot"]["topic"] == "accounts/123/device/ts-device-1"
 
 
 @dataclass
@@ -510,30 +508,28 @@ class FakeIoTClient:
     def __init__(self) -> None:
         """Initialise storage for commands and subscriptions."""
 
-        self.started: list[list[str]] = []
+        self.started: int = 0
         self.commands: list[tuple[str, dict[str, Any]]] = []
         self.refreshes: list[str] = []
         self.update_callback: Callable[[tuple[str, dict[str, Any]]], Any] | None = None
         self.expiry_batches: list[list[str]] = []
         self.pending_commands: dict[str, float] = {}
 
-    async def async_start(self, device_ids: list[str]) -> None:
-        """Record a start request for ``device_ids``."""
+    async def async_start(self) -> None:
+        """Record a start request."""
 
-        self.started.append(list(device_ids))
+        self.started += 1
 
-    async def async_publish_command(
-        self, device_id: str, payload: dict[str, Any]
-    ) -> str:
+    async def async_publish_command(self, topic: str, payload: dict[str, Any]) -> str:
         """Capture an IoT command publication."""
 
-        self.commands.append((device_id, dict(payload)))
+        self.commands.append((topic, dict(payload)))
         return "cmd-1"
 
-    async def async_request_refresh(self, device_id: str) -> None:
-        """Record a refresh request for ``device_id``."""
+    async def async_request_refresh(self, topic: str) -> None:
+        """Record a refresh request for ``topic``."""
 
-        self.refreshes.append(device_id)
+        self.refreshes.append(topic)
 
     def set_update_callback(
         self, callback: Callable[[tuple[str, dict[str, Any]]], Any]
@@ -780,9 +776,7 @@ async def test_iot_state_subscription_is_started_for_iot_devices() -> None:
                 "device_name": "Humidifier",
                 "channels": {
                     "iot": {
-                        "state_topic": "state/device-iot",
-                        "command_topic": "command/device-iot",
-                        "refresh_topic": "refresh/device-iot",
+                        "topic": "accounts/123/devices/device-iot",
                     }
                 },
             },
@@ -810,7 +804,7 @@ async def test_iot_state_subscription_is_started_for_iot_devices() -> None:
 
     await coordinator.async_discover_devices()
 
-    assert iot_client.started == [["device-iot"]]
+    assert iot_client.started == 1
 
 
 @pytest.mark.asyncio
@@ -826,13 +820,7 @@ async def test_iot_state_updates_flow_to_devices() -> None:
                 "category": "Home Appliances",
                 "category_group": "Air Treatment",
                 "device_name": "Humidifier",
-                "channels": {
-                    "iot": {
-                        "state_topic": "state/device-iot",
-                        "command_topic": "command/device-iot",
-                        "refresh_topic": "refresh/device-iot",
-                    }
-                },
+                "channels": {"iot": {"topic": "accounts/123/devices/device-iot"}},
             }
         ]
     )
@@ -867,13 +855,7 @@ async def test_expire_pending_commands_clears_state_operations() -> None:
                 "category": "Home Appliances",
                 "category_group": "Air Treatment",
                 "device_name": "Humidifier",
-                "channels": {
-                    "iot": {
-                        "state_topic": "state/device-iot",
-                        "command_topic": "command/device-iot",
-                        "refresh_topic": "refresh/device-iot",
-                    }
-                },
+                "channels": {"iot": {"topic": "accounts/123/devices/device-iot"}},
             }
         ]
     )
@@ -957,13 +939,7 @@ async def test_iot_commands_use_mqtt_client_when_enabled() -> None:
                 "category": "Home Appliances",
                 "category_group": "Air Treatment",
                 "device_name": "Humidifier",
-                "channels": {
-                    "iot": {
-                        "state_topic": "state/device-iot",
-                        "command_topic": "command/device-iot",
-                        "refresh_topic": "refresh/device-iot",
-                    }
-                },
+                "channels": {"iot": {"topic": "accounts/123/devices/device-iot"}},
             }
         ]
     )
@@ -987,7 +963,9 @@ async def test_iot_commands_use_mqtt_client_when_enabled() -> None:
     publisher = coordinator.get_command_publisher("device-iot", channel="iot")
     await publisher({"opcode": "0x20"})
 
-    assert iot_client.commands == [("device-iot", {"opcode": "0x20"})]
+    assert iot_client.commands == [
+        ("accounts/123/devices/device-iot", {"opcode": "0x20"})
+    ]
     assert api_client.iot_commands == []
 
 
@@ -1004,13 +982,7 @@ async def test_iot_refresh_requests_use_mqtt_client() -> None:
                 "category": "Home Appliances",
                 "category_group": "Air Treatment",
                 "device_name": "Humidifier",
-                "channels": {
-                    "iot": {
-                        "state_topic": "state/device-iot",
-                        "command_topic": "command/device-iot",
-                        "refresh_topic": "refresh/device-iot",
-                    }
-                },
+                "channels": {"iot": {"topic": "accounts/123/devices/device-iot"}},
             }
         ]
     )
@@ -1030,7 +1002,7 @@ async def test_iot_refresh_requests_use_mqtt_client() -> None:
     await coordinator.async_discover_devices()
     await coordinator.async_request_device_refresh("device-iot")
 
-    assert iot_client.refreshes == ["device-iot"]
+    assert iot_client.refreshes == ["accounts/123/devices/device-iot"]
 
 
 @pytest.mark.asyncio

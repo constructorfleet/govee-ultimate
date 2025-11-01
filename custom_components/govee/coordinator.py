@@ -226,7 +226,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         if self._iot_client and self._iot_state_enabled:
             iot_devices = self._iot_device_ids()
             if iot_devices:
-                await self._iot_client.async_start(iot_devices)
+                await self._iot_client.async_start()
         self._schedule_command_expiry()
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -327,9 +327,14 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
     ) -> None:
         """Send ``command`` via the correct transport channel."""
 
+        metadata = self.device_metadata.get(device_id)
+        if metadata is None:
+            raise KeyError(device_id)
+
         if channel_name == "iot":
             if self._iot_client and self._iot_command_enabled:
-                await self._iot_client.async_publish_command(device_id, command)
+                topic = self._resolve_iot_topic(metadata, channel_info, device_id)
+                await self._iot_client.async_publish_command(topic, command)
                 self._schedule_command_expiry()
             else:
                 await self._api_client.async_publish_iot_command(
@@ -361,7 +366,26 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         if metadata is None or "iot" not in metadata.channels:
             raise KeyError(device_id)
 
-        await self._iot_client.async_request_refresh(device_id)
+        channel_info = metadata.channels["iot"]
+        topic = self._resolve_iot_topic(metadata, channel_info, device_id)
+        await self._iot_client.async_request_refresh(topic)
+
+    def _resolve_iot_topic(
+        self,
+        metadata: DeviceMetadata,
+        channel_info: dict[str, Any],
+        device_id: str,
+    ) -> str:
+        """Determine the IoT topic for ``device_id``."""
+
+        topic = channel_info.get("topic")
+        if isinstance(topic, str) and topic:
+            return topic
+        device = getattr(self.devices.get(device_id), "device", None)
+        fallback = getattr(device, "iot_topic", None)
+        if isinstance(fallback, str) and fallback:
+            return fallback
+        raise KeyError(f"No IoT topic available for {device_id}")
 
     def _schedule_iot_update(self, update: tuple[str, dict[str, Any]]) -> None:
         """Schedule processing of an IoT state update from the MQTT client."""
