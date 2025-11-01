@@ -308,7 +308,7 @@ async def test_command_publisher_uses_device_list_iot_topic() -> None:
                 "manufacturer": "Govee",
                 "channels": {
                     "iot": {
-                        "topic": "accounts/abc/device/iot-device-1",
+                        "commandTopic": "accounts/abc/device/iot-device-1",
                     }
                 },
             }

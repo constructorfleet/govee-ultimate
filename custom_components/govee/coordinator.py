@@ -380,9 +380,12 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         """Determine the IoT topic for ``device_id``."""
 
         iot_channel = metadata.channels.get("iot", {})
-        topic = channel_info.get("topic") or iot_channel.get("topic")
-        if isinstance(topic, str) and topic:
-            return topic
+        key_candidates = ("topic", "command_topic", "commandTopic")
+        for payload in (channel_info, iot_channel):
+            for key in key_candidates:
+                topic = payload.get(key)
+                if isinstance(topic, str) and topic:
+                    return topic
         raise KeyError(f"No IoT topic available for {device_id}")
 
     def _schedule_iot_update(self, update: tuple[str, dict[str, Any]]) -> None:
