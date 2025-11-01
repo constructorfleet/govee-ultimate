@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+import voluptuous as vol
+
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_platform
+
 from homeassistant.components.sensor import SensorEntity
 
 from .entity import (
@@ -14,6 +19,29 @@ from .entity import (
     resolve_coordinator,
 )
 from .state.states import EarlyWarningState, IceMakerScheduledStartState, SceneModeState
+
+
+_ICE_MAKER_SCHEDULE_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Required("enabled"): bool,
+        vol.Optional("hour_start"): vol.All(int, vol.Range(min=0, max=23)),
+        vol.Optional("minute_start"): vol.All(int, vol.Range(min=0, max=59)),
+        vol.Optional("nugget_size"): vol.All(str, vol.Length(min=1)),
+    }
+)
+
+
+async def _async_set_schedule_service(
+    entity: GoveeSensorEntity, data: Mapping[str, Any]
+) -> None:
+    """Dispatch schedule updates to the scheduled start entity."""
+
+    if not isinstance(entity, GoveeIceMakerScheduledStartSensorEntity):
+        return
+    try:
+        await entity.async_set_schedule(**data)
+    except ValueError as exc:
+        raise HomeAssistantError(str(exc)) from exc
 
 
 class GoveeSensorEntity(GoveeStateEntity, SensorEntity):
@@ -238,6 +266,13 @@ async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> N
     coordinator = resolve_coordinator(hass, entry)
     if coordinator is None:
         return
+
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        "set_schedule",
+        _ICE_MAKER_SCHEDULE_SERVICE_SCHEMA,
+        _async_set_schedule_service,
+    )
 
     entities = build_platform_entities(coordinator, "sensor", _sensor_entity_factory)
 

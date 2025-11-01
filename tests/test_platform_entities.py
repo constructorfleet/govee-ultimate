@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import ModuleType, SimpleNamespace
 from typing import Any
+from collections.abc import Mapping
 
 import pytest
 
@@ -207,6 +208,44 @@ def setup_platform_stubs() -> Callable[[], None]:  # noqa: C901
         ),
         "homeassistant.components.select": ("SelectEntity", _SelectEntity),
     }
+
+    class _EntityPlatform:
+        """Stub entity platform capturing service registrations."""
+
+        def __init__(self) -> None:
+            self.registered_services: list[dict[str, Any]] = []
+
+        def async_register_entity_service(
+            self,
+            service: str,
+            schema: Any,
+            handler: Callable[[Any, Mapping[str, Any]], Any],
+        ) -> None:
+            self.registered_services.append(
+                {"name": service, "schema": schema, "handler": handler}
+            )
+
+    entity_platform_module = ModuleType("homeassistant.helpers.entity_platform")
+    entity_platform_module._platform = _EntityPlatform()
+
+    def _async_get_current_platform() -> _EntityPlatform:
+        return entity_platform_module._platform
+
+    entity_platform_module.EntityPlatform = _EntityPlatform  # type: ignore[attr-defined]
+    entity_platform_module.async_get_current_platform = (  # type: ignore[attr-defined]
+        _async_get_current_platform
+    )
+    _install("homeassistant.helpers.entity_platform", entity_platform_module)
+
+    exceptions_module = ModuleType("homeassistant.exceptions")
+
+    class _HomeAssistantError(Exception):
+        """Minimal Home Assistant error base for service validation."""
+
+        pass
+
+    exceptions_module.HomeAssistantError = _HomeAssistantError  # type: ignore[attr-defined]
+    _install("homeassistant.exceptions", exceptions_module)
 
     for module_name, (class_name, class_obj) in platform_classes.items():
         module = ModuleType(module_name)
@@ -1100,6 +1139,129 @@ async def test_ice_maker_schedule_sensor_attributes_and_commands(
     assert coordinator.command_publisher_calls
     for _, payload in coordinator.command_publisher_calls:
         assert "state" not in payload
+
+
+@pytest.mark.asyncio
+async def test_sensor_registers_schedule_service_and_publishes_commands(
+    setup_platform_stubs: Callable[[], None],
+    ice_maker_metadata: DeviceMetadata,
+    ice_maker_device: IceMakerDevice,
+) -> None:
+    """Sensor platform should expose a schedule service that dispatches commands."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-sensor-schedule")
+    coordinator = FakeCoordinator(
+        {ice_maker_metadata.device_id: ice_maker_device},
+        {ice_maker_metadata.device_id: ice_maker_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    try:
+        await _async_setup_platform(
+            "sensor",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+        sensor_module = importlib.import_module(
+            "custom_components.govee_ultimate.sensor"
+        )
+        platform = sensor_module.entity_platform.async_get_current_platform()
+
+        assert any(
+            service["name"] == "set_schedule"
+            for service in platform.registered_services
+        )
+
+        schedule_entity = next(
+            entity
+            for entity in added_entities
+            if entity.unique_id == f"{ice_maker_metadata.device_id}-scheduledStart"
+        )
+
+        service = next(
+            svc for svc in platform.registered_services if svc["name"] == "set_schedule"
+        )
+        schema = service["schema"]
+        handler = service["handler"]
+        data = schema(
+            {
+                "enabled": True,
+                "hour_start": 9,
+                "minute_start": 15,
+                "nugget_size": "small",
+            }
+        )
+
+        await handler(schedule_entity, data)
+
+        assert coordinator.command_publisher_calls
+        device_id, payload = coordinator.command_publisher_calls[-1]
+        assert device_id == ice_maker_metadata.device_id
+        assert "command_id" in payload
+    finally:
+        teardown()
+
+
+@pytest.mark.asyncio
+async def test_sensor_schedule_service_raises_homeassistant_error_for_invalid_inputs(
+    setup_platform_stubs: Callable[[], None],
+    ice_maker_metadata: DeviceMetadata,
+    ice_maker_device: IceMakerDevice,
+) -> None:
+    """Invalid schedule payloads should raise HomeAssistantError through the service."""
+
+    teardown = setup_platform_stubs
+    hass = FakeHass()
+    entry = FakeConfigEntry(entry_id="entry-sensor-invalid-schedule")
+    coordinator = FakeCoordinator(
+        {ice_maker_metadata.device_id: ice_maker_device},
+        {ice_maker_metadata.device_id: ice_maker_metadata},
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities: list[Any] = []
+
+    home_assistant_error: type[Exception] | None = None
+    try:
+        await _async_setup_platform(
+            "sensor",
+            hass,
+            entry,
+            coordinator,
+            added_entities,
+        )
+        sensor_module = importlib.import_module(
+            "custom_components.govee_ultimate.sensor"
+        )
+        platform = sensor_module.entity_platform.async_get_current_platform()
+        home_assistant_error = sensor_module.HomeAssistantError
+
+        service = next(
+            svc for svc in platform.registered_services if svc["name"] == "set_schedule"
+        )
+        schedule_entity = next(
+            entity
+            for entity in added_entities
+            if entity.unique_id == f"{ice_maker_metadata.device_id}-scheduledStart"
+        )
+
+        schema = service["schema"]
+        handler = service["handler"]
+
+        data = schema({"enabled": True})
+
+        assert home_assistant_error is not None
+
+        with pytest.raises(home_assistant_error):
+            await handler(schedule_entity, data)
+    finally:
+        teardown()
 
 
 @pytest.mark.asyncio
