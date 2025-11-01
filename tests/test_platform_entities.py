@@ -41,17 +41,17 @@ if "homeassistant.helpers.update_coordinator" not in sys.modules:
     coordinator_module.CoordinatorEntity = _CoordinatorEntity  # type: ignore[attr-defined]
     sys.modules["homeassistant.helpers.update_coordinator"] = coordinator_module
 
-from custom_components.govee_ultimate import DOMAIN
-from custom_components.govee_ultimate.coordinator import DeviceMetadata
-from custom_components.govee_ultimate.device_types.air_quality import AirQualityDevice
-from custom_components.govee_ultimate.device_types.humidifier import HumidifierDevice
-from custom_components.govee_ultimate.device_types.ice_maker import IceMakerDevice
-from custom_components.govee_ultimate.device_types.meat_thermometer import (
+from custom_components.govee import DOMAIN
+from custom_components.govee.coordinator import DeviceMetadata
+from custom_components.govee.device_types.air_quality import AirQualityDevice
+from custom_components.govee.device_types.humidifier import HumidifierDevice
+from custom_components.govee.device_types.ice_maker import IceMakerDevice
+from custom_components.govee.device_types.meat_thermometer import (
     MeatThermometerDevice,
 )
-from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
-from custom_components.govee_ultimate.device_types.rgb_light import RGBLightDevice
-from custom_components.govee_ultimate.device_types.rgbic_light import RGBICLightDevice
+from custom_components.govee.device_types.purifier import PurifierDevice
+from custom_components.govee.device_types.rgb_light import RGBLightDevice
+from custom_components.govee.device_types.rgbic_light import RGBICLightDevice
 
 
 @pytest.fixture(autouse=True)
@@ -557,7 +557,7 @@ async def _async_setup_platform(
     added_entities: list[Any],
 ) -> None:
     """Load the requested platform and collect created entities."""
-    module = importlib.import_module(f"custom_components.govee_ultimate.{platform}")
+    module = importlib.import_module(f"custom_components.govee.{platform}")
 
     async def _async_add_entities(entities: list[Any]) -> None:
         added_entities.extend(entities)
@@ -1188,9 +1188,7 @@ async def test_sensor_registers_schedule_service_and_publishes_commands(
             coordinator,
             added_entities,
         )
-        sensor_module = importlib.import_module(
-            "custom_components.govee_ultimate.sensor"
-        )
+        sensor_module = importlib.import_module("custom_components.govee.sensor")
         platform = sensor_module.entity_platform.async_get_current_platform()
 
         assert any(
@@ -1256,9 +1254,7 @@ async def test_sensor_schedule_service_raises_homeassistant_error_for_invalid_in
             coordinator,
             added_entities,
         )
-        sensor_module = importlib.import_module(
-            "custom_components.govee_ultimate.sensor"
-        )
+        sensor_module = importlib.import_module("custom_components.govee.sensor")
         platform = sensor_module.entity_platform.async_get_current_platform()
         home_assistant_error = sensor_module.HomeAssistantError
 

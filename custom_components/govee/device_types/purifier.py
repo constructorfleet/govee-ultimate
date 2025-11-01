@@ -5,7 +5,7 @@ from __future__ import annotations
 from itertools import chain
 from typing import Any
 
-from custom_components.govee_ultimate.state import (
+from custom_components.govee.state import (
     ActiveState,
     ControlLockState,
     DeviceState,

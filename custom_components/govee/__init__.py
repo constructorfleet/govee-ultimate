@@ -8,7 +8,7 @@ from typing import Any
 
 from homeassistant.helpers import config_validation as cv
 
-DOMAIN = "govee_ultimate"
+DOMAIN = "govee"
 PLATFORMS: tuple[str, ...] = (
     "light",
     "humidifier",

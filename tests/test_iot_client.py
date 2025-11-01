@@ -75,7 +75,7 @@ class FakeClock:
 async def test_iot_client_subscribes_to_state_topics_on_start() -> None:
     """Client should subscribe to each device state topic when started."""
 
-    from custom_components.govee_ultimate.iot_client import (
+    from custom_components.govee.iot_client import (
         IoTClient,
         IoTClientConfig,
     )
@@ -112,7 +112,7 @@ async def test_iot_client_subscribes_to_state_topics_on_start() -> None:
 async def test_state_callback_deserialises_json_payload() -> None:
     """The state callback should JSON-decode payloads before forwarding."""
 
-    from custom_components.govee_ultimate.iot_client import (
+    from custom_components.govee.iot_client import (
         IoTClient,
         IoTClientConfig,
     )
@@ -147,7 +147,7 @@ async def test_state_callback_deserialises_json_payload() -> None:
 async def test_set_update_callback_replaces_listener() -> None:
     """The update callback should be replaceable at runtime."""
 
-    from custom_components.govee_ultimate.iot_client import (
+    from custom_components.govee.iot_client import (
         IoTClient,
         IoTClientConfig,
     )
@@ -184,7 +184,7 @@ async def test_set_update_callback_replaces_listener() -> None:
 async def test_update_config_resubscribes_with_new_topics() -> None:
     """Configuration updates should adjust subscriptions accordingly."""
 
-    from custom_components.govee_ultimate.iot_client import (
+    from custom_components.govee.iot_client import (
         IoTClient,
         IoTClientConfig,
     )
@@ -228,7 +228,7 @@ async def test_update_config_resubscribes_with_new_topics() -> None:
 async def test_update_config_disables_all_subscriptions() -> None:
     """Disabling the client should remove existing subscriptions."""
 
-    from custom_components.govee_ultimate.iot_client import (
+    from custom_components.govee.iot_client import (
         IoTClient,
         IoTClientConfig,
     )
@@ -271,7 +271,7 @@ async def test_update_config_disables_all_subscriptions() -> None:
 async def test_publish_command_serialises_payload_and_tracks_pending() -> None:
     """Client should publish commands with generated identifiers and TTL."""
 
-    from custom_components.govee_ultimate.iot_client import (
+    from custom_components.govee.iot_client import (
         IoTClient,
         IoTClientConfig,
     )
@@ -311,7 +311,7 @@ async def test_publish_command_serialises_payload_and_tracks_pending() -> None:
 async def test_expire_pending_commands_returns_ids() -> None:
     """Expiry pruning should drop stale commands using the configured TTL."""
 
-    from custom_components.govee_ultimate.iot_client import (
+    from custom_components.govee.iot_client import (
         IoTClient,
         IoTClientConfig,
     )
@@ -347,7 +347,7 @@ async def test_expire_pending_commands_returns_ids() -> None:
 async def test_request_refresh_publishes_to_refresh_topic() -> None:
     """Refresh requests should be published to the configured topic."""
 
-    from custom_components.govee_ultimate.iot_client import (
+    from custom_components.govee.iot_client import (
         IoTClient,
         IoTClientConfig,
     )

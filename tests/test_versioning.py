@@ -16,7 +16,7 @@ def manifest_file(tmp_path: Path) -> Path:
     manifest.write_text(
         json.dumps(
             {
-                "domain": "govee_ultimate",
+                "domain": "govee",
                 "name": "Govee Ultimate",
                 "config_flow": True,
             }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.govee_ultimate.state.states import (
+from custom_components.govee.state.states import (
     AirQualityHumidityState,
     AirQualityPM25State,
     AirQualityTemperatureState,

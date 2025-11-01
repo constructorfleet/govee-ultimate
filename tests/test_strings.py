@@ -18,8 +18,8 @@ FIELDS = (
 def test_config_flow_strings_define_user_step_fields() -> None:
     """The strings file should describe the user step inputs."""
 
-    strings_path = Path("custom_components/govee_ultimate/strings.json")
-    translations_path = Path("custom_components/govee_ultimate/translations/en.json")
+    strings_path = Path("custom_components/govee/strings.json")
+    translations_path = Path("custom_components/govee/translations/en.json")
 
     assert strings_path.exists(), "Missing strings.json for the integration"
     assert translations_path.exists(), "Missing default translation file"

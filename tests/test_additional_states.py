@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.govee_ultimate.state.device_state import ParseOption
-from custom_components.govee_ultimate.state.states import (
+from custom_components.govee.state.device_state import ParseOption
+from custom_components.govee.state.states import (
     ConnectedState,
     ControlLockState,
     DisplayScheduleState,

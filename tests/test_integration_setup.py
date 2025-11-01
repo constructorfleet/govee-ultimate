@@ -103,8 +103,8 @@ if "homeassistant.helpers.update_coordinator" not in sys.modules:
         "homeassistant.helpers.update_coordinator", coordinator_module
     )
 
-import custom_components.govee_ultimate as integration
-from custom_components.govee_ultimate import DOMAIN
+import custom_components.govee as integration
+from custom_components.govee import DOMAIN
 
 
 class FakeHass:

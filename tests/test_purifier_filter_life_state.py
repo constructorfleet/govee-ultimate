@@ -7,8 +7,8 @@ from collections.abc import Callable
 
 import pytest
 
-from custom_components.govee_ultimate.device_types.purifier import PurifierDevice
-from custom_components.govee_ultimate.state.states import FilterLifeState, ParseOption
+from custom_components.govee.device_types.purifier import PurifierDevice
+from custom_components.govee.state.states import FilterLifeState, ParseOption
 
 
 class DummyDevice:

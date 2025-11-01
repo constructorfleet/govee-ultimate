@@ -6,15 +6,15 @@ from collections.abc import Sequence
 
 import pytest
 
-from custom_components.govee_ultimate import opcodes
-from custom_components.govee_ultimate.state.states import (
+from custom_components.govee import opcodes
+from custom_components.govee.state.states import (
     ActiveState,
     BrightnessState,
     ColorRGBState,
     ColorTemperatureState,
     PowerState,
 )
-from custom_components.govee_ultimate.state_catalog import load_state_catalog
+from custom_components.govee.state_catalog import load_state_catalog
 
 
 class DummyDevice:

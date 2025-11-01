@@ -4,7 +4,7 @@ import pytest
 
 import base64
 
-from custom_components.govee_ultimate import opcodes
+from custom_components.govee import opcodes
 
 
 def test_as_opcode_normalizes_int_and_string_inputs() -> None:

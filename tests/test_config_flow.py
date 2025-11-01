@@ -74,7 +74,7 @@ if "homeassistant.config_entries" not in sys.modules:
     sys.modules["homeassistant.config_entries"] = config_entries
 
 
-from custom_components.govee_ultimate import config_flow
+from custom_components.govee import config_flow
 
 
 class _StubHass(SimpleNamespace):

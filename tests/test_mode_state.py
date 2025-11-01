@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from custom_components.govee_ultimate.state.device_state import (
+from custom_components.govee.state.device_state import (
     DeviceOpState,
     ParseOption,
 )
-from custom_components.govee_ultimate.state.states import ModeState
+from custom_components.govee.state.states import ModeState
 
 
 class DummyDevice:

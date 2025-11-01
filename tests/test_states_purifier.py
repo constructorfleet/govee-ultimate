@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from custom_components.govee_ultimate.state.states import PurifierCustomModeState
+from custom_components.govee.state.states import PurifierCustomModeState
 
 
 def _build_state() -> PurifierCustomModeState:

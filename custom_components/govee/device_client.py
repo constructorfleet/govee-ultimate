@@ -10,9 +10,11 @@ import httpx
 from homeassistant.helpers.storage import Store
 
 from .auth import GoveeAuthManager
+from .storage import async_migrate_storage_file
 
 DEVICE_LIST_URL = "https://app2.govee.com/device/rest/devices/v1/list"
-DEVICE_STORE_KEY = "govee_ultimate_devices"
+DEVICE_STORE_KEY = "govee_devices"
+LEGACY_DEVICE_STORE_KEY = "govee_ultimate_devices"
 DEVICE_STORE_VERSION = 1
 
 
@@ -142,6 +144,7 @@ class DeviceListClient:
     ) -> None:
         """Bind Home Assistant context, HTTP client, and auth manager for REST operations."""
 
+        self._hass = hass
         self._client = client
         self._auth = auth
         self._store = Store(hass, DEVICE_STORE_VERSION, DEVICE_STORE_KEY, private=True)
@@ -149,6 +152,7 @@ class DeviceListClient:
     async def async_fetch_devices(self) -> list[GoveeDevice]:
         """Fetch the device list, falling back to cached data when needed."""
 
+        await self._migrate_legacy_storage()
         try:
             payload = await self._request_payload()
             devices = [
@@ -165,6 +169,13 @@ class DeviceListClient:
             return [
                 GoveeDevice.from_storage(item) for item in cached.get("devices", [])
             ]
+
+    async def _migrate_legacy_storage(self) -> None:
+        """Migrate persisted device storage files from the legacy namespace."""
+
+        await async_migrate_storage_file(
+            self._hass, LEGACY_DEVICE_STORE_KEY, DEVICE_STORE_KEY
+        )
 
     async def _request_payload(self) -> dict[str, Any]:
         """Request the raw JSON payload from the REST API."""

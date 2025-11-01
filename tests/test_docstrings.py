@@ -6,9 +6,9 @@ from collections.abc import Callable
 
 import pytest
 
-from custom_components.govee_ultimate import config_flow
-from custom_components.govee_ultimate.auth import GoveeAuthManager
-from custom_components.govee_ultimate.device_client import DeviceListClient
+from custom_components.govee import config_flow
+from custom_components.govee.auth import GoveeAuthManager
+from custom_components.govee.device_client import DeviceListClient
 from homeassistant.helpers.storage import Store
 
 
