@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import timedelta
@@ -398,11 +399,18 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         """Apply an IoT update to the device models."""
 
         device_id, payload = update
-        await self.async_process_state_update(device_id, payload)
+        updates, raw_payload = self._normalise_iot_payload(payload)
+        await self.async_process_state_update(
+            device_id, updates, raw_payload=raw_payload
+        )
         self._schedule_command_expiry()
 
     async def async_process_state_update(
-        self, device_id: str, updates: dict[str, Any]
+        self,
+        device_id: str,
+        updates: dict[str, Any],
+        *,
+        raw_payload: dict[str, Any] | None = None,
     ) -> list[str]:
         """Apply state updates from a transport channel to device models."""
 
@@ -416,7 +424,68 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             if state is None:
                 continue
             changed.extend(self._apply_state_update(name, state, value))
+        if raw_payload is not None and isinstance(raw_payload, dict):
+            for name, state in device.states.items():
+                before = state.value
+                state.parse(raw_payload)
+                if name not in changed and state.value != before:
+                    changed.append(name)
         return changed
+
+    def _normalise_iot_payload(
+        self, payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Flatten nested AWS IoT frames for state processing."""
+
+        if not isinstance(payload, dict):
+            return payload, payload
+
+        frames: list[dict[str, Any]] = []
+        queue: deque[dict[str, Any]] = deque([payload])
+        seen: set[int] = set()
+        while queue:
+            frame = queue.popleft()
+            identifier = id(frame)
+            if identifier in seen:
+                continue
+            seen.add(identifier)
+            frames.append(frame)
+            for key in ("msg", "data"):
+                nested = frame.get(key)
+                if isinstance(nested, dict):
+                    queue.append(nested)
+
+        combined_state: dict[str, Any] = {}
+        op_payload: dict[str, Any] | None = None
+        combined_payload: dict[str, Any] = {}
+        for frame in frames:
+            for key, value in frame.items():
+                if key in ("msg", "data"):
+                    continue
+                if key == "state" and isinstance(value, dict):
+                    combined_state.update(value)
+                    continue
+                if key == "op" and isinstance(value, dict):
+                    op_payload = value
+                    continue
+                combined_payload.setdefault(key, value)
+
+        if combined_state:
+            combined_payload["state"] = combined_state
+        if op_payload is not None:
+            combined_payload["op"] = op_payload
+
+        flattened_updates = dict(payload)
+        if combined_state:
+            for key, value in combined_state.items():
+                flattened_updates[key] = value
+                if isinstance(key, str):
+                    snake_key = _camel_to_snake(key)
+                    flattened_updates.setdefault(snake_key, value)
+        if op_payload is not None:
+            flattened_updates.setdefault("op", op_payload)
+
+        return flattened_updates, combined_payload or payload
 
     def _apply_state_update(self, name: str, state: Any, value: Any) -> list[str]:
         """Apply ``value`` to ``state`` using any custom hooks available."""
