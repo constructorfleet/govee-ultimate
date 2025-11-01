@@ -6,6 +6,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.helpers import entity_platform
+import voluptuous as vol
 
 from .entity import (
     GoveeStateEntity,
@@ -13,7 +15,12 @@ from .entity import (
     build_platform_entities,
     resolve_coordinator,
 )
-from .state.states import EarlyWarningState, IceMakerScheduledStartState, SceneModeState
+from .state.states import (
+    EarlyWarningState,
+    IceMakerScheduledStartState,
+    PurifierCustomModeState,
+    SceneModeState,
+)
 
 
 class GoveeSensorEntity(GoveeStateEntity, SensorEntity):
@@ -219,6 +226,114 @@ class GoveeSceneModeSensorEntity(GoveeSensorEntity):
         }
 
 
+class GoveePurifierCustomProgramSensorEntity(GoveeSensorEntity):
+    """Expose purifier custom program metadata and update service."""
+
+    _state: PurifierCustomModeState
+
+    def _current_program(self) -> Mapping[str, Any] | None:
+        """Return the currently active program mapping when available."""
+
+        value = self._state.value
+        if isinstance(value, Mapping):
+            return value
+        return None
+
+    def _current_program_id(self) -> int | None:
+        """Return the active program identifier as an integer when available."""
+
+        program = self._current_program()
+        if program is None:
+            return None
+        program_id = program.get("id")
+        if isinstance(program_id, int):
+            return program_id
+        try:
+            return int(program_id)
+        except (TypeError, ValueError):
+            return None
+
+    def _programs_as_dict(self) -> dict[int, dict[str, Any]]:
+        """Return a dictionary copy of the stored program metadata."""
+
+        return {slot: dict(data) for slot, data in self._state.programs.items()}
+
+    @property
+    def native_value(self) -> Any:
+        """Return the current program identifier when available."""
+
+        return self._current_program_id()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the full program metadata for Home Assistant."""
+
+        program = self._current_program() or {}
+        return {
+            "fan_speed": program.get("fan_speed"),
+            "duration": program.get("duration"),
+            "remaining": program.get("remaining"),
+            "programs": self._programs_as_dict(),
+        }
+
+    async def async_set_custom_program(
+        self,
+        *,
+        id: int,
+        fan_speed: int,
+        duration: int,
+        remaining: int,
+    ) -> None:
+        """Publish an updated custom program definition through the state."""
+
+        next_value = self._normalise_program(id, fan_speed, duration, remaining)
+        await self._async_publish_state(next_value)
+        self._state._update_state(next_value)  # type: ignore[attr-defined]
+        self.async_write_ha_state()
+
+    def _normalise_program(
+        self,
+        slot_id: Any,
+        fan_speed: Any,
+        duration: Any,
+        remaining: Any,
+    ) -> dict[str, int]:
+        """Validate and cast the provided program inputs."""
+
+        try:
+            slot = int(slot_id)
+            speed = int(fan_speed)
+            duration_value = int(duration)
+            remaining_value = int(remaining)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+            raise ValueError("Program values must be integers") from exc
+        if slot < 0 or slot > 2:
+            raise ValueError("Program id must be between 0 and 2")
+        if speed < 0 or speed > 9:
+            raise ValueError("Fan speed must be between 0 and 9")
+        if duration_value < 0 or remaining_value < 0:
+            raise ValueError("Duration and remaining must be non-negative")
+        return {
+            "id": slot,
+            "fan_speed": speed,
+            "duration": duration_value,
+            "remaining": remaining_value,
+        }
+
+
+_PURIFIER_PROGRAM_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Required("id"): vol.All(vol.Coerce(int), vol.Range(min=0, max=2)),
+        vol.Required("fan_speed"): vol.All(vol.Coerce(int), vol.Range(min=0, max=9)),
+        vol.Required("duration"): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Required("remaining"): vol.All(vol.Coerce(int), vol.Range(min=0)),
+    }
+)
+
+
+_REGISTERED_ENTITY_SERVICES: set[str] = set()
+
+
 def _sensor_entity_factory(coordinator: Any, device_id: str, entity: Any) -> Any:
     """Return a specialised entity for known sensor state types."""
 
@@ -229,6 +344,8 @@ def _sensor_entity_factory(coordinator: Any, device_id: str, entity: Any) -> Any
         return GoveeIceMakerScheduledStartSensorEntity(coordinator, device_id, entity)
     if isinstance(state, SceneModeState):
         return GoveeSceneModeSensorEntity(coordinator, device_id, entity)
+    if isinstance(state, PurifierCustomModeState):
+        return GoveePurifierCustomProgramSensorEntity(coordinator, device_id, entity)
     return GoveeSensorEntity(coordinator, device_id, entity)
 
 
@@ -240,5 +357,19 @@ async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> N
         return
 
     entities = build_platform_entities(coordinator, "sensor", _sensor_entity_factory)
+    if (
+        any(
+            isinstance(entity, GoveePurifierCustomProgramSensorEntity)
+            for entity in entities
+        )
+        and "set_purifier_custom_program" not in _REGISTERED_ENTITY_SERVICES
+    ):
+        platform = entity_platform.async_get_current_platform()
+        platform.async_register_entity_service(
+            "set_purifier_custom_program",
+            _PURIFIER_PROGRAM_SERVICE_SCHEMA,
+            "async_set_custom_program",
+        )
+        _REGISTERED_ENTITY_SERVICES.add("set_purifier_custom_program")
 
     await async_add_platform_entities(async_add_entities, entities)

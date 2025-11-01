@@ -86,9 +86,13 @@ class PurifierDevice(BaseDevice):
         def _register_mode_sensor(state: DeviceState[Any] | None) -> None:
             if state is None:
                 return
+            translation_key: str | None = None
+            if isinstance(state, PurifierCustomModeState):
+                translation_key = "purifier_custom_program"
             self.expose_entity(
                 platform="sensor",
                 state=state,
+                translation_key=translation_key,
                 entity_category=EntityCategory.DIAGNOSTIC,
             )
 

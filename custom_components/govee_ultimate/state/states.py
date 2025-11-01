@@ -742,6 +742,23 @@ class PurifierCustomModeState(DeviceOpState[dict[str, Any] | None]):
         }
         self._update_state(current_program)
 
+    @property
+    def programs(self) -> Mapping[int, Mapping[str, int]]:
+        """Return the stored program metadata for each slot."""
+
+        programs: Mapping[int, Mapping[str, Any]] = self._custom_modes.get(
+            "programs", {}
+        )
+        return {
+            idx: {
+                "id": int(data.get("id", idx)),
+                "fan_speed": _int_from_value(data.get("fan_speed")) or 0,
+                "duration": _int_from_value(data.get("duration")) or 0,
+                "remaining": _int_from_value(data.get("remaining")) or 0,
+            }
+            for idx, data in programs.items()
+        }
+
     def register_listener(
         self, callback: Callable[[dict[str, Any] | None], None]
     ) -> None:
@@ -786,6 +803,11 @@ class PurifierCustomModeState(DeviceOpState[dict[str, Any] | None]):
             program["id"],
             *self._flatten_programs(programs, include_remaining=False),
         ]
+        self._custom_modes = {
+            "current_program_id": program["id"],
+            "current_program": programs.get(program["id"]),
+            "programs": programs,
+        }
         return {
             "command": {
                 "command": "multi_sync",
