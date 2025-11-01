@@ -560,6 +560,12 @@ class HumidifierDevice(BaseDevice):
         auto = self.add_state(
             AutoModeState(device=device_model, delegate=auto_delegate)
         )
+        for mode_state in (manual, custom, auto):
+            self.expose_entity(
+                platform="sensor",
+                state=mode_state,
+                entity_category=EntityCategory.DIAGNOSTIC,
+            )
         self._auto_mode_state = auto
 
         self._mode_state = self.add_state(

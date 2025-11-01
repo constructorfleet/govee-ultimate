@@ -811,6 +811,140 @@ def test_device_states_expose_home_assistant_entities(
     assert purifier_entities["filterExpired"].platform == "binary_sensor"
 
 
+def test_humidifier_mode_states_expose_diagnostic_entities(
+    humidifier_model_h7142: MockDeviceModel,
+) -> None:
+    """Manual, custom, and auto modes should expose diagnostic sensors."""
+
+    device = HumidifierDevice(humidifier_model_h7142)
+
+    manual_state = device.states["manual_mode"]
+    custom_state = device.states["custom_mode"]
+    auto_state = device.states["auto_mode"]
+
+    entities = device.home_assistant_entities
+
+    manual_entity = entities["manual_mode"]
+    assert manual_entity.platform == "sensor"
+    assert manual_entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert manual_entity.state is manual_state
+
+    manual_state.parse_op_command([0x00, 0x05, 0x01, 0x04, 0x00])
+    assert manual_entity.state.value == 4
+
+    custom_entity = entities["custom_mode"]
+    assert custom_entity.platform == "sensor"
+    assert custom_entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert custom_entity.state is custom_state
+
+    custom_state.parse_op_command(
+        [
+            0x00,
+            0x01,
+            0x14,
+            0x00,
+            0x0A,
+            0x00,
+            0x0A,
+            0x1E,
+            0x00,
+            0x14,
+            0x00,
+            0x14,
+            0x32,
+            0x00,
+            0x1E,
+            0x00,
+            0x1E,
+        ]
+    )
+    assert custom_entity.state.value == {
+        "id": 1,
+        "mistLevel": 30,
+        "duration": 20,
+        "remaining": 20,
+    }
+
+    auto_entity = entities["auto_mode"]
+    assert auto_entity.platform == "sensor"
+    assert auto_entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert auto_entity.state is auto_state
+
+    auto_state.parse_op_command([55])
+    assert auto_entity.state.value == {"targetHumidity": 55}
+
+
+def test_purifier_mode_states_expose_diagnostic_entities(
+    purifier_model_h7126: MockDeviceModel,
+) -> None:
+    """Purifier manual, custom, and auto modes should expose diagnostic sensors."""
+
+    device = PurifierDevice(purifier_model_h7126)
+
+    manual_state = device.states["manual_mode"]
+    custom_state = device.states["custom_mode"]
+    auto_state = device.states["auto_mode"]
+
+    entities = device.home_assistant_entities
+
+    manual_entity = entities["manual_mode"]
+    assert manual_entity.platform == "sensor"
+    assert manual_entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert manual_entity.state is manual_state
+
+    manual_state.parse(
+        {"op": {"command": [[0xAA, 0x05, 0x01, 0x03, 0x04, 0x05, 0x00]]}}
+    )
+    assert manual_entity.state.value == 5
+
+    custom_entity = entities["custom_mode"]
+    assert custom_entity.platform == "sensor"
+    assert custom_entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert custom_entity.state is custom_state
+
+    custom_state.parse(
+        {
+            "op": {
+                "command": [
+                    [
+                        0xAA,
+                        0x05,
+                        0x02,
+                        0x01,
+                        0x05,
+                        0x00,
+                        0x0A,
+                        0x00,
+                        0x0A,
+                        0x06,
+                        0x00,
+                        0x14,
+                        0x00,
+                        0x14,
+                        0x07,
+                        0x00,
+                        0x1E,
+                        0x00,
+                        0x1E,
+                    ]
+                ]
+            }
+        }
+    )
+    assert custom_entity.state.value == {
+        "id": 1,
+        "fan_speed": 6,
+        "duration": 20,
+        "remaining": 20,
+    }
+
+    auto_entity = entities["auto_mode"]
+    assert auto_entity.platform == "sensor"
+    assert auto_entity.entity_category is EntityCategory.DIAGNOSTIC
+    assert auto_entity.state is auto_state
+    assert auto_entity.state.value == "auto_mode"
+
+
 def test_humidifier_uvc_entity_alias_avoids_duplicate_registration(
     humidifier_model_h7142: MockDeviceModel,
 ) -> None:
