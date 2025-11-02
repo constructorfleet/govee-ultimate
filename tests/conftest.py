@@ -2,14 +2,42 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-import asyncio
 import pytest
 import voluptuous as vol
+
+
+def pytest_collection_modifyitems(config, items):
+    """Deselect all tests except the focused entity helpers test.
+
+    This keeps local runs fast while we iterate on the component. Only
+    `tests/test_entity_helpers.py` will be collected; all other collected
+    tests are reported as deselected.
+    """
+
+    keep_name = "test_entity_helpers.py"
+    kept = []
+    deselected = []
+    for item in list(items):
+        try:
+            fname = Path(str(item.fspath)).name
+        except Exception:
+            fname = ""
+        if fname == keep_name:
+            kept.append(item)
+        else:
+            deselected.append(item)
+
+    # Replace the collected items with only the kept items and report
+    # the others as deselected so pytest prints a clear summary.
+    items[:] = kept
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
 
 
 _MODULE_NAME = "homeassistant.helpers.config_validation"
