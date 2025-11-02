@@ -148,18 +148,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         iot_command_enabled=iot_command_enabled,
         iot_refresh_enabled=iot_refresh_enabled,
     )
-    domain_data: DomainData = DomainData(
-        **hass.data.setdefault(
-            DOMAIN,
-            {
-                "api_client": api_client,
-                "http_client": http_client,
-                "iot_client": iot_client,
-                "coordinator": coordinator,
-                "auth": auth,
-                "config_entry": entry,
-            },
-        )
+    domain_data: DomainData = hass.data.setdefault(
+        DOMAIN,
+        {
+            "api_client": api_client,
+            "http_client": http_client,
+            "iot_client": iot_client,
+            "coordinator": coordinator,
+            "auth": auth,
+            "config_entry": entry,
+        },
     )
 
     await _async_ensure_reauth_service(hass)
@@ -187,7 +185,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Handle unloading of a config entry."""
 
-    entry_data: DomainData | None = DomainData(**hass.data.get(DOMAIN, {}))
+    entry_data: DomainData | None = hass.data.get(DOMAIN, {})
 
     unload_success = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
