@@ -46,6 +46,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      - name: Ensure branch checkout (no detached HEAD)
+        working-directory: pr
+        run: |
+          git checkout -B "${{ steps.pr.outputs.head_ref }}"
+          git rev-parse --abbrev-ref HEAD
+
       - name: Verify same-repo PR (fail if fork)
         run: |
           if [ "${{ steps.pr.outputs.is_fork }}" = "true" ]; then
