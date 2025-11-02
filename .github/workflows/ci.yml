@@ -31,7 +31,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Nuke local caches (defang cache-poisoning)
         run: |
           rm -rf ~/.cache/pip ~/.cache/pip-tools ~/.cache/pipenv || true
@@ -60,7 +60,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Nuke local caches (defang cache-poisoning)
         run: |
           rm -rf ~/.cache/pip ~/.cache/pip-tools ~/.cache/pipenv || true
