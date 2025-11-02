@@ -4,8 +4,8 @@ packaging==25.0
 pydantic==2.12.3
 cryptography==45.0.7
 paho-mqtt==2.1.0
-PyYAML==6.0.2
-pytest==8.4.1
+PyYAML==6.0.3
+pytest==8.4.2
 ruff==0.14.3
 homeassistant==2025.10.2
 voluptuous==0.15.2
