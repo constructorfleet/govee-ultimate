@@ -14,56 +14,11 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - name: Get PR metadata
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            core.setOutput('head_repo', pr.head.repo.full_name);
-            core.setOutput('head_ref', pr.head.ref);
-            core.setOutput('is_fork', String(pr.head.repo.full_name !== pr.base.repo.full_name));
-
-      - name: Debug PR metadata
-        run: |
-          echo "head_repo=${{ steps.pr.outputs.head_repo }}"
-          echo "head_ref=${{ steps.pr.outputs.head_ref }}"
-          echo "is_fork=${{ steps.pr.outputs.is_fork }}"
-
       # 1) Trusted base repo (for the bump script)
       - name: Checkout base (trusted)
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          path: base
-
-      # 2) Checkout PR head branch
-      - name: Checkout PR head branch
-        uses: actions/checkout@v5
-        with:
-          repository: ${{ steps.pr.outputs.head_repo }}
-          ref: ${{ steps.pr.outputs.head_ref }}
-          path: pr
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Ensure branch checkout (no detached HEAD)
-        working-directory: pr
-        run: |
-          git checkout -B "${{ steps.pr.outputs.head_ref }}"
-          git rev-parse --abbrev-ref HEAD
-
-      - name: Verify same-repo PR (fail if fork)
-        run: |
-          if [ "${{ steps.pr.outputs.is_fork }}" = "true" ]; then
-            echo "PR is from a fork; GITHUB_TOKEN cannot push to contributor's repo."
-            echo "Either use a maintainer PAT or handle fork PRs by opening a new branch/PR in the base repo."
-            exit 1
-          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -71,13 +26,11 @@ jobs:
           python-version: 3.12
 
       - name: Install bump deps
-        working-directory: base
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run bump script against PR tree
-        working-directory: pr
         env:
           LEVEL: ${{ github.event.label.name }}
           PYTHONPATH: ../base
