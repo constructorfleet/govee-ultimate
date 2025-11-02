@@ -7,4 +7,5 @@ paho-mqtt==2.1.0
 PyYAML==6.0.2
 pytest==8.4.1
 ruff==0.14.3
+homeassistant==2024.12.5
 voluptuous==0.13.1
