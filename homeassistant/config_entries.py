@@ -92,33 +92,19 @@ class ConfigFlow:
     """Minimal ConfigFlow base for tests."""
 
     def __init__(self) -> None:
+        """Initialize the test stub ConfigFlow."""
         self.hass = None
 
     @classmethod
     def __init_subclass__(cls, **kwargs: Any) -> None:  # pragma: no cover - test shim
+        """Handle subclass initialization."""
         # Accept and ignore keyword args like `domain=...` used in real HA
         # so subclasses in tests can be declared using the real pattern.
         return super().__init_subclass__()
 
 
-class OptionsFlow:
-    """Minimal OptionsFlow base for tests."""
-
-    def __init__(self, entry: Any) -> None:
-        self._entry = entry
-
-
 # Simplify the result type used in the integration's config flows
 ConfigFlowResult = dict[str, Any]
-
-
-__all__ = [
-    "ConfigEntry",
-    "ConfigEntries",
-    "ConfigFlow",
-    "OptionsFlow",
-    "ConfigFlowResult",
-]
 
 
 class OptionsFlow:
@@ -166,3 +152,12 @@ class OptionsFlow:
     def config_entry(self, value: ConfigEntry) -> None:
         """Set the config entry value."""
         pass
+
+
+__all__ = [
+    "ConfigEntry",
+    "ConfigEntries",
+    "ConfigFlow",
+    "OptionsFlow",
+    "ConfigFlowResult",
+]
