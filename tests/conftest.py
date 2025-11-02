@@ -13,6 +13,7 @@ import pytest
 try:
     import voluptuous as vol
 except ModuleNotFoundError:  # pragma: no cover - fallback for minimal envs
+
     class _Schema:
         """Minimal stub mirroring ``voluptuous.Schema`` behavior."""
 

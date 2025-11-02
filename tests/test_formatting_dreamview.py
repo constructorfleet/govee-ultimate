@@ -1,4 +1,5 @@
 """Formatting guard tests for DreamView state modules."""
+
 from __future__ import annotations
 
 import subprocess
