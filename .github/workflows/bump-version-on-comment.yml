@@ -1,79 +1,73 @@
-name: "Bump version on PR comment"
-
-on:
-  issue_comment:
-    types: [created]
-
-permissions:
-  contents: write
-  issues: write
-
 jobs:
   bump:
-    if: "github.event.issue.pull_request != null && startsWith(github.event.comment.body, 'bump version')"
+    if: >-
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, 'bump version')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     steps:
-      - name: "Checkout trusted repository code (base)"
+      # 1) Trusted base repo (for the bump script)
+      - name: Checkout base (trusted)
         uses: actions/checkout@v5
         with:
-          # Checkout the base repository (trusted code). We must NOT execute
-          # code from the untrusted PR head. Instead, use the trusted bump
-          # script here and update the PR branch via the GitHub API.
           fetch-depth: 0
+          path: base
 
-      - name: "Debug PR head info"
-        run: |
-          echo "PR head repo: ${{ github.event.issue.pull_request.head.repo.full_name }}"
-          echo "PR head ref: ${{ github.event.issue.pull_request.head.ref }}"
+      # 2) Checkout PR head (untrusted code, but we won't execute it)
+      - name: Checkout PR head branch
+        uses: actions/checkout@v5
+        with:
+          # If PR is from a fork, this is the fork repo
+          repository: ${{ github.event.issue.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.issue.pull_request.head.ref }}
+          path: pr
+          fetch-depth: 0
+          # Important: don't auto-inject credentials into this checkout
+          persist-credentials: false
 
-      - name: "Determine bump level"
-        id: parse
-        env:
-          BODY: ${{ github.event.comment.body }}
+      - name: Verify same-repo PR (fail if fork)
         run: |
-          body="$BODY"
-          echo "body=$body"
-          # extract the level
-          if [[ "$body" =~ bump[[:space:]]version[[:space:]](patch|minor|major) ]]; then
-            level="${BASH_REMATCH[1]}"
-            echo "level=$level" >> "$GITHUB_OUTPUT"
-          else
-            echo "No valid bump level found" >&2
+          if [ "${{ github.event.issue.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "PR is from a fork; GITHUB_TOKEN cannot push to contributor's repo."
+            echo "Either use a maintainer PAT or handle fork PRs by opening a new branch/PR in the base repo."
             exit 1
           fi
 
-      - name: "Set up Python"
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: 3.12
 
-      - name: "Install repo (dev)"
+      - name: Install bump deps (trusted)
+        working-directory: base
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: "Configure git user"
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: "Run trusted bump script and prepare payload"
-        id: bump
+      - name: Run bump script against PR tree
         env:
           LEVEL: ${{ steps.parse.outputs.level }}
         run: |
           set -euo pipefail
-          echo "Running trusted bump script on base repository"
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          python -m scripts.bump_version --manifest custom_components/govee/manifest.json --level "$LEVEL"
-          NEW_VERSION=$(python -c "import json;print(json.load(open('custom_components/govee/manifest.json'))['version'])")
-          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          # Prepare base64 content for API upload
-          CONTENT=$(python -c "import base64,sys;print(base64.b64encode(open('custom_components/govee/manifest.json','rb').read()).decode())")
-          echo "CONTENT=$CONTENT" >> "$GITHUB_OUTPUT"
+          # Run the trusted script from base/, targeting files inside pr/
+          python -m base.scripts.bump_version \
+            --manifest pr/custom_components/govee/manifest.json \
+            --level "$LEVEL"
 
-      - name: Commit & Push changes
+      - name: Commit the change on PR branch
+        working-directory: pr
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/govee/manifest.json
+          git commit -m "chore: bump version (${LEVEL}) from comment"
+
+      - name: Push back to PR head branch
         uses: actions-js/push@master
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          directory: pr
+          branch: ${{ github.event.issue.pull_request.head.ref }}
