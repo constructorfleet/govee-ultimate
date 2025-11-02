@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     env:
-      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      # PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
       PIP_NO_CACHE_DIR: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
     steps:
