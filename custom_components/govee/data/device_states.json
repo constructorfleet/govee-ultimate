@@ -83,6 +83,109 @@
       ]
     },
     {
+      "state_name": "ambiant",
+      "op_type": "tv",
+      "identifiers": {
+        "status": {
+          "opcode": "0x07",
+          "identifier": ["0x08"],
+          "description": "Reports ambient lighting enablement, mode and brightness"
+        },
+        "command": {
+          "opcode": "0x33",
+          "identifier": ["0x05", "0x07", "0x08"],
+          "description": "Issues DreamView ambient lighting updates"
+        }
+      },
+      "parse_options": {
+        "fields": {
+          "on": {
+            "byte_index": 0,
+            "value_map": {
+              "00": false,
+              "01": true
+            }
+          },
+          "brightnessMode": {
+            "byte_index": 1,
+            "value_map": {
+              "00": "CONSISTENT",
+              "01": "SEGMENT"
+            }
+          },
+          "brightness": {
+            "byte_index": 2,
+            "range": {
+              "min": 0,
+              "max": 100
+            }
+          }
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x07",
+          "identifier": ["0x08"],
+          "payload": "07080000",
+          "expect_bytes": 6,
+          "notes": "Byte 4 toggles ambient output, byte 5 selects brightness mode, byte 6 carries intensity"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_ambiant",
+          "opcode": "0x33",
+          "payload_template": "050708{{ '01' if on else '00' }}{{ '01' if mode_flag else '00' }}{{ brightness | int | format('02x') }}",
+          "description": "Update DreamView ambient lighting state",
+          "multi_step": ["multi_sync"]
+        }
+      ]
+    },
+    {
+      "state_name": "video_mode",
+      "op_type": "tv",
+      "identifiers": {
+        "status": {
+          "opcode": "0x05",
+          "identifier": ["0x00"],
+          "description": "Reports DreamView video brightness"
+        },
+        "command": {
+          "opcode": "0x33",
+          "identifier": ["0x05", "0x00"],
+          "description": "Updates DreamView video brightness"
+        }
+      },
+      "parse_options": {
+        "fields": {
+          "brightness": {
+            "byte_index": 0,
+            "range": {
+              "min": 0,
+              "max": 100
+            }
+          }
+        }
+      },
+      "status_templates": [
+        {
+          "opcode": "0x05",
+          "identifier": ["0x00"],
+          "payload": "050000",
+          "expect_bytes": 4,
+          "notes": "Fourth byte encodes brightness percentage"
+        }
+      ],
+      "command_templates": [
+        {
+          "name": "set_video_mode",
+          "opcode": "0x33",
+          "payload_template": "050001{{ brightness | int | format('02x') }}",
+          "description": "Adjust DreamView video mode brightness"
+        }
+      ]
+    },
+    {
       "state_name": "brightness",
       "op_type": "range",
       "identifiers": {
