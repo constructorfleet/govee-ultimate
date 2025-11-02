@@ -9,6 +9,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+# Always provide a lightweight local `config_entries` shim for tests. This
+# avoids depending on the real Home Assistant ConfigEntry signature which
+# requires many keyword-only args not used by these unit tests.
+from custom_components.govee.config_flow import (
+    REAUTH_CONFIRM_STEP,
+    GoveeUltimateConfigFlow,
+    GoveeUltimateOptionsFlowHandler,
+)
+
 if "homeassistant.data_entry_flow" not in sys.modules:
     data_entry_flow = ModuleType("homeassistant.data_entry_flow")
 
@@ -71,12 +80,6 @@ if "homeassistant.config_entries" not in sys.modules:
     config_entries.ConfigFlow = _ConfigFlow
     config_entries.ConfigEntry = _ConfigEntry
     sys.modules["homeassistant.config_entries"] = config_entries
-# Always provide a lightweight local `config_entries` shim for tests. This
-# avoids depending on the real Home Assistant ConfigEntry signature which
-# requires many keyword-only args not used by these unit tests.
-
-
-from custom_components.govee import config_flow
 
 
 class _StubHass(SimpleNamespace):
@@ -122,7 +125,7 @@ def test_stub_flow_result_type_includes_docstring() -> None:
 async def test_user_flow_requests_credentials_before_submission() -> None:
     """When no input is provided the flow should request credentials."""
 
-    flow = config_flow.GoveeUltimateConfigFlow()
+    flow = GoveeUltimateConfigFlow()
     result = await flow.async_step_user(user_input=None)
 
     assert result["type"] == FlowResultType.FORM
@@ -145,8 +148,10 @@ async def test_user_flow_creates_entry_with_credentials_and_flags(
 ) -> None:
     """Submissions should store credentials and IoT flags in the entry."""
 
+    from custom_components.govee import config_flow
+
     hass = _StubHass()
-    flow = config_flow.GoveeUltimateConfigFlow()
+    flow = GoveeUltimateConfigFlow()
     flow.hass = hass
 
     async def _fake_validate(_: Any, __: str, ___: str) -> None:
@@ -187,7 +192,7 @@ async def test_options_flow_allows_configuring_iot_toggles() -> None:
         "iot_refresh_enabled": True,
     }
 
-    flow = config_flow.GoveeUltimateOptionsFlowHandler(entry)
+    flow = GoveeUltimateOptionsFlowHandler(entry)
 
     result = await flow.async_step_init(user_input=None)
     assert result["type"] == FlowResultType.FORM
@@ -213,9 +218,10 @@ async def test_user_flow_validates_credentials_before_creating_entry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Successful submissions should authenticate credentials prior to entry creation."""
+    from custom_components.govee import config_flow
 
     hass = _StubHass()
-    flow = config_flow.GoveeUltimateConfigFlow()
+    flow = GoveeUltimateConfigFlow()
     flow.hass = hass
 
     calls: list[tuple[Any, ...]] = []
@@ -242,9 +248,10 @@ async def test_user_flow_returns_form_on_invalid_authentication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Invalid credentials should surface a form error rather than creating the entry."""
+    from custom_components.govee import config_flow
 
     hass = _StubHass()
-    flow = config_flow.GoveeUltimateConfigFlow()
+    flow = GoveeUltimateConfigFlow()
     flow.hass = hass
 
     class _InvalidAuth(Exception):
@@ -291,8 +298,10 @@ async def test_reauth_flow_updates_entry_and_aborts_on_success(
     hass.config_entries.async_update_entry = AsyncMock()
     hass.config_entries.async_reload = AsyncMock()
 
-    flow = config_flow.GoveeUltimateConfigFlow()
+    flow = GoveeUltimateConfigFlow()
     flow.hass = hass
+
+    from custom_components.govee import config_flow
 
     async def _fake_validate(_: Any, email: str, password: str) -> None:
         if password != "new-secret":
@@ -308,7 +317,7 @@ async def test_reauth_flow_updates_entry_and_aborts_on_success(
     result = await flow.async_step_reauth(user_input=None, entry=entry)
 
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == config_flow.REAUTH_CONFIRM_STEP
+    assert result["step_id"] == REAUTH_CONFIRM_STEP
     defaults = result["data_schema"]({"password": ""})
     assert defaults["email"] == "user@example.com"
 

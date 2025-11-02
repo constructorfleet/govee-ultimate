@@ -133,7 +133,6 @@ class GoveeUltimateConfigFlow(HAConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         """Store transient state for config and reauthentication flows."""
-
         super().__init__()
         self._reauth_entry: Any | None = None
 
