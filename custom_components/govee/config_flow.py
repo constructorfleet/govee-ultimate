@@ -30,6 +30,7 @@ else:
     # For return-type annotations we only need a structural alias; a
     # plain dict-type is sufficient when the real type is missing.
     ConfigFlowResult = dict[str, Any]  # type: ignore
+from homeassistant.config_entries import ConfigFlow
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
