@@ -31,6 +31,7 @@ REFRESH_OFFSET = timedelta(seconds=60)
 LOGIN_ENDPOINT = "https://app2.govee.com/account/rest/account/v1/login"
 REFRESH_ENDPOINT = "https://app2.govee.com/account/rest/v1/first/refresh-tokens"
 IOT_KEY_ENDPOINT = "https://app2.govee.com/app/v1/account/iot/key"
+COMMUNITY_LOGIN_ENDPOINT = "https://community-api.govee.com/os/v1/login"
 APP_VERSION = "5.6.01"
 USER_AGENT = (
     "GoveeHome/"
@@ -53,6 +54,15 @@ class IoTBundle:
 
 
 @dataclass(frozen=True)
+class BffBundle:
+    """Persisted community (BFF) authentication metadata."""
+
+    access_token: str
+    client_id: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
 class AccountAuthDetails:
     """Complete account authentication state."""
 
@@ -66,6 +76,9 @@ class AccountAuthDetails:
     iot_endpoint: str | None = None
     iot_certificate: str | None = None
     iot_private_key: str | None = None
+    bff_access_token: str | None = None
+    bff_client_id: str | None = None
+    bff_expires_at: datetime | None = None
 
     @classmethod
     def from_login_payload(
@@ -101,6 +114,12 @@ class AccountAuthDetails:
             iot_endpoint=data.get("iot_endpoint"),
             iot_certificate=data.get("iot_certificate"),
             iot_private_key=data.get("iot_private_key"),
+            bff_access_token=data.get("bff_access_token"),
+            bff_client_id=data.get("bff_client_id"),
+            bff_expires_at=
+            datetime.fromisoformat(data["bff_expires_at"])
+            if data.get("bff_expires_at")
+            else None,
         )
 
     def as_storage(self) -> dict[str, Any]:
@@ -117,6 +136,11 @@ class AccountAuthDetails:
             "iot_endpoint": self.iot_endpoint,
             "iot_certificate": self.iot_certificate,
             "iot_private_key": self.iot_private_key,
+            "bff_access_token": self.bff_access_token,
+            "bff_client_id": self.bff_client_id,
+            "bff_expires_at": self.bff_expires_at.isoformat()
+            if self.bff_expires_at is not None
+            else None,
         }
 
     def should_refresh(self, now: datetime | None = None) -> bool:
@@ -151,6 +175,23 @@ class AccountAuthDetails:
             iot_private_key=private_key,
         )
 
+    def with_bff_data(
+        self,
+        *,
+        access_token: str,
+        client_id: str,
+        expires_in: int,
+    ) -> AccountAuthDetails:
+        """Return a copy populated with BFF credential data."""
+
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+        return replace(
+            self,
+            bff_access_token=access_token,
+            bff_client_id=client_id,
+            bff_expires_at=expires_at,
+        )
+
     def as_iot_bundle(self) -> IoTBundle | None:
         """Expose an IoT bundle if certificate data is available."""
 
@@ -168,6 +209,33 @@ class AccountAuthDetails:
             certificate=self.iot_certificate,
             private_key=self.iot_private_key,
         )
+
+    def as_bff_bundle(self) -> BffBundle | None:
+        """Expose persisted BFF credentials if available."""
+
+        if (
+            self.bff_access_token is None
+            or self.bff_client_id is None
+            or self.bff_expires_at is None
+        ):
+            return None
+        return BffBundle(
+            access_token=self.bff_access_token,
+            client_id=self.bff_client_id,
+            expires_at=self.bff_expires_at,
+        )
+
+    def valid_bff_bundle(self, now: datetime | None = None) -> BffBundle | None:
+        """Return the BFF bundle when it has not yet expired."""
+
+        bundle = self.as_bff_bundle()
+        if bundle is None:
+            return None
+        if now is None:
+            now = datetime.now(timezone.utc)
+        if bundle.expires_at <= now:
+            return None
+        return bundle
 
 
 def _generate_client_id() -> str:
@@ -280,6 +348,16 @@ async def _extract_response_payload(response: object) -> dict[str, Any]:
     return {}
 
 
+async def _maybe_raise_for_status(response: object) -> None:
+    """Invoke ``raise_for_status`` when provided by ``response``."""
+
+    raise_for_status = getattr(response, "raise_for_status", None)
+    if callable(raise_for_status):
+        maybe = raise_for_status()
+        if asyncio.iscoroutine(maybe):
+            await maybe
+
+
 class GoveeAuthManager:
     """Manage authentication lifecycle for the Govee Ultimate integration."""
 
@@ -339,11 +417,7 @@ class GoveeAuthManager:
                 headers=_base_headers(client_id),
             )
             # Some test doubles don't implement raise_for_status; guard it.
-            raise_for_status = getattr(response, "raise_for_status", None)
-            if callable(raise_for_status):
-                maybe = raise_for_status()
-                if asyncio.iscoroutine(maybe):
-                    await maybe
+            await _maybe_raise_for_status(response)
         except httpx.HTTPError:
             await self._clear_tokens()
             raise
@@ -354,6 +428,7 @@ class GoveeAuthManager:
             msg = "Invalid login response"
             raise TypeError(msg)
         tokens = AccountAuthDetails.from_login_payload(email, login_data)
+        tokens = await self._fetch_bff_credentials(tokens, email, password)
         tokens = await self._fetch_iot_credentials(tokens)
         return await self._store_tokens(tokens)
 
@@ -375,6 +450,13 @@ class GoveeAuthManager:
             return None
         return self._tokens.as_iot_bundle()
 
+    async def async_get_bff_bundle(self) -> BffBundle | None:
+        """Expose persisted community (BFF) credentials."""
+
+        if self._tokens is None:
+            return None
+        return self._tokens.valid_bff_bundle()
+
     async def _refresh_tokens(self) -> AccountAuthDetails:
         """Refresh the stored token using the refresh token."""
 
@@ -388,11 +470,7 @@ class GoveeAuthManager:
                 json={"refreshToken": self._tokens.refresh_token},
                 headers=self._headers_for_tokens(self._tokens),
             )
-            raise_for_status = getattr(response, "raise_for_status", None)
-            if callable(raise_for_status):
-                maybe = raise_for_status()
-                if asyncio.iscoroutine(maybe):
-                    await maybe
+            await _maybe_raise_for_status(response)
         except httpx.HTTPError:
             await self._clear_tokens()
             raise
@@ -419,11 +497,7 @@ class GoveeAuthManager:
             IOT_KEY_ENDPOINT,
             headers=self._headers_for_tokens(tokens),
         )
-        raise_for_status = getattr(response, "raise_for_status", None)
-        if callable(raise_for_status):
-            maybe = raise_for_status()
-            if asyncio.iscoroutine(maybe):
-                await maybe
+        await _maybe_raise_for_status(response)
         payload = await _extract_response_payload(response)
         data = payload.get("data")
         if not isinstance(data, dict):
@@ -440,6 +514,48 @@ class GoveeAuthManager:
             endpoint=endpoint,
             certificate=certificate,
             private_key=private_key,
+        )
+
+    async def _fetch_bff_credentials(
+        self, tokens: AccountAuthDetails, email: str, password: str
+    ) -> AccountAuthDetails:
+        """Retrieve BFF OAuth credentials for the community API."""
+
+        await self._ensure_client()
+        assert self._client is not None
+        try:
+            response = await self._client.post(
+                COMMUNITY_LOGIN_ENDPOINT,
+                json={"email": email, "password": password},
+                headers=_base_headers(tokens.client_id),
+            )
+            await _maybe_raise_for_status(response)
+        except httpx.HTTPError:
+            return tokens
+
+        payload = await _extract_response_payload(response)
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return tokens
+
+        access_token = data.get("accessToken")
+        client_id = data.get("clientId")
+        expires_in = data.get("expiresIn")
+        if (
+            not isinstance(access_token, str)
+            or not isinstance(client_id, str)
+            or expires_in is None
+        ):
+            return tokens
+        try:
+            expires = int(expires_in)
+        except (TypeError, ValueError):
+            return tokens
+
+        return tokens.with_bff_data(
+            access_token=access_token,
+            client_id=client_id,
+            expires_in=expires,
         )
 
     async def _persist_tokens(self, tokens: AccountAuthDetails) -> None:

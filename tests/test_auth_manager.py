@@ -14,6 +14,7 @@ import pytest
 
 from custom_components.govee.auth import (
     AccountAuthDetails,
+    BffBundle,
     GoveeAuthManager,
     IoTBundle,
 )
@@ -197,6 +198,29 @@ async def test_auth_manager_login_fetches_iot_bundle(
                     },
                 },
             )
+        if request.url == httpx.URL(
+            "https://community-api.govee.com/os/v1/login"
+        ):
+            payload = json.loads(request.content.decode())
+            assert payload == {
+                "email": "user@example.com",
+                "password": "secret",
+            }
+            headers = request.headers
+            assert headers["clientType"] == "1"
+            assert headers["clientId"] == generated_client_id
+            assert headers["User-Agent"].startswith("GoveeHome/5.6.01")
+            return httpx.Response(
+                200,
+                json={
+                    "status": 200,
+                    "data": {
+                        "accessToken": "community-access",
+                        "expiresIn": 3600,
+                        "clientId": "community-client",
+                    },
+                },
+            )
         if request.url == httpx.URL("https://app2.govee.com/app/v1/account/iot/key"):
             headers = request.headers
             assert headers["Authorization"] == "Bearer access-token"
@@ -233,6 +257,10 @@ async def test_auth_manager_login_fetches_iot_bundle(
     assert details.iot_private_key == EXPECTED_PRIVATE_KEY
     assert details.iot_endpoint == "ssl://broker.example"
     assert details.expires_at > datetime.now(timezone.utc)
+    assert details.bff_access_token == "community-access"
+    assert details.bff_client_id == "community-client"
+    assert details.bff_expires_at is not None
+    assert details.bff_expires_at > datetime.now(timezone.utc)
 
     bundle = await manager.async_get_iot_bundle()
     assert bundle == IoTBundle(
@@ -242,6 +270,13 @@ async def test_auth_manager_login_fetches_iot_bundle(
         endpoint="ssl://broker.example",
         certificate=EXPECTED_CERTIFICATE,
         private_key=EXPECTED_PRIVATE_KEY,
+    )
+
+    bff_bundle = await manager.async_get_bff_bundle()
+    assert bff_bundle == BffBundle(
+        access_token="community-access",
+        client_id="community-client",
+        expires_at=details.bff_expires_at,
     )
 
     storage_file = tmp_path / ".storage" / "govee_auth"
@@ -259,6 +294,9 @@ async def test_auth_manager_login_fetches_iot_bundle(
         "iot_endpoint": "ssl://broker.example",
         "iot_certificate": EXPECTED_CERTIFICATE,
         "iot_private_key": EXPECTED_PRIVATE_KEY,
+        "bff_access_token": "community-access",
+        "bff_client_id": "community-client",
+        "bff_expires_at": details.bff_expires_at.isoformat(),
     }
 
     reload_client = httpx.AsyncClient(
@@ -269,9 +307,110 @@ async def test_auth_manager_login_fetches_iot_bundle(
 
     assert reload_manager.tokens == details
     assert await reload_manager.async_get_iot_bundle() == bundle
+    assert await reload_manager.async_get_bff_bundle() == bff_bundle
 
     await client.aclose()
     await reload_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auth_manager_login_bff_failure_falls_back(
+    tmp_path_factory, request, monkeypatch: pytest.MonkeyPatch
+):
+    """Community login failures should not block the core login flow."""
+
+    tmp_path = tmp_path_factory.mktemp("hass_bff_fail")
+    loop = asyncio.get_running_loop()
+    hass = StubHass(loop, str(tmp_path))
+
+    generated_client_id = "generated-client-id"
+    monkeypatch.setattr(
+        "custom_components.govee.auth._generate_client_id",
+        lambda: generated_client_id,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url == httpx.URL(
+            "https://app2.govee.com/account/rest/account/v1/login"
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "status": 200,
+                    "client": {
+                        "accountId": "123",
+                        "client": generated_client_id,
+                        "topic": "topic/123",
+                        "token": "access-token",
+                        "refreshToken": "refresh-token",
+                        "tokenExpireCycle": 120,
+                    },
+                },
+            )
+        if request.url == httpx.URL(
+            "https://community-api.govee.com/os/v1/login"
+        ):
+            return httpx.Response(500, json={"message": "server error"})
+        if request.url == httpx.URL("https://app2.govee.com/app/v1/account/iot/key"):
+            return httpx.Response(
+                200,
+                json={
+                    "status": 200,
+                    "data": {
+                        "endpoint": "ssl://broker.example",
+                        "p12": P12_BUNDLE,
+                        "p12Pass": "password",
+                    },
+                },
+            )
+        raise AssertionError(f"Unexpected request to {request.url!r}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    manager = GoveeAuthManager(hass, client)
+
+    details = await manager.async_login("user@example.com", "secret")
+
+    assert details.bff_access_token is None
+    assert details.bff_client_id is None
+    assert details.bff_expires_at is None
+    assert await manager.async_get_bff_bundle() is None
+
+    storage_file = tmp_path / ".storage" / "govee_auth"
+    stored = json.loads(storage_file.read_text())
+    if isinstance(stored, dict) and "data" in stored:
+        stored = stored["data"]
+
+    assert stored["bff_access_token"] is None
+    assert stored["bff_client_id"] is None
+    assert stored["bff_expires_at"] is None
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auth_manager_bff_bundle_respects_expiry(tmp_path_factory, request):
+    """Expired BFF tokens should not be returned to callers."""
+
+    tmp_path = tmp_path_factory.mktemp("hass_bff_expired")
+    loop = asyncio.get_running_loop()
+    hass = StubHass(loop, str(tmp_path))
+
+    manager = GoveeAuthManager(hass, httpx.AsyncClient())
+    expired_details = AccountAuthDetails(
+        email="user@example.com",
+        account_id="123",
+        client_id="existing-client",
+        topic="topic/123",
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        bff_access_token="community-access",
+        bff_client_id="community-client",
+        bff_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    manager._tokens = expired_details
+
+    assert await manager.async_get_bff_bundle() is None
 
 
 @pytest.mark.asyncio
