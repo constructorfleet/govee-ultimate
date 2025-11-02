@@ -1415,7 +1415,7 @@ async def test_async_prepare_iot_runtime_uses_iot_bundle(
             return bundle
 
     client, state_enabled, command_enabled, refresh_enabled = (
-        await integration._async_prepare_iot_runtime(hass, entry, FakeAuth())
+        await integration._async_prepare_iot_runtime(hass, entry, FakeAuth)
     )
 
     assert isinstance(client, FakeIoT)

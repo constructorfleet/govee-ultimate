@@ -305,10 +305,10 @@ class GoveeAuthManager:
 
         if self._client is not None:
             return
-        # Import the package-level helper so tests can monkeypatch the
-        # integration-level API getter (for example replacing
-        # `custom_components.govee.api._async_get_http_client`).
-        from custom_components.govee.api import _async_get_http_client  # type: ignore
+        # Use the integration-level helper so tests that monkeypatch
+        # `custom_components.govee._async_get_http_client` or inject a
+        # runtime helper into the integration module are respected.
+        from custom_components.govee import _async_get_http_client  # type: ignore
 
         self._client = await _async_get_http_client(self._hass)
 

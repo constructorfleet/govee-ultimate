@@ -107,6 +107,7 @@ def _ordered_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         ordered[key] = payload[key]
     return ordered
 
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     """Persist JSON payload to disk with canonical formatting."""
     ordered = _ordered_manifest(payload)

@@ -95,7 +95,11 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
         """Ensure cached light attributes match the initial state."""
 
         self._update_cached_brightness()
-        await super().async_added_to_hass()
+        # Call the GoveeStateEntity implementation directly to avoid
+        # falling through to Home Assistant's CoordinatorEntity.async_added_to_hass
+        # which registers a listener using a (callback, context) signature not
+        # supported by some test FakeCoordinator shims.
+        await GoveeStateEntity.async_added_to_hass(self)
 
     def _handle_coordinator_update(self) -> None:
         """Refresh cached Home Assistant attributes before updating state."""

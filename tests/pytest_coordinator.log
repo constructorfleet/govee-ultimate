@@ -1,0 +1,36 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.7, pytest-8.4.2, pluggy-1.6.0 -- /Users/tglenn/src/govee-ultimate/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/tglenn/src/govee-ultimate
+plugins: respx-0.22.0, pytest_freezer-0.4.9, unordered-0.7.0, asyncio-1.2.0, anyio-4.11.0, syrupy-4.9.1, sugar-1.0.0, socket-0.7.0, xdist-3.8.0, timeout-2.4.0, homeassistant-custom-component-0.13.289, github-actions-annotate-failures-0.3.0, aiohttp-1.1.0, picked-0.5.1, requests-mock-1.12.1, cov-7.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 26 items
+
+tests/test_coordinator.py::test_device_metadata_accepts_typescript_payload PASSED [  3%]
+tests/test_coordinator.py::test_update_data_discovers_devices_from_typescript_payload PASSED [  7%]
+tests/test_coordinator.py::test_command_publisher_uses_device_list_iot_topic PASSED [ 11%]
+tests/test_coordinator.py::test_resolve_factory_selects_air_quality_by_category PASSED [ 15%]
+tests/test_coordinator.py::test_resolve_factory_matches_ice_maker_category PASSED [ 19%]
+tests/test_coordinator.py::test_resolve_factory_matches_meat_thermometer_category PASSED [ 23%]
+tests/test_coordinator.py::test_resolve_factory_matches_air_quality_model_prefix PASSED [ 26%]
+tests/test_coordinator.py::test_resolve_factory_matches_ice_maker_model_prefix PASSED [ 30%]
+tests/test_coordinator.py::test_resolve_factory_matches_meat_thermometer_model_prefix PASSED [ 34%]
+tests/test_coordinator.py::test_resolve_factory_matches_hygrometer_model_prefix PASSED [ 38%]
+tests/test_coordinator.py::test_resolve_factory_detects_presence_category PASSED [ 42%]
+tests/test_coordinator.py::test_first_refresh_populates_coordinator_data_snapshot PASSED [ 46%]
+tests/test_coordinator.py::test_coordinator_inherits_home_assistant_data_update_coordinator PASSED [ 50%]
+tests/test_coordinator.py::test_discovery_creates_devices_and_registers_entries PASSED [ 53%]
+tests/test_coordinator.py::test_discovery_registers_home_assistant_entities PASSED [ 57%]
+tests/test_coordinator.py::test_presence_discovery_registers_presence_entities PASSED [ 61%]
+tests/test_coordinator.py::test_command_dispatch_defaults_to_iot_channel PASSED [ 65%]
+tests/test_coordinator.py::test_iot_state_subscription_is_started_for_iot_devices PASSED [ 69%]
+tests/test_coordinator.py::test_iot_state_updates_flow_to_devices PASSED [ 73%]
+tests/test_coordinator.py::test_account_topic_payload_updates_connected_and_opcode_state PASSED [ 76%]
+tests/test_coordinator.py::test_expire_pending_commands_clears_state_operations PASSED [ 80%]
+tests/test_coordinator.py::test_command_dispatch_supports_explicit_ble_channel PASSED [ 84%]
+tests/test_coordinator.py::test_iot_commands_use_mqtt_client_when_enabled PASSED [ 88%]
+tests/test_coordinator.py::test_iot_refresh_requests_use_mqtt_client PASSED [ 92%]
+tests/test_coordinator.py::test_event_processing_updates_device_state PASSED [ 96%]
+tests/test_coordinator.py::test_refresh_scheduler_reschedules_callback PASSED [100%]
+
+============================== 26 passed in 0.14s ==============================
