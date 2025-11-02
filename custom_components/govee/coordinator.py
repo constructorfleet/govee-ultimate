@@ -14,6 +14,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from . import opcodes
 from .const import DOMAIN
 from .device_types.air_quality import AirQualityDevice
 from .device_types.base import BaseDevice
@@ -25,7 +26,6 @@ from .device_types.presence import PresenceDevice
 from .device_types.purifier import PurifierDevice
 from .device_types.rgb_light import RGBLightDevice
 from .device_types.rgbic_light import RGBICLightDevice
-from . import opcodes
 
 _DEFAULT_REFRESH_INTERVAL = timedelta(minutes=5)
 
@@ -521,7 +521,9 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                 try:
                     command_vectors.append(opcodes.hex_to_base64(payload_hex))
                 except Exception:
-                    pass
+                    self.logger.warning(
+                        "Failed to convert payload_hex to base64: %s", payload_hex
+                    )
         if command_vectors:
             data["command"] = command_vectors
         extra_payload = template.get("extra_payload_hex")
@@ -539,10 +541,14 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         for key, value in data.items():
             if key == "command":
                 commands = value
-                if not isinstance(commands, Sequence) or isinstance(commands, (bytes, bytearray, str)):
+                if not isinstance(commands, Sequence) or isinstance(
+                    commands, (bytes, bytearray, str)
+                ):
                     commands = [commands]
                 encoded = [
-                    self._encode_iot_command_frame(entry) for entry in commands if entry is not None
+                    self._encode_iot_command_frame(entry)
+                    for entry in commands
+                    if entry is not None
                 ]
                 normalised[key] = encoded
             else:
