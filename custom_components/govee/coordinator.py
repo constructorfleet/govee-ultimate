@@ -165,8 +165,8 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             # Prefer the public async_setup helper when available. It may
             # return a coroutine (in newer helpers) so handle that case by
             # scheduling or running it depending on the current loop state.
-            from types import SimpleNamespace
             import threading
+            from types import SimpleNamespace
 
             from homeassistant.helpers import frame as _frame
 

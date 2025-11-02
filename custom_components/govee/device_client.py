@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
-from pathlib import Path
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
