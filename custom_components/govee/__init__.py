@@ -4,9 +4,25 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-from typing import Any
+from typing import Any, TypedDict
 
-from homeassistant.helpers import config_validation as cv
+import httpx
+
+import homeassistant.helpers.config_validation as cv
+import homeassistant.helpers.device_registry as dr
+import homeassistant.helpers.entity_registry as er
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.helpers.device_registry import DeviceRegistry
+from homeassistant.helpers.entity_registry import EntityRegistry
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.httpx_client import get_async_client as httpx_client
+from homeassistant.helpers.typing import ConfigType
+
+from .auth import AccountAuthDetails, GoveeAuthManager
+from .coordinator import GoveeDataUpdateCoordinator
+from .device_client import DeviceListClient
+from .iot_client import IoTClient, IoTClientConfig
 
 DOMAIN = "govee"
 PLATFORMS: tuple[str, ...] = (
@@ -59,27 +75,6 @@ def _patched_get_event_loop() -> asyncio.AbstractEventLoop:
 
 asyncio.get_event_loop = _patched_get_event_loop
 
-try:  # pragma: no cover - prefer httpx when available
-    import httpx
-except ImportError:  # pragma: no cover - allow tests to stub httpx
-    httpx = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - prefer Home Assistant httpx helper
-    from homeassistant.helpers import httpx_client
-except ImportError:  # pragma: no cover - allow unit tests to provide stub
-    httpx_client = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - schedule refreshes via Home Assistant helper when present
-    from homeassistant.helpers.event import async_track_time_interval
-except ImportError:  # pragma: no cover - allow tests to patch scheduling helper
-    async_track_time_interval = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - optional Home Assistant registries during tests
-    from homeassistant.helpers import device_registry as dr
-    from homeassistant.helpers import entity_registry as er
-except ImportError:  # pragma: no cover - provide fallbacks for unit tests
-    dr = er = None  # type: ignore[assignment]
-
 API_BASE_URL = "https://app2.govee.com"
 SERVICE_REAUTHENTICATE = "reauthenticate"
 TOKEN_REFRESH_INTERVAL = timedelta(minutes=5)
@@ -87,35 +82,21 @@ TOKEN_REFRESH_INTERVAL = timedelta(minutes=5)
 _REAUTH_SERVICE_REGISTERED = False
 _SERVICES_KEY = f"{DOMAIN}_services_registered"
 
-if httpx is not None:  # pragma: no branch - defined when httpx is available
-    HTTP_ERROR = httpx.HTTPError
-else:  # pragma: no cover - stubbed during unit tests
 
-    class HTTP_ERROR(Exception):  # type: ignore[assignment]
-        """Fallback HTTP error when httpx is unavailable."""
+class DomainData(TypedDict):
+    """Type definition for the integration domain data."""
 
-        pass
-
-
-def _get_auth_class() -> type[Any]:
-    from .auth import GoveeAuthManager
-
-    return GoveeAuthManager
+    http_client: httpx.AsyncClient
+    auth: GoveeAuthManager
+    api_client: DeviceListClient
+    coordinator: GoveeDataUpdateCoordinator
+    iot_client: IoTClient
+    tokens: AccountAuthDetails | None
+    refresh_unsub: CALLBACK_TYPE | None
+    config_entry: ConfigEntry
 
 
-def _get_device_client_class() -> type[Any]:
-    from .device_client import DeviceListClient
-
-    return DeviceListClient
-
-
-def _get_coordinator_class() -> type[Any]:
-    from .coordinator import GoveeDataUpdateCoordinator
-
-    return GoveeDataUpdateCoordinator
-
-
-async def async_setup(hass: Any, _config: dict[str, Any]) -> bool:
+async def async_setup(hass: Any, _config: ConfigType) -> bool:
     """Initialise the integration namespace on Home Assistant startup."""
 
     hass.data.setdefault(DOMAIN, {})
@@ -123,21 +104,48 @@ async def async_setup(hass: Any, _config: dict[str, Any]) -> bool:
     return True
 
 
-async def async_setup_entry(hass: Any, entry: Any) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry for the integration."""
 
     _ensure_services_registered(hass)
-    domain_data = hass.data.setdefault(DOMAIN, {})
+    http_client = await _async_get_http_client(hass)
+    auth = GoveeAuthManager(hass, http_client)
+    api_client = DeviceListClient(hass, http_client, auth)
+    iot_client, iot_state_enabled, iot_command_enabled, iot_refresh_enabled = (
+        await _async_prepare_iot_runtime(hass, entry, auth)
+    )
+    device_registry = _get_device_registry(hass)
+    entity_registry = _get_entity_registry(hass)
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=hass,
+        api_client=api_client,
+        device_registry=device_registry,
+        entity_registry=entity_registry,
+        config_entry_id=entry.entry_id,
+        iot_client=iot_client,
+        iot_state_enabled=iot_state_enabled,
+        iot_command_enabled=iot_command_enabled,
+        iot_refresh_enabled=iot_refresh_enabled,
+    )
+    domain_data: DomainData = DomainData(
+        **hass.data.setdefault(
+            DOMAIN,
+            {
+                "api_client": api_client,
+                "http_client": http_client,
+                "iot_client": iot_client,
+                "coordinator": coordinator,
+                "auth": auth,
+                "config_entry": entry,
+            },
+        )
+    )
 
     await _async_ensure_reauth_service(hass)
-
-    http_client = await _async_get_http_client(hass)
-    auth_class = _get_auth_class()
-    auth = auth_class(hass, http_client)
     await auth.async_initialize()
-    tokens = getattr(auth, "tokens", None)
 
-    if tokens is None:
+    if auth.tokens is None:
         email, password = _get_entry_credentials(entry)
         if not email or not password:
             await _async_request_reauth(hass, entry)
@@ -145,55 +153,21 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
                 "Credentials are required to initialise the Govee Ultimate integration"
             )
             raise RuntimeError(msg)
-        tokens = await auth.async_login(email, password)
+        domain_data["tokens"] = await auth.async_login(email, password)
 
-    device_client_class = _get_device_client_class()
-    api_client = device_client_class(hass, http_client, auth)
-
-    device_registry = _get_device_registry(hass)
-    entity_registry = _get_entity_registry(hass)
-    iot_client, iot_state_enabled, iot_command_enabled, iot_refresh_enabled = (
-        await _async_prepare_iot_runtime(hass, entry, auth)
-    )
-
-    coordinator_class = _get_coordinator_class()
-    coordinator = coordinator_class(
-        hass=hass,
-        api_client=api_client,
-        device_registry=device_registry,
-        entity_registry=entity_registry,
-        config_entry_id=getattr(entry, "entry_id", None),
-        iot_client=iot_client,
-        iot_state_enabled=iot_state_enabled,
-        iot_command_enabled=iot_command_enabled,
-        iot_refresh_enabled=iot_refresh_enabled,
-    )
     await coordinator.async_config_entry_first_refresh()
     _schedule_coordinator_refresh(coordinator)
 
-    refresh_unsub = _schedule_token_refresh(hass, auth, entry)
-
-    entry_state = {
-        "http_client": http_client,
-        "auth": auth,
-        "api_client": api_client,
-        "coordinator": coordinator,
-        "iot_client": iot_client,
-        "tokens": tokens,
-        "refresh_unsub": refresh_unsub,
-        "config_entry": entry,
-    }
-    domain_data[entry.entry_id] = entry_state
+    domain_data["refresh_unsub"] = _schedule_token_refresh(hass, auth, entry)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
-async def async_unload_entry(hass: Any, entry: Any) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Handle unloading of a config entry."""
 
-    domain_data = hass.data.get(DOMAIN, {})
-    entry_data = domain_data.pop(entry.entry_id, None)
+    entry_data: DomainData | None = DomainData(**hass.data.get(DOMAIN, {}))
 
     unload_success = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
@@ -212,15 +186,13 @@ async def async_unload_entry(hass: Any, entry: Any) -> bool:
 
     http_client = entry_data.get("http_client")
     if http_client is not None:
-        close = getattr(http_client, "aclose", None)
-        if callable(close):
-            await close()
+        await http_client.aclose()
 
     iot_client = entry_data.get("iot_client")
     if iot_client is not None:
-        await _async_stop_iot_client(iot_client)
+        await iot_client.async_stop()
 
-    if not domain_data:
+    if not entry_data:
         hass.data.pop(DOMAIN, None)
 
     return unload_success
@@ -235,10 +207,10 @@ def _create_http_client() -> Any:
     return httpx.AsyncClient(base_url=API_BASE_URL)
 
 
-class _BaseUrlAsyncClient:
+class _BaseUrlAsyncClient(httpx.AsyncClient):
     """Wrap an async client to ensure relative URLs resolve against the base URL."""
 
-    def __init__(self, client: Any, base_url: str) -> None:
+    def __init__(self, client: httpx.AsyncClient, base_url: httpx.URL | str) -> None:
         self._client = client
         self._base_url = httpx.URL(base_url) if httpx is not None else base_url
 
@@ -246,35 +218,34 @@ class _BaseUrlAsyncClient:
     def base_url(self) -> Any:
         return self._base_url
 
-    def _prepare_url(self, url: Any) -> Any:
+    def _prepare_url(self, url: httpx.URL | str) -> httpx.URL | str:
         if httpx is None:
             if isinstance(url, str) and url.startswith("/"):
                 return f"{self._base_url}{url}"
             return url
         return httpx.URL(url, base_url=self._base_url)
 
-    async def request(self, method: str, url: Any, *args: Any, **kwargs: Any) -> Any:
+    async def request(
+        self, method: str, url: httpx.URL | str, *args: Any, **kwargs: Any
+    ) -> Any:
         return await self._client.request(
             method, self._prepare_url(url), *args, **kwargs
         )
 
-    async def post(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+    async def post(self, url: httpx.URL | str, *args: Any, **kwargs: Any) -> Any:
         return await self.request("POST", url, *args, **kwargs)
 
-    async def get(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+    async def get(self, url: httpx.URL | str, *args: Any, **kwargs: Any) -> Any:
         return await self.request("GET", url, *args, **kwargs)
 
     async def aclose(self) -> Any:
-        close = getattr(self._client, "aclose", None)
-        if callable(close):
-            return await close()
-        return None
+        return await self._client.aclose()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
 
 
-async def _async_get_http_client(hass: Any) -> Any:
+async def _async_get_http_client(hass: HomeAssistant) -> _BaseUrlAsyncClient:
     """Return an HTTP client, preferring the Home Assistant helper when available."""
 
     if httpx_client is not None:
@@ -294,24 +265,27 @@ async def _async_get_http_client(hass: Any) -> Any:
     return _create_http_client()
 
 
-def _get_device_registry(hass: Any) -> Any:
+def _get_device_registry(hass: HomeAssistant) -> DeviceRegistry:
     """Return the Home Assistant device registry or a stub for tests."""
 
     if dr is not None and hasattr(dr, "async_get"):
         return dr.async_get(hass)
-    return _REGISTRY_STUB
+    return _REGISTRY_STUB  # type: ignore
 
 
-def _get_entity_registry(hass: Any) -> Any:
+def _get_entity_registry(hass: HomeAssistant) -> EntityRegistry:
     """Return the Home Assistant entity registry or a stub for tests."""
 
     if er is not None and hasattr(er, "async_get"):
         return er.async_get(hass)
-    return _REGISTRY_STUB
+    return _REGISTRY_STUB  # type: ignore
 
 
 async def _async_perform_reauth(
-    hass: Any, entry: Any, auth: Any, entry_state: dict[str, Any]
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    auth: GoveeAuthManager,
+    entry_state: dict[str, Any],
 ) -> None:
     """Execute the reauthentication flow and persist new tokens."""
 
@@ -324,7 +298,7 @@ async def _async_perform_reauth(
     entry_state["tokens"] = tokens
 
 
-def _ensure_services_registered(hass: Any) -> None:
+def _ensure_services_registered(hass: HomeAssistant) -> None:
     """Register integration services exactly once."""
 
     if hass.data.get(_SERVICES_KEY):
@@ -337,7 +311,7 @@ def _ensure_services_registered(hass: Any) -> None:
     hass.data[_SERVICES_KEY] = True
 
 
-async def _async_service_reauth(hass: Any, call: Any) -> None:
+async def _async_service_reauth(hass: HomeAssistant, call: Any) -> None:
     """Handle the public service that forces reauthentication."""
 
     data = getattr(call, "data", call) or {}
@@ -354,18 +328,7 @@ async def _async_service_reauth(hass: Any, call: Any) -> None:
     await _async_perform_reauth(hass, entry, auth, entry_state)
 
 
-def _is_http_error(error: Exception) -> bool:
-    """Return True if the provided exception represents an HTTP error."""
-
-    if httpx is None:
-        return False
-    http_error = getattr(httpx, "HTTPError", None)
-    if http_error is None:
-        return False
-    return isinstance(error, http_error)
-
-
-def _resolve_entry_state(hass: Any, entry_id: str) -> dict[str, Any] | None:
+def _resolve_entry_state(hass: HomeAssistant, entry_id: str) -> dict[str, Any] | None:
     """Look up the cached integration state for the given entry."""
 
     domain_data = hass.data.get(DOMAIN)
@@ -384,7 +347,9 @@ class _RegistryStub:
         return {}
 
 
-async def _async_request_credentials(hass: Any, entry: Any) -> dict[str, Any]:
+async def _async_request_credentials(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> dict[str, Any]:
     """Request credentials from the config flow to perform authentication."""
 
     flow = _get_flow_init_callable(hass)
@@ -401,18 +366,7 @@ async def _async_request_credentials(hass: Any, entry: Any) -> dict[str, Any]:
     return data
 
 
-async def _async_login_with_flow(hass: Any, entry: Any, auth: Any) -> Any | None:
-    """Fetch credentials from the flow and perform an authentication attempt."""
-
-    login = getattr(auth, "async_login", None)
-    if not callable(login):
-        return None
-
-    credentials = await _async_request_credentials(hass, entry)
-    return await login(credentials["email"], credentials["password"])
-
-
-def _get_flow_init_callable(hass: Any) -> Any:
+def _get_flow_init_callable(hass: HomeAssistant) -> Any:
     """Return the config flow async_init helper from Home Assistant."""
 
     flow_container = getattr(hass.config_entries, "flow", hass.config_entries)
@@ -426,21 +380,8 @@ def _get_flow_init_callable(hass: Any) -> Any:
 _REGISTRY_STUB = _RegistryStub()
 
 
-async def _async_stop_iot_client(client: Any) -> None:
-    """Best-effort shutdown for the optional IoT client."""
-
-    stop = getattr(client, "async_stop", None)
-    if callable(stop):
-        await stop()
-        return
-
-    sync_stop = getattr(client, "stop", None)
-    if callable(sync_stop):
-        sync_stop()
-
-
 async def _async_prepare_iot_runtime(
-    hass: Any, entry: Any, auth: Any
+    hass: HomeAssistant, entry: ConfigEntry, auth: GoveeAuthManager
 ) -> tuple[Any | None, bool, bool, bool]:
     """Create the IoT client when enabled in the configuration entry."""
 
@@ -463,38 +404,32 @@ async def _async_prepare_iot_runtime(
     if not (state_enabled or command_enabled or refresh_enabled):
         return None, False, False, False
 
-    try:
-        from .iot_client import IoTClient, IoTClientConfig
-    except ImportError:  # pragma: no cover - dependency is optional in tests
-        return None, False, False, False
-
-    get_bundle = getattr(auth, "async_get_iot_bundle", None)
-    if not callable(get_bundle):
-        return None, False, False, False
-
-    bundle = await get_bundle()
+    bundle = await auth.async_get_iot_bundle()
     if bundle is None:
         return None, False, False, False
 
-    account_id = getattr(bundle, "account_id", None)
-    raw_client_id = getattr(bundle, "client_id", None)
-    endpoint = getattr(bundle, "endpoint", None)
-    account_topic = getattr(bundle, "topic", None)
-    certificate = getattr(bundle, "certificate", None)
-    private_key = getattr(bundle, "private_key", None)
-
-    if not all([raw_client_id, endpoint, account_topic, certificate, private_key]):
+    if not all(
+        [
+            bundle.client_id,
+            bundle.endpoint,
+            bundle.account_id,
+            bundle.certificate,
+            bundle.private_key,
+        ]
+    ):
         return None, False, False, False
 
     client_id = (
-        f"AP/{account_id}/a{raw_client_id}" if account_id is not None else raw_client_id
+        f"AP/{bundle.account_id}/a{bundle.client_id}"
+        if bundle.account_id is not None
+        else bundle.client_id
     )
     config = IoTClientConfig(
-        endpoint=endpoint,
-        account_topic=account_topic,
+        endpoint=bundle.endpoint,
+        account_topic=bundle.topic,
         client_id=client_id,
-        certificate=certificate,
-        private_key=private_key,
+        certificate=bundle.certificate,
+        private_key=bundle.private_key,
     )
 
     iot_client = IoTClient(
@@ -504,7 +439,7 @@ async def _async_prepare_iot_runtime(
     return iot_client, state_enabled, command_enabled, refresh_enabled
 
 
-async def _async_ensure_reauth_service(hass: Any) -> None:
+async def _async_ensure_reauth_service(hass: HomeAssistant) -> None:
     """Ensure the reauthentication service is registered once."""
 
     global _REAUTH_SERVICE_REGISTERED
@@ -516,7 +451,9 @@ async def _async_ensure_reauth_service(hass: Any) -> None:
     _REAUTH_SERVICE_REGISTERED = True
 
 
-def _schedule_token_refresh(hass: Any, auth: Any, entry: Any) -> Any:
+def _schedule_token_refresh(
+    hass: HomeAssistant, auth: GoveeAuthManager, entry: ConfigEntry
+) -> CALLBACK_TYPE:
     """Schedule periodic token refresh using the Home Assistant event helper."""
 
     if async_track_time_interval is None:
@@ -525,30 +462,26 @@ def _schedule_token_refresh(hass: Any, auth: Any, entry: Any) -> Any:
     async def _async_refresh(_now: Any | None = None) -> None:
         try:
             await auth.async_get_access_token()
-        except HTTP_ERROR:
+        except httpx.HTTPError:
             await _async_request_reauth(hass, entry)
             raise
 
     return async_track_time_interval(hass, _async_refresh, TOKEN_REFRESH_INTERVAL)
 
 
-def _schedule_coordinator_refresh(coordinator: Any) -> None:
+def _schedule_coordinator_refresh(coordinator: GoveeDataUpdateCoordinator) -> None:
     """Schedule metadata refresh callbacks on the coordinator."""
-
-    schedule_refresh = getattr(coordinator, "async_schedule_refresh", None)
-    request_refresh = getattr(coordinator, "async_request_refresh", None)
-    if callable(schedule_refresh) and callable(request_refresh):
-        schedule_refresh(request_refresh)
+    coordinator.async_schedule_refresh(coordinator.async_request_refresh)
 
 
-async def _async_register_reauth_service(hass: Any) -> None:
+async def _async_register_reauth_service(hass: HomeAssistant) -> None:
     """Register a Home Assistant service for manual reauthentication."""
 
-    services = getattr(hass, "services", None)
+    services = hass.services
     if services is None:
         return
 
-    register = getattr(services, "async_register", None)
+    register = services.async_register
     if register is None:
         return
 
@@ -559,11 +492,14 @@ async def _async_register_reauth_service(hass: Any) -> None:
 
     result = register(DOMAIN, SERVICE_REAUTHENTICATE, _handle_service)
     if asyncio.iscoroutine(result):
-        await result
+        await result  # type: ignore
 
 
 async def _async_request_reauth(
-    hass: Any, entry: Any | None = None, *, entry_id: str | None = None
+    hass: HomeAssistant,
+    entry: ConfigEntry | None = None,
+    *,
+    entry_id: str | None = None,
 ) -> None:
     """Start a reauthentication flow for the integration entry."""
 
@@ -586,7 +522,7 @@ async def _async_request_reauth(
     )
 
 
-def _get_entry_credentials(entry: Any) -> tuple[str | None, str | None]:
+def _get_entry_credentials(entry: ConfigEntry) -> tuple[str | None, str | None]:
     """Extract stored credentials from a config entry."""
 
     data = getattr(entry, "data", {}) or {}
