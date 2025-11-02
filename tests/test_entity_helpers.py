@@ -13,13 +13,13 @@ from typing import Any
 import pytest
 
 from custom_components.govee import DOMAIN
+from custom_components.govee.device_types.base import HomeAssistantEntity
 from custom_components.govee.entity import (
     async_add_platform_entities,
-    iter_platform_entities,
     build_platform_entities,
+    iter_platform_entities,
     resolve_coordinator,
 )
-from custom_components.govee.device_types.base import HomeAssistantEntity
 from custom_components.govee.state.device_state import DeviceState
 
 
