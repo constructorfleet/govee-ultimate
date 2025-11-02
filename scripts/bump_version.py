@@ -29,23 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    new_version = bump_version(args.manifest, args.level)
-
-    # Commit and push changes. Caller should ensure git is configured and
-    # that credentials are available (for example via GITHUB_TOKEN).
-    subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
-    subprocess.run(
-        [
-            "git",
-            "config",
-            "user.email",
-            "41898282+github-actions[bot]@users.noreply.github.com",
-        ],
-        check=True,
-    )
-    subprocess.run(["git", "add", str(args.manifest)], check=True)
-    subprocess.run(["git", "commit", "-m", f"chore(release): bump {args.level} to {new_version}"], check=True)
-    subprocess.run(["git", "push", "--set-upstream", "origin", "HEAD"], check=True)
+    bump_version(args.manifest, args.level)
 
     return 0
 
