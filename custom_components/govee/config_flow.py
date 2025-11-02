@@ -11,9 +11,9 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow as HAConfigFlow
 from homeassistant.config_entries import (
-    ConfigFlowResult,
     OptionsFlow,
 )
+from homeassistant.data_entry_flow import ConfigFlowResult
 from homeassistant.exceptions import HomeAssistantError
 
 from .auth import GoveeAuthManager
