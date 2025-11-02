@@ -7,12 +7,12 @@ from typing import Any, Generic, Required, TypedDict, TypeVar
 
 import voluptuous as vol
 
-from homeassistant.config_entries import (
-    ConfigEntry,
-    ConfigFlowContext,
-    ConfigSubentryData,
-    FlowType,
-)
+# Avoid importing ConfigEntry and other concrete types here to prevent a
+# circular import when test stubs define `homeassistant.config_entries`.
+ConfigEntry = Any
+ConfigFlowContext = Any
+ConfigSubentryData = Any
+FlowType = Any
 
 _FlowContextT = TypeVar("_FlowContextT", bound="FlowContext")
 _FlowResultT = TypeVar("_FlowResultT", bound="FlowResult[Any, Any]")

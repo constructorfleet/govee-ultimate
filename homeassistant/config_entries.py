@@ -87,6 +87,40 @@ async_update_entry = None
 async_reload = None
 
 
+# Lightweight ConfigFlow / OptionsFlow stubs used by Config Flow code in tests
+class ConfigFlow:
+    """Minimal ConfigFlow base for tests."""
+
+    def __init__(self) -> None:
+        self.hass = None
+
+    @classmethod
+    def __init_subclass__(cls, **kwargs: Any) -> None:  # pragma: no cover - test shim
+        # Accept and ignore keyword args like `domain=...` used in real HA
+        # so subclasses in tests can be declared using the real pattern.
+        return super().__init_subclass__()
+
+
+class OptionsFlow:
+    """Minimal OptionsFlow base for tests."""
+
+    def __init__(self, entry: Any) -> None:
+        self._entry = entry
+
+
+# Simplify the result type used in the integration's config flows
+ConfigFlowResult = dict[str, Any]
+
+
+__all__ = [
+    "ConfigEntry",
+    "ConfigEntries",
+    "ConfigFlow",
+    "OptionsFlow",
+    "ConfigFlowResult",
+]
+
+
 class OptionsFlow:
     """Base class for config options flows."""
 

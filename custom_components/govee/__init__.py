@@ -63,7 +63,7 @@ except Exception:  # pragma: no cover - test stub fallback
     ConfigType = _Any
 
 from .auth import AccountAuthDetails, GoveeAuthManager
-from .const import DOMAIN
+from .const import CONFIG_SCHEMA, DOMAIN
 from .coordinator import GoveeDataUpdateCoordinator
 from .iot_client import IoTClient, IoTClientConfig
 
@@ -84,6 +84,7 @@ PLATFORMS: tuple[str, ...] = (
 __all__ = [
     "DOMAIN",
     "PLATFORMS",
+    "CONFIG_SCHEMA",
     "async_setup",
     "async_setup_entry",
     "async_unload_entry",
