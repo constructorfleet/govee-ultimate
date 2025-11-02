@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow as HAConfigFlow
 
 # Import types used only for typing under TYPE_CHECKING to avoid
 # depending on full Home Assistant runtime types at import time in CI
 # where the test harness stubs may not expose every symbol.
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from homeassistant.config_entries import ConfigFlow as HAConfigFlow
     from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
 else:
     # Provide lightweight runtime fallbacks so the module can be
