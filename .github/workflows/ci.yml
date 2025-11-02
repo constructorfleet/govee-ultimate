@@ -31,7 +31,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
       - name: Nuke local caches (defang cache-poisoning)
         run: |
           rm -rf ~/.cache/pip ~/.cache/pip-tools ~/.cache/pipenv || true
@@ -46,8 +46,11 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     needs: lint
+    # Set pip-related envs for the tests job. IMPORTANT: do NOT set
+    # PYTEST_DISABLE_PLUGIN_AUTOLOAD here — the Home Assistant pytest plugin is
+    # required by the test-suite and disabling pytest plugin autoload breaks
+    # collection/imports.
     env:
-      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
       PIP_NO_CACHE_DIR: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
     steps:
@@ -60,7 +63,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
       - name: Nuke local caches (defang cache-poisoning)
         run: |
           rm -rf ~/.cache/pip ~/.cache/pip-tools ~/.cache/pipenv || true

@@ -5,11 +5,10 @@ from __future__ import annotations
 import asyncio
 import importlib
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import ModuleType, SimpleNamespace
 from typing import Any
-from collections.abc import Mapping
 
 import pytest
 
@@ -41,7 +40,7 @@ if "homeassistant.helpers.update_coordinator" not in sys.modules:
     coordinator_module.CoordinatorEntity = _CoordinatorEntity  # type: ignore[attr-defined]
     sys.modules["homeassistant.helpers.update_coordinator"] = coordinator_module
 
-from custom_components.govee import DOMAIN
+from custom_components.govee.const import DOMAIN
 from custom_components.govee.coordinator import DeviceMetadata
 from custom_components.govee.device_types.air_quality import AirQualityDevice
 from custom_components.govee.device_types.humidifier import HumidifierDevice

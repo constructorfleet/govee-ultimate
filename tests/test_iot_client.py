@@ -12,6 +12,23 @@ from typing import Any
 import pytest
 
 
+def _ensure_event_loop() -> None:
+    """Ensure an asyncio event loop exists for environments that import at module level.
+
+    Some tests and modules call asyncio.get_event_loop() during import; ensure
+    this returns a valid loop instead of raising RuntimeError.
+    """
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+
+# Ensure a default loop exists for tests that expect it during import time.
+_ensure_event_loop()
+
+
 class FakeSSLContext:
     """Capture TLS configuration applied to the MQTT connection."""
 

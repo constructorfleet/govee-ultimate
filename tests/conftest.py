@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-import asyncio
 import pytest
 import voluptuous as vol
+
+# Previously this file filtered test collection to only run a single
+# focused test. Remove that behavior so the pytest-homeassistant-custom-component
+# runner and pytest-asyncio can control collection and execution.
 
 
 _MODULE_NAME = "homeassistant.helpers.config_validation"
@@ -38,6 +42,32 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+@pytest.fixture(scope="session")
+def event_loop():
+    """Provide a session-scoped event loop fallback.
+
+    Pytest plugins such as pytest-asyncio or pytest-homeassistant-custom-component
+    may provide their own event loop fixture. When present, pytest will prefer
+    the plugin's fixture over this one. This function exists to avoid hard
+    dependencies on plugin-provided fixtures in minimal test runs.
+    """
+
+    loop = asyncio.new_event_loop()
+    try:
+        yield loop
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop.close()
+
+
+# Note: Do not provide a `hass` fixture here. The pytest-homeassistant-custom-component
+# plugin exposes a full `hass` fixture tailored for Home Assistant integration
+# tests. Defining a local `hass` fixture can unintentionally override the plugin
+# fixture and break test discovery or execution. Tests that need a minimal test
+# double should construct one explicitly in-test or use dedicated helper
+# fixtures provided by the plugin.
+
+
 def pytest_unconfigure(config: pytest.Config) -> None:
     """Restore any original config validation module when pytest exits."""
 
@@ -48,17 +78,11 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
 
 def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:
-    """Execute coroutine tests within a dedicated event loop."""
+    """Remove custom runner.
 
-    test_function = pyfuncitem.obj
-    if not asyncio.iscoroutinefunction(test_function):
-        return None
+    The pytest-homeassistant-custom-component plugin provides its own
+    asyncio and Home Assistant fixtures. Returning None here allows
+    the standard pytest hooks and plugins to run tests normally.
+    """
 
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(test_function(**pyfuncitem.funcargs))
-    finally:
-        asyncio.set_event_loop(None)
-        loop.close()
-    return True
+    return None

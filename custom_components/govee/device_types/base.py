@@ -5,13 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any
+from typing import Any, TypeVar
 
 from custom_components.govee.state import (
     ConnectedState,
     DeviceState,
     ModeState,
 )
+
+T = TypeVar("T", bound=Any)
 
 
 @dataclass(frozen=True)
@@ -78,7 +80,7 @@ class BaseDevice:
         self._states: dict[str, DeviceState[Any]] = {}
         self._ha_entities: dict[str, HomeAssistantEntity] = {}
 
-    def add_state(self, state: DeviceState[Any]) -> DeviceState[Any]:
+    def add_state(self, state: DeviceState[T | None]) -> DeviceState[T | None]:
         """Register a new device state instance."""
 
         self._states[state.name] = state

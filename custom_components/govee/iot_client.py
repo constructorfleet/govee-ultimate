@@ -9,19 +9,14 @@ import ssl
 import tempfile
 import time
 import uuid
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from collections.abc import Callable, Sequence
 from typing import Any
 from urllib.parse import urlparse
 
-
-try:  # pragma: no cover - prefer real MQTT client when available
-    import paho.mqtt.client as _paho
-except ImportError:  # pragma: no cover - patched in unit tests
-    _paho = None  # type: ignore[assignment]
-
+import paho.mqtt.client as _paho
 
 _AMAZON_CA_PATH = (
     Path(__file__).resolve().parents[2] / "lib" / "data" / "iot" / "iot.config.ts"
@@ -88,7 +83,7 @@ def _create_paho_client(client_id: str) -> Any:
 
     if _paho is None:  # pragma: no cover - dependency is optional in tests
         raise RuntimeError("paho-mqtt is required for IoT connectivity")
-    return _paho.Client(client_id=client_id, protocol=getattr(_paho, "MQTTv311", 4))
+    return _paho.Client(client_id=client_id, protocol=_paho.MQTTv311)
 
 
 def _parse_endpoint(endpoint: str) -> tuple[str, int]:
@@ -140,7 +135,17 @@ class IoTClient:
         self._on_device_update = on_device_update
         self._logger = logger
         self._monotonic = monotonic or time.monotonic
-        self._loop = loop or asyncio.get_event_loop()
+        try:
+            default_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # Some test environments construct the client without an
+            # active event loop. Create and set a new loop so callbacks
+            # scheduled by the client can run in tests.
+            loop_obj = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop_obj)
+            default_loop = loop_obj
+
+        self._loop = loop or default_loop
         self._mqtt_client: Any | None = None
         self._device_filter: set[str] | None = None
         self._pending_commands: dict[str, float] = {}

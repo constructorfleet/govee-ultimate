@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.core import HomeAssistant
 
 from .entity import (
     GoveeStateEntity,
@@ -38,7 +39,9 @@ class GoveeBinarySensorEntity(GoveeStateEntity, BinarySensorEntity):
         return bool(value)
 
 
-async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: Any, async_add_entities: Any
+) -> None:
     """Set up binary sensor entities for a config entry."""
 
     coordinator = resolve_coordinator(hass, entry)

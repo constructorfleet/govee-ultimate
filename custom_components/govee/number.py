@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.number import NumberEntity
+from homeassistant.core import HomeAssistant
 
 from .entity import (
     GoveeStateEntity,
@@ -23,7 +24,9 @@ class GoveeNumberEntity(GoveeStateEntity, NumberEntity):
         await self._async_publish_state(value)
 
 
-async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: Any, async_add_entities: Any
+) -> None:
     """Set up number entities for a config entry."""
 
     coordinator = resolve_coordinator(hass, entry)
