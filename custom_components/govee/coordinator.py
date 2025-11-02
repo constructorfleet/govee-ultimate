@@ -474,8 +474,33 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         command_spec = command.get("command")
 
         if isinstance(command_spec, dict):
-            cmd_name = cmd_name or self._infer_command_from_template(command_spec)
-            data_payload = self._data_from_template(command_spec)
+            if self._is_catalog_template(command_spec):
+                cmd_name = cmd_name or self._infer_command_from_template(command_spec)
+                data_payload = self._data_from_template(command_spec)
+            else:
+                cmd_version_override = command_spec.get("cmdVersion", command_spec.get("cmd_version"))
+                if cmd_version_override is not None:
+                    payload["cmdVersion"] = self._coerce_int(cmd_version_override, default=0)
+                type_override = command_spec.get("type")
+                if type_override is not None:
+                    payload["type"] = self._coerce_int(type_override, default=1)
+                inner_command = command_spec.get("command")
+                if isinstance(inner_command, str):
+                    cmd_name = cmd_name or self._format_command_name(inner_command)
+                data_value = command_spec.get("data")
+                if isinstance(data_value, dict):
+                    data_payload = self._normalise_iot_command_data(data_value)
+                elif data_value is not None:
+                    data_payload = {"value": data_value}
+                if data_payload is None and command_spec:
+                    # Preserve remaining fields as fallback payload when no explicit data provided.
+                    residual = {
+                        key: value
+                        for key, value in command_spec.items()
+                        if key not in {"command", "cmd", "cmdVersion", "cmd_version", "type", "data"}
+                    }
+                    if residual:
+                        data_payload = self._normalise_iot_command_data(residual)
         elif isinstance(command_spec, str):
             cmd_name = cmd_name or self._format_command_name(command_spec)
 
@@ -599,6 +624,13 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             except (TypeError, ValueError):
                 return default
         return default
+
+    @staticmethod
+    def _is_catalog_template(command_spec: dict[str, Any]) -> bool:
+        """Return True when ``command_spec`` looks like a state catalogue template."""
+
+        template_keys = {"opcode", "payload_hex", "iot_base64", "multi_step", "name"}
+        return any(key in command_spec for key in template_keys)
 
     def _iot_device_ids(self) -> list[str]:
         """Return identifiers for devices that expose an IoT channel."""

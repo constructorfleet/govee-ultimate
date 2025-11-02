@@ -1193,6 +1193,66 @@ async def test_iot_commands_use_mqtt_client_when_enabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_iot_publisher_preserves_embedded_command_dict() -> None:
+    """Pre-assembled IoT command dicts should be forwarded without losing payloads."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-iot",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Humidifier",
+                "channels": {"iot": {"topic": "accounts/123/devices/device-iot"}},
+            }
+        ]
+    )
+    iot_client = FakeIoTClient()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=iot_client,
+        iot_state_enabled=True,
+        iot_command_enabled=True,
+    )
+
+    await coordinator.async_discover_devices()
+
+    publisher = coordinator.get_command_publisher("device-iot", channel="iot")
+    frame = [0x05, 0x01, 0x00]
+    command_payload = {
+        "command": {
+            "command": "multi_sync",
+            "cmdVersion": 2,
+            "type": 7,
+            "data": {"command": [frame]},
+        },
+        "command_id": "embedded-cmd",
+    }
+    await publisher(command_payload)
+
+    expected_b64 = opcodes.iot_payload_to_base64(frame)
+
+    assert iot_client.commands == [
+        (
+            "accounts/123/devices/device-iot",
+            {
+                "cmd": "multiSync",
+                "cmdVersion": 2,
+                "type": 7,
+                "data": {"command": [expected_b64]},
+                "command_id": "embedded-cmd",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_iot_refresh_requests_use_mqtt_client() -> None:
     """Refresh requests should be forwarded to the IoT client when enabled."""
 
