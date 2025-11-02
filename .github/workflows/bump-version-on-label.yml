@@ -44,3 +44,4 @@ jobs:
         uses: actions-js/push@master
         with:
           branch: ${{ github.event.pull_request.head.ref }}
+          github_token: ${{ secrets.GH_TOKEN }}
