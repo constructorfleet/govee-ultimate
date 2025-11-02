@@ -22,6 +22,11 @@ else:
         from homeassistant.config_entries import ConfigFlow, OptionsFlow  # type: ignore
     except Exception:  # pragma: no cover - fallback for tests
 
+        class ConfigFlow:
+            """Minimal fallback ConfigFlow used when Home Assistant types are missing."""
+
+            pass
+
         class OptionsFlow:  # minimal fallback
             """Minimal fallback OptionsFlow used when Home Assistant types are missing."""
 
