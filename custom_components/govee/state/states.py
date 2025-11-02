@@ -341,9 +341,7 @@ _DONE_LEVEL_MAP: dict[str, dict[int, str]] = {
 class PresetState(DeviceOpState[dict[str, Any] | None]):
     """Represent preset alarm and doneness configuration per probe."""
 
-    options: tuple[str, ...] = tuple(
-        _FOOD_MAP[key] for key in _FOOD_MAP  # type: ignore[index]
-    )
+    options: tuple[str, ...] = tuple(_FOOD_MAP.values())
 
     def __init__(
         self,
@@ -4459,7 +4457,9 @@ class SyncBoxActiveState(ModeState):
             identifier_map=self._mode_for_identifier,
         )
         self._modes_by_name: dict[str, DeviceState[str]] = {
-            getattr(mode, "name"): mode for mode in modes if isinstance(mode, DeviceState)
+            getattr(mode, "name"): mode
+            for mode in modes
+            if isinstance(mode, DeviceState)
         }
 
     def _mode_for_identifier(self, _: ModeState) -> DeviceState[str] | None:
@@ -4605,9 +4605,7 @@ class MicModeState(DeviceOpState[dict[str, Any]]):
                     pairs[key] = entry[1]
         return pairs
 
-    def _state_to_command(
-        self, next_state: Any
-    ) -> StateCommandAndStatus | None:  # type: ignore[override]
+    def _state_to_command(self, next_state: Any) -> StateCommandAndStatus | None:  # type: ignore[override]
         resolved_next = self._coerce_next_state(next_state)
         if resolved_next is None:
             return None

@@ -9,7 +9,23 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-import voluptuous as vol
+
+try:
+    import voluptuous as vol
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal envs
+    class _Schema:
+        """Minimal stub mirroring ``voluptuous.Schema`` behavior."""
+
+        def __init__(self, schema: Any | None = None) -> None:
+            self.schema = schema
+
+        def __call__(self, value: Any) -> Any:
+            return value
+
+    class _VoluptuousModule(ModuleType):
+        Schema = _Schema
+
+    vol = _VoluptuousModule("voluptuous")
 
 # Previously this file filtered test collection to only run a single
 # focused test. Remove that behavior so the pytest-homeassistant-custom-component

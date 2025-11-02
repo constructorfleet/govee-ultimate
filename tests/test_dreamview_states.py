@@ -77,8 +77,22 @@ def _video_report_frame(brightness: int) -> list[int]:
 @pytest.mark.parametrize(
     "payload, expected",
     [
-        (_report_frame(0x01, 0x00, 0x32), {"on": True, "brightnessMode": AmbiantBrightnessMode.CONSISTENT, "brightness": 0x32}),
-        (_report_frame(0x00, 0x01, 0x64), {"on": False, "brightnessMode": AmbiantBrightnessMode.SEGMENT, "brightness": 0x64}),
+        (
+            _report_frame(0x01, 0x00, 0x32),
+            {
+                "on": True,
+                "brightnessMode": AmbiantBrightnessMode.CONSISTENT,
+                "brightness": 0x32,
+            },
+        ),
+        (
+            _report_frame(0x00, 0x01, 0x64),
+            {
+                "on": False,
+                "brightnessMode": AmbiantBrightnessMode.SEGMENT,
+                "brightness": 0x64,
+            },
+        ),
     ],
 )
 def test_ambiant_state_parses_report_payload(
@@ -97,7 +111,11 @@ def test_ambiant_state_set_state_enqueues_catalog_command(
     """set_state should emit catalog-backed command metadata and pending status."""
 
     command_ids = ambiant_state.set_state(
-        {"on": True, "brightnessMode": AmbiantBrightnessMode.SEGMENT, "brightness": 0x40}
+        {
+            "on": True,
+            "brightnessMode": AmbiantBrightnessMode.SEGMENT,
+            "brightness": 0x40,
+        }
     )
 
     assert command_ids
@@ -111,8 +129,7 @@ def test_ambiant_state_set_state_enqueues_catalog_command(
 
     pending_status = ambiant_state._pending_commands[command_id]  # type: ignore[attr-defined]
     assert any(
-        expectation.get("op", {}).get("command")
-        for expectation in pending_status
+        expectation.get("op", {}).get("command") for expectation in pending_status
     )
 
 
