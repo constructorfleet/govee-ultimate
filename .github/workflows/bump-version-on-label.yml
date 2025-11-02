@@ -70,7 +70,7 @@ jobs:
         with:
           python-version: 3.12
 
-      - name: Install bump deps (trusted)
+      - name: Install bump deps
         working-directory: base
         run: |
           python -m pip install --upgrade pip
@@ -87,8 +87,7 @@ jobs:
             --manifest custom_components/govee/manifest.json \
             --level "$LEVEL"
 
-      - name: Debug current branch and remote (post-bump)
-        working-directory: pr
-        run: |
-          git rev-parse --abbrev-ref HEAD
-          git remote -v
+      - name: Commit & Push changes
+        uses: actions-js/push@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
