@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.httpx_client import get_async_client as httpx_client
+import homeassistant.helpers.httpx_client as httpx_client
 
 from . import device_client
 
@@ -77,19 +77,15 @@ async def _async_get_http_client(hass: HomeAssistant) -> _BaseUrlAsyncClient:
     """Return an HTTP client, preferring the Home Assistant helper when available."""
 
     if httpx_client is not None:
-        getter = (
-            httpx_client.get_async_client
-            if hasattr(httpx_client, "get_async_client")
-            else None
-        )
-        if getter is not None:
+        getter = getattr(httpx_client, "get_async_client", None)
+        if callable(getter):
             client = getter(hass, verify_ssl=True)
             if asyncio.iscoroutine(client):
                 client = await client
             if isinstance(client, _BaseUrlAsyncClient):
                 return client
             if httpx is not None:
-                base_url = client.base_url if hasattr(client, "base_url") else None
+                base_url = getattr(client, "base_url", None)
                 if not base_url or str(base_url) in {"", "/"}:
                     return _BaseUrlAsyncClient(client, API_BASE_URL)
             return client
@@ -137,9 +133,14 @@ class GoveeAPIClient:
         # Resolve DeviceListClient from the device_client module so tests can
         # monkeypatch `device_client.DeviceListClient` before creating the
         # facade. This mirrors how callers import the module in tests.
-        self._device_client = device_client.DeviceListClient(
-            self._hass, self._http_client, self._auth
+        # Allow tests to override which device client class is used by
+        # monkeypatching `_get_device_client_class` in the integration
+        # module. This mirrors test usage in the suite.
+        device_client_cls = (
+            getattr(__import__("custom_components.govee"), "_get_device_client_class", None)
+            or getattr(device_client, "DeviceListClient")
         )
+        self._device_client = device_client_cls(self._hass, self._http_client, self._auth)
 
     async def async_get_devices(self) -> list[dict[str, Any]]:
         """Return the device metadata payloads expected by the coordinator.

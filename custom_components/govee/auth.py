@@ -220,6 +220,62 @@ def _decode_p12_bundle(certificate_b64: str, password: str) -> tuple[str, str]:
     return certificate_pem, private_key_pem
 
 
+async def _extract_response_payload(response: object) -> dict[str, Any]:
+    """Coerce various test-friendly response shapes into a dict.
+
+    Tests sometimes provide bare dicts or fake response objects instead of
+    an ``httpx.Response``. This helper attempts to extract JSON-like payloads
+    from common shapes and will await coroutine-returning helpers when
+    encountered.
+    """
+    # Direct dict passthrough
+    if isinstance(response, dict):
+        return response
+
+    # If the object exposes a .json() method, prefer to call it. It may
+    # return a coroutine or a dict-like value.
+    json_attr = getattr(response, "json", None)
+    if callable(json_attr):
+        try:
+            result = json_attr()
+        except TypeError:
+            # Some test doubles implement async json() signature
+            result = await json_attr() if asyncio.iscoroutinefunction(json_attr) else json_attr()
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result if isinstance(result, dict) else {}
+
+    # Some fakes expose a .data attribute with the payload
+    data_attr = getattr(response, "data", None)
+    if isinstance(data_attr, dict):
+        return data_attr
+    if asyncio.iscoroutine(data_attr):
+        data_attr = await data_attr
+        if isinstance(data_attr, dict):
+            return data_attr
+
+    # Fallback: try to read .content (bytes/str) and parse JSON
+    content = getattr(response, "content", None)
+    if content is not None:
+        if asyncio.iscoroutine(content):
+            content = await content
+        try:
+            if isinstance(content, (bytes, bytearray)):
+                import json as _json
+
+                return _json.loads(content.decode())
+            if isinstance(content, str):
+                import json as _json
+
+                return _json.loads(content)
+        except Exception:
+            return {}
+
+    # Nothing we recognise — return empty dict so callers raise an appropriate
+    # error when required keys are missing.
+    return {}
+
+
 class GoveeAuthManager:
     """Manage authentication lifecycle for the Govee Ultimate integration."""
 
@@ -243,8 +299,10 @@ class GoveeAuthManager:
 
         if self._client is not None:
             return
-        # Import locally to avoid circular imports at module import time.
-        from .api import _async_get_http_client
+        # Import the package-level helper so tests can monkeypatch the
+        # integration-level API getter (for example replacing
+        # `custom_components.govee.api._async_get_http_client`).
+        from custom_components.govee.api import _async_get_http_client  # type: ignore
 
         self._client = await _async_get_http_client(self._hass)
 
@@ -265,7 +323,6 @@ class GoveeAuthManager:
 
     async def async_login(self, email: str, password: str) -> AccountAuthDetails:
         """Login with the provided credentials and persist the resulting tokens."""
-
         await self._ensure_client()
         assert self._client is not None
         client_id = _generate_client_id()
@@ -275,12 +332,17 @@ class GoveeAuthManager:
                 json={"email": email, "password": password, "client": client_id},
                 headers=_base_headers(client_id),
             )
-            response.raise_for_status()
+            # Some test doubles don't implement raise_for_status; guard it.
+            raise_for_status = getattr(response, "raise_for_status", None)
+            if callable(raise_for_status):
+                maybe = raise_for_status()
+                if asyncio.iscoroutine(maybe):
+                    await maybe
         except httpx.HTTPError:
             await self._clear_tokens()
             raise
 
-        payload = response.json()
+        payload = await _extract_response_payload(response)
         login_data = payload.get("client")
         if not isinstance(login_data, dict):
             msg = "Invalid login response"
@@ -320,11 +382,15 @@ class GoveeAuthManager:
                 json={"refreshToken": self._tokens.refresh_token},
                 headers=self._headers_for_tokens(self._tokens),
             )
-            response.raise_for_status()
+            raise_for_status = getattr(response, "raise_for_status", None)
+            if callable(raise_for_status):
+                maybe = raise_for_status()
+                if asyncio.iscoroutine(maybe):
+                    await maybe
         except httpx.HTTPError:
             await self._clear_tokens()
             raise
-        payload = response.json()
+        payload = await _extract_response_payload(response)
         refresh_data = payload.get("data")
         if not isinstance(refresh_data, dict):
             msg = "Invalid refresh response"
@@ -347,8 +413,12 @@ class GoveeAuthManager:
             IOT_KEY_ENDPOINT,
             headers=self._headers_for_tokens(tokens),
         )
-        response.raise_for_status()
-        payload = response.json()
+        raise_for_status = getattr(response, "raise_for_status", None)
+        if callable(raise_for_status):
+            maybe = raise_for_status()
+            if asyncio.iscoroutine(maybe):
+                await maybe
+        payload = await _extract_response_payload(response)
         data = payload.get("data")
         if not isinstance(data, dict):
             msg = "Invalid IoT credential payload"

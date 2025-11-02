@@ -171,7 +171,17 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         self._entity_registry = entity_registry
         self._config_entry_id = config_entry_id
         hass_loop = getattr(hass, "loop", None)
-        self._loop = loop or hass_loop or asyncio.get_event_loop()
+        try:
+            default_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # Some test environments call coordinator constructors without
+            # an active event loop. Create and set a new loop so the
+            # coordinator can schedule refreshes during unit tests.
+            loop_obj = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop_obj)
+            default_loop = loop_obj
+
+        self._loop = loop or hass_loop or default_loop
         self._refresh_task: asyncio.TimerHandle | None = None
         self._pending_tasks: set[asyncio.Task[Any]] = set()
         self._iot_client = iot_client
@@ -233,6 +243,20 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 
         await self.async_discover_devices()
         return {"devices": self.devices, "device_metadata": self.device_metadata}
+
+    async def async_config_entry_first_refresh(self) -> None:
+        """Perform the initial data refresh for a config entry.
+
+        Home Assistant calls this helper on startup to prime coordinator
+        data. The base DataUpdateCoordinator may implement its own variant
+        but providing an explicit implementation here ensures the
+        coordinator's snapshot is populated deterministically in tests and
+        runtime.
+        """
+
+        data = await self._async_update_data()
+        # Expose the snapshot on the coordinator for entities to read.
+        self.data = data
 
     def _resolve_factory(
         self, metadata: DeviceMetadata

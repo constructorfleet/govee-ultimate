@@ -102,6 +102,41 @@ class ConfigFlow:
         # so subclasses in tests can be declared using the real pattern.
         return super().__init_subclass__()
 
+    def async_show_form(
+        self,
+        *,
+        step_id: str,
+        data_schema: Any,
+        errors: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Return a form-like result for tests."""
+
+        return {
+            "type": "form",
+            "step_id": step_id,
+            "data_schema": data_schema,
+            "errors": errors or {},
+        }
+
+    def async_create_entry(self, *, title: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Return a create_entry-like result for tests."""
+
+        return {"type": "create_entry", "title": title, "data": data}
+
+    def async_abort(
+        self,
+        *,
+        reason: str,
+        description_placeholders: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return an abort-like result for tests."""
+
+        return {
+            "type": "abort",
+            "reason": reason,
+            "description_placeholders": description_placeholders or {},
+        }
+
 
 # Simplify the result type used in the integration's config flows
 ConfigFlowResult = dict[str, Any]
@@ -161,3 +196,14 @@ __all__ = [
     "OptionsFlow",
     "ConfigFlowResult",
 ]
+
+# Expose a convenience name used in some tests: when test modules create a
+# local `config_entries` variable they sometimes rely on importing the module
+# directly. Ensure the module is available as a name on the builtins so tests
+# that reference `config_entries` at module scope still resolve it.
+try:  # pragma: no cover - defensive for test environment
+    import builtins as _builtins
+
+    _builtins.config_entries = __import__(__name__)
+except Exception:  # pragma: no cover - best effort
+    pass

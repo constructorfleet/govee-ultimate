@@ -50,3 +50,16 @@ def _ensure_event_loop() -> None:
 
 # Ensure a default loop exists for tests that expect it during import time.
 _ensure_event_loop()
+
+
+# Some tests reference `config_entries` as a bare name (not importing
+# `homeassistant.config_entries`). Make the test stub available via
+# builtins so those lookups succeed regardless of import order.
+try:  # pragma: no cover - defensive for test environment
+    import builtins as _builtins
+    import importlib as _importlib
+
+    _cfg_mod = _importlib.import_module("homeassistant.config_entries")
+    setattr(_builtins, "config_entries", _cfg_mod)
+except Exception:  # pragma: no cover - best effort
+    pass

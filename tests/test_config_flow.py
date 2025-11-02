@@ -5,10 +5,9 @@ from __future__ import annotations
 import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
-
-import pytest
 from unittest.mock import AsyncMock
 
+import pytest
 
 if "homeassistant.data_entry_flow" not in sys.modules:
     data_entry_flow = ModuleType("homeassistant.data_entry_flow")
@@ -193,7 +192,7 @@ async def test_options_flow_allows_configuring_iot_toggles() -> None:
         "iot_refresh_enabled": False,
     }
 
-    result = await flow.async_step_init(user_input=new_options)
+    result = flow.async_step_init(user_input=new_options)
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"] == new_options
 

@@ -12,8 +12,6 @@ from custom_components.govee.const import (
     SERVICE_REAUTHENTICATE,
     TOKEN_REFRESH_INTERVAL,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE
 
 try:
     import homeassistant.helpers.config_validation as cv  # type: ignore
@@ -62,10 +60,51 @@ try:  # pragma: no cover - Home Assistant runtime imports
 except Exception:  # pragma: no cover - test stub fallback
     ConfigType = _Any
 
+from . import api as _api
 from .auth import AccountAuthDetails, GoveeAuthManager
 from .const import CONFIG_SCHEMA, DOMAIN
 from .coordinator import GoveeDataUpdateCoordinator
-from .iot_client import IoTClient, IoTClientConfig
+
+
+# Package-level factory getters used by tests to override implementation
+def _get_auth_class() -> type:
+    """Return the auth class used to create auth manager instances.
+
+    Tests monkeypatch this function to provide a FakeAuth implementation.
+    """
+
+    return GoveeAuthManager
+
+
+def _get_device_client_class() -> type:
+    """Return the device client class used by the API facade.
+
+    Tests may monkeypatch this to inject a fake device client.
+    """
+
+    from . import device_client as _dc
+
+    return getattr(_dc, "DeviceListClient")
+
+
+def _get_coordinator_class() -> type:
+    """Return the coordinator class used during entry setup.
+
+    Tests may override this to inject a FakeCoordinator.
+    """
+
+    return GoveeDataUpdateCoordinator
+
+
+# Re-export HTTP helper functions implemented in the API module so tests
+# that monkeypatch `integration._create_http_client` still work.
+def _create_http_client() -> object:
+    return _api._create_http_client()
+
+
+async def _async_get_http_client(hass: Any) -> object:
+    return await _api._async_get_http_client(hass)
+
 
 # Avoid importing modules that depend on this package at import-time to
 # prevent circular import problems during tests. Import locally where used.
@@ -120,7 +159,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _ensure_services_registered(hass)
     # Let the API facade own HTTP client creation; pass only hass and auth and
     # allow the API client to lazily construct the http client when required.
-    auth = GoveeAuthManager(hass, None)
+    # Allow tests to override the auth implementation by monkeypatching
+    # `_get_auth_class` on the integration module.
+    auth_cls = _get_auth_class()
+    auth = auth_cls(hass, None)
     # Import the API client lazily to avoid circular import at module import time
     from .api import GoveeAPIClient  # local import
 
@@ -149,21 +191,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         iot_command_enabled=iot_command_enabled,
         iot_refresh_enabled=iot_refresh_enabled,
     )
-    domain_data: DomainData = hass.data.setdefault(
-        DOMAIN,
-        {
-            "api_client": api_client,
-            "http_client": http_client,
-            "iot_client": iot_client,
-            "coordinator": coordinator,
-            "auth": auth,
-            "config_entry": entry,
-        },
-    )
+    # Store integration state keyed by entry id to match how tests and
+    # Home Assistant expect per-entry state to be kept in `hass.data`.
+    domain = hass.data.setdefault(DOMAIN, {})
+    entry_state: DomainData = {
+        "api_client": api_client,
+        "http_client": http_client,
+        "iot_client": iot_client,
+        "coordinator": coordinator,
+        "auth": auth,
+        "config_entry": entry,
+    }
+    domain[entry.entry_id] = entry_state
 
     await _async_ensure_reauth_service(hass)
     await auth.async_initialize()
 
+    # Ensure tokens exist for this entry (may be created during setup)
     if auth.tokens is None:
         email, password = _get_entry_credentials(entry)
         if not email or not password:
@@ -172,12 +216,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "Credentials are required to initialise the Govee Ultimate integration"
             )
             raise RuntimeError(msg)
-        domain_data["tokens"] = await auth.async_login(email, password)
+        entry_state["tokens"] = await auth.async_login(email, password)
 
     await coordinator.async_config_entry_first_refresh()
     _schedule_coordinator_refresh(coordinator)
 
-    domain_data["refresh_unsub"] = _schedule_token_refresh(hass, auth, entry)
+    entry_state["refresh_unsub"] = _schedule_token_refresh(hass, auth, entry)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -186,32 +230,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Handle unloading of a config entry."""
 
-    entry_data: DomainData | None = hass.data.get(DOMAIN, {})
+    # Look up per-entry state using the helper that understands both
+    # storage layouts (legacy single-state or per-entry mapping).
+    entry_state = _resolve_entry_state(hass, entry.entry_id)
 
     unload_success = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    if entry_data is None:
+    if entry_state is None:
         return unload_success
 
-    coordinator = entry_data.get("coordinator")
+    coordinator = entry_state.get("coordinator")
     if coordinator is not None:
         if hasattr(coordinator, "cancel_refresh"):
             coordinator.cancel_refresh()
 
-    refresh_unsub = entry_data.get("refresh_unsub")
+    refresh_unsub = entry_state.get("refresh_unsub")
     if callable(refresh_unsub):
         refresh_unsub()
 
-    api_client = entry_data.get("api_client")
+    api_client = entry_state.get("api_client")
     if api_client is not None and hasattr(api_client, "async_close"):
         await api_client.async_close()
 
-    iot_client = entry_data.get("iot_client")
+    iot_client = entry_state.get("iot_client")
     if iot_client is not None:
         await iot_client.async_stop()
 
-    if not entry_data:
-        hass.data.pop(DOMAIN, None)
+    # If removing this entry leaves the domain dict empty, clean it up.
+    domain = hass.data.get(DOMAIN)
+    if isinstance(domain, dict):
+        domain.pop(entry.entry_id, None)
+        if not domain:
+            hass.data.pop(DOMAIN, None)
 
     return unload_success
 
@@ -387,6 +437,15 @@ async def _async_prepare_iot_runtime(
         if bundle.account_id is not None
         else bundle.client_id
     )
+    # Import IoT client classes lazily so tests can monkeypatch
+    # `custom_components.govee.iot_client.IoTClient` and the config
+    # type used to construct it.
+    from importlib import import_module
+
+    iot_mod = import_module("custom_components.govee.iot_client")
+    IoTClient = getattr(iot_mod, "IoTClient")
+    IoTClientConfig = getattr(iot_mod, "IoTClientConfig")
+
     config = IoTClientConfig(
         endpoint=bundle.endpoint,
         account_topic=bundle.topic,

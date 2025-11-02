@@ -140,7 +140,17 @@ class IoTClient:
         self._on_device_update = on_device_update
         self._logger = logger
         self._monotonic = monotonic or time.monotonic
-        self._loop = loop or asyncio.get_event_loop()
+        try:
+            default_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # Some test environments construct the client without an
+            # active event loop. Create and set a new loop so callbacks
+            # scheduled by the client can run in tests.
+            loop_obj = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop_obj)
+            default_loop = loop_obj
+
+        self._loop = loop or default_loop
         self._mqtt_client: Any | None = None
         self._device_filter: set[str] | None = None
         self._pending_commands: dict[str, float] = {}

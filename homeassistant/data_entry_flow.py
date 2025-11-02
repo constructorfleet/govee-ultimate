@@ -27,7 +27,7 @@ class FlowContext(TypedDict, total=False):
 
 
 class FlowResultType(StrEnum):
-    """Result type for a data entry flow."""
+    """Describe fallback flow result values for unit tests."""
 
     FORM = "form"
     CREATE_ENTRY = "create_entry"
