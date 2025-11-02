@@ -33,6 +33,28 @@ def _create_http_client() -> Any:
     return httpx.AsyncClient(base_url=API_BASE_URL)
 
 
+async def _async_get_http_client(hass: Any) -> Any:
+    """Return an Async HTTP client, preferring Home Assistant's helper.
+
+    Tests and the integration call this helper via the package namespace;
+    implement it here to await the HA helper when available and fall back to
+    creating a local client otherwise.
+    """
+
+    try:
+        # Home Assistant exposes a helper module that provides get_async_client
+        from homeassistant.helpers.httpx_client import get_async_client
+
+        client = get_async_client(hass)
+        if asyncio.iscoroutine(client):
+            client = await client
+        return client
+    except Exception:
+        # Fall back to constructing a basic httpx client for tests that stub
+        # out the helper module or when running outside HA.
+        return _create_http_client()
+
+
 class _BaseUrlAsyncClient(httpx.AsyncClient):
     """Wrap an async client to ensure relative URLs resolve against the base URL."""
 
@@ -69,6 +91,23 @@ class _BaseUrlAsyncClient(httpx.AsyncClient):
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
+
+
+def _wrap_client_with_base(client: Any, base_url: str | httpx.URL) -> Any:
+    """Wrap a runtime httpx client to ensure relative URLs use base_url.
+
+    Tests expect the integration to expose a client type that applies a
+    base URL. When Home Assistant provides an AsyncClient via its helper we
+    wrap it in the same adapter so callers can rely on the behaviour.
+    """
+
+    # If the client already appears wrapped, return as-is.
+    if isinstance(client, _BaseUrlAsyncClient):
+        return client
+    try:
+        return _BaseUrlAsyncClient(client, base_url)
+    except Exception:
+        return client
 
 
 class GoveeAPIClient:

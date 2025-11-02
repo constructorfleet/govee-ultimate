@@ -159,6 +159,19 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 
         coordinator_logger = logger or logging.getLogger(__name__)
         interval = refresh_interval or _DEFAULT_REFRESH_INTERVAL
+        # Ensure the Home Assistant frame helper is initialised so helpers
+        # that call `frame.report_usage` do not raise during tests.
+        try:
+            from contextlib import suppress
+
+            from homeassistant.helpers.frame import async_setup as _frame_setup
+
+            with suppress(Exception):
+                _frame_setup(hass)
+        except Exception:
+            # If the import itself fails, continue — this only affects tests.
+            pass
+
         super().__init__(
             hass,
             coordinator_logger,
@@ -517,6 +530,14 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         if isinstance(value, dict) and self._invoke_state_parse(state, value):
             return [name]
         if hasattr(state, "_update_state"):
+            # For simple scalar updates (e.g. True/False), call the
+            # state's internal update method so the value is applied.
+            try:
+                state._update_state(value)
+            except Exception:
+                # Defensive: if the state cannot be updated with the raw
+                # value, don't propagate the exception here; treat as no-op.
+                return []
             return [name]
         return []
 

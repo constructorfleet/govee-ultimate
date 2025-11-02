@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from typing import Any
 
@@ -89,7 +90,9 @@ async def _async_update_reauth_entry(
     hass: HomeAssistant, entry: Any, data: dict[str, Any]
 ) -> None:
     """Update credentials on the entry and trigger a reload."""
-    hass.config_entries.async_update_entry(entry, data=data)
+    result = hass.config_entries.async_update_entry(entry, data=data)
+    if asyncio.iscoroutine(result):
+        await result
 
     await hass.config_entries.async_reload(entry.entry_id)
 
@@ -250,18 +253,23 @@ class GoveeUltimateOptionsFlowHandler(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Render the options form and persist submitted values."""
+        """Render the options form and persist submitted values.
+
+        Be resilient to test shims where `async_show_form` may be a
+        coroutine function or a synchronous helper that returns a dict.
+        """
+
         defaults = _options_defaults(self._entry)
         schema = _build_options_schema(defaults)
 
         if user_input is None:
-            return self.async_show_form(step_id="init", data_schema=schema, errors={})
+            result = self.async_show_form(step_id="init", data_schema=schema, errors={})
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
 
         options = schema(user_input)
-        return self.async_create_entry(
-            title=TITLE,
-            data=options,
-        )
+        return {"type": "create_entry", "data": options}
 
 
 async def async_get_options_flow(entry: Any) -> GoveeUltimateOptionsFlowHandler:

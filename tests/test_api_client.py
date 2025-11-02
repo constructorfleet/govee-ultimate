@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from custom_components.govee.api import GoveeAPIClient
 
 
@@ -49,15 +51,26 @@ class MinimalDeviceClient:
         return []
 
 
+@pytest.mark.asyncio
 async def test_async_get_devices_and_fetch_devices_proxied(monkeypatch) -> None:
     """async_get_devices and async_fetch_devices should proxy to the underlying client."""
     dummy = DummyDeviceClient()
 
-    # Monkeypatch DeviceListClient used in GoveeAPIClient to our dummy
+    # Monkeypatch DeviceListClient used in GoveeAPIClient to our dummy and
+    # ensure the API module's get_async_client returns a simple sentinel so the
+    # facade can construct without a full Home Assistant hass object.
+    import custom_components.govee.api as api_mod
     import custom_components.govee.device_client as device_client_mod
 
     monkeypatch.setattr(
         device_client_mod, "DeviceListClient", lambda hass, client, auth: dummy
+    )
+    monkeypatch.setattr(
+        api_mod, "get_async_client", lambda hass: object(), raising=False
+    )
+    # Also patch the DeviceListClient symbol referenced directly by the API module
+    monkeypatch.setattr(
+        api_mod, "DeviceListClient", lambda hass, client, auth: dummy, raising=False
     )
 
     client = GoveeAPIClient(hass=None, auth=None)
@@ -68,13 +81,21 @@ async def test_async_get_devices_and_fetch_devices_proxied(monkeypatch) -> None:
     assert isinstance(fetched, list)
 
 
+@pytest.mark.asyncio
 async def test_publish_delegation_async_and_sync(monkeypatch) -> None:
     """Verify async and sync publish delegates are executed by the facade."""
     dummy = DummyDeviceClient()
+    import custom_components.govee.api as api_mod
     import custom_components.govee.device_client as device_client_mod
 
     monkeypatch.setattr(
         device_client_mod, "DeviceListClient", lambda hass, client, auth: dummy
+    )
+    monkeypatch.setattr(
+        api_mod, "get_async_client", lambda hass: object(), raising=False
+    )
+    monkeypatch.setattr(
+        api_mod, "DeviceListClient", lambda hass, client, auth: dummy, raising=False
     )
 
     client = GoveeAPIClient(hass=None, auth=None)
@@ -87,13 +108,21 @@ async def test_publish_delegation_async_and_sync(monkeypatch) -> None:
     assert dummy.ble_called == [("d1", {"mac": "m"}, {"cmd": "v2"})]
 
 
+@pytest.mark.asyncio
 async def test_publish_not_implemented_raises(monkeypatch) -> None:
     """When the underlying client lacks publish methods, NotImplementedError is raised."""
     minimal = MinimalDeviceClient()
+    import custom_components.govee.api as api_mod
     import custom_components.govee.device_client as device_client_mod
 
     monkeypatch.setattr(
         device_client_mod, "DeviceListClient", lambda hass, client, auth: minimal
+    )
+    monkeypatch.setattr(
+        api_mod, "get_async_client", lambda hass: object(), raising=False
+    )
+    monkeypatch.setattr(
+        api_mod, "DeviceListClient", lambda hass, client, auth: minimal, raising=False
     )
 
     client = GoveeAPIClient(hass=None, auth=None)

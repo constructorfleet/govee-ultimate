@@ -116,7 +116,21 @@ class FakeHass:
 
         self.data: dict[str, Any] = {}
         self.loop = asyncio.get_event_loop()
-        self.config = SimpleNamespace(config_dir=config_dir)
+        # Emulate Home Assistant's loop thread id used by frame.report_usage
+        import threading
+
+        self.loop_thread_id = threading.get_ident()
+        # Provide a small config shim with a `path` method expected by
+        # Home Assistant helpers (e.g. storage.Store.path calls
+        # `hass.config.path(STORAGE_DIR, key)`). Using a shim here keeps
+        # the test double lightweight while satisfying those callers.
+        import os
+
+        class _ConfigShim(SimpleNamespace):
+            def path(self, *parts: str) -> str:
+                return os.path.join(self.config_dir, *parts)
+
+        self.config = _ConfigShim(config_dir=config_dir)
         self.config_entries = SimpleNamespace(
             async_forward_entry_setups=self._capture_forward,
             async_unload_platforms=self._capture_unload,
@@ -135,6 +149,27 @@ class FakeHass:
             tuple[str, str], Callable[..., Awaitable[None]]
         ] = {}
         self.tracked_interval: tuple[Callable[..., Awaitable[None]], Any] | None = None
+        # Bus listeners recorded as (event_type, callback). Provide
+        # minimal async_listen and async_listen_once so tests may register
+        # listeners both one-shot and persistent; EntityRegistry expects
+        # `async_listen` to exist.
+        self._bus_listeners: list[tuple[str, Callable[..., Awaitable[None]]]] = []
+
+        class _Bus:
+            def __init__(self, parent: Any) -> None:
+                self._parent = parent
+
+            def async_listen(
+                self, event_type: str, listener: Callable[..., Awaitable[None]]
+            ) -> Callable[[], None]:
+                return self._parent._bus_listen(event_type, listener)
+
+            def async_listen_once(
+                self, event_type: str, listener: Callable[..., Awaitable[None]]
+            ) -> Callable[[], None]:
+                return self._parent._bus_listen_once(event_type, listener)
+
+        self.bus = _Bus(self)
 
     async def _capture_forward(self, entry: Any, platforms: tuple[str, ...]) -> None:
         self.forwarded.append((entry, platforms))
@@ -177,6 +212,47 @@ class FakeHass:
         result = handler(call)
         if asyncio.iscoroutine(result):
             await result
+
+    def _bus_listen_once(
+        self, event_type: str, listener: Callable[..., Awaitable[None]]
+    ) -> Callable[[], None]:
+        """Register a one-shot listener and return an unsubscribe callable.
+
+        The listener is recorded but not executed by the fake bus. Tests that
+        need execution may call the recorded listener directly. This method is
+        intentionally synchronous to match Home Assistant's event bus helper
+        signatures used by other helpers.
+        """
+
+        self._bus_listeners.append((event_type, listener))
+
+        def _unsubscribe() -> None:
+            from contextlib import suppress
+
+            with suppress(ValueError):
+                self._bus_listeners.remove((event_type, listener))
+
+        return _unsubscribe
+
+    def _bus_listen(
+        self, event_type: str, listener: Callable[..., Awaitable[None]]
+    ) -> Callable[[], None]:
+        """Register a persistent listener and return an unsubscribe callable.
+
+        This mirrors Home Assistant's event bus where async_listen returns an
+        unsubscribe callable synchronously.
+        """
+
+        # Record the listener but do not attempt to schedule or execute it.
+        self._bus_listeners.append((event_type, listener))
+
+        def _unsubscribe() -> None:
+            from contextlib import suppress
+
+            with suppress(ValueError):
+                self._bus_listeners.remove((event_type, listener))
+
+        return _unsubscribe
 
 
 class FakeConfigEntry:

@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -16,7 +17,6 @@ from custom_components.govee.auth import (
     GoveeAuthManager,
     IoTBundle,
 )
-
 
 P12_BUNDLE = (
     "MIIKSAIBAzCCCf4GCSqGSIb3DQEHAaCCCe8EggnrMIIJ5zCCBEIGCSqGSIb3DQEHBqCCBDMwggQv"
@@ -126,7 +126,21 @@ class StubHass:
         """Store loop and config directory to mirror hass helpers."""
 
         self.loop = loop
-        self.config = SimpleNamespace(config_dir=config_dir)
+
+        # Provide a `config` object with a `.path` helper used by storage.Store
+        def _path(*parts: str) -> str:
+            # Join parts under the provided config_dir
+            return str(Path(config_dir).joinpath(*parts))
+
+        self.config = SimpleNamespace(config_dir=config_dir, path=_path)
+        # Provide a simplified `state` object used by Store to determine shutdown
+        self.state = SimpleNamespace(name="running")
+        # Provide `data` mapping expected by Home Assistant helpers (storage, etc.)
+        self.data: dict[str, object] = {}
+        # Emulate Home Assistant's loop thread id used by frame.report_usage
+        import threading
+
+        self.loop_thread_id = threading.get_ident()
 
     async def async_add_executor_job(self, func, *args):  # type: ignore[no-untyped-def]
         """Run executor jobs via the ambient event loop."""
@@ -231,7 +245,10 @@ async def test_auth_manager_login_fetches_iot_bundle(
     )
 
     storage_file = tmp_path / ".storage" / "govee_auth"
-    assert json.loads(storage_file.read_text()) == {
+    stored = json.loads(storage_file.read_text())
+    if isinstance(stored, dict) and "data" in stored:
+        stored = stored["data"]
+    assert stored == {
         "email": "user@example.com",
         "account_id": "123",
         "client_id": generated_client_id,
@@ -283,7 +300,14 @@ async def test_auth_manager_refreshes_tokens_updates_iot_bundle(
 
     storage_file = tmp_path / ".storage" / "govee_auth"
     storage_file.parent.mkdir(parents=True, exist_ok=True)
-    storage_file.write_text(json.dumps(storage_payload))
+    # Persist using the Home Assistant Store envelope so the Store can read it
+    envelope = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "govee_auth",
+        "data": storage_payload,
+    }
+    storage_file.write_text(json.dumps(envelope))
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url == httpx.URL(
@@ -345,6 +369,8 @@ async def test_auth_manager_refreshes_tokens_updates_iot_bundle(
     )
 
     updated = json.loads(storage_file.read_text())
+    if isinstance(updated, dict) and "data" in updated:
+        updated = updated["data"]
     assert updated["access_token"] == "new-access"
     assert updated["refresh_token"] == "new-refresh"
     assert updated["iot_certificate"] == EXPECTED_CERTIFICATE
@@ -375,7 +401,13 @@ async def test_auth_manager_login_failure(tmp_path_factory, request):
     )
     storage_file = tmp_path / ".storage" / "govee_auth"
     storage_file.parent.mkdir(parents=True, exist_ok=True)
-    storage_file.write_text(json.dumps(existing.as_storage()))
+    envelope = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "govee_auth",
+        "data": existing.as_storage(),
+    }
+    storage_file.write_text(json.dumps(envelope))
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"message": "invalid"})
@@ -418,7 +450,13 @@ async def test_auth_manager_refresh_failure_clears_state(tmp_path_factory, reque
 
     storage_file = tmp_path / ".storage" / "govee_auth"
     storage_file.parent.mkdir(parents=True, exist_ok=True)
-    storage_file.write_text(json.dumps(expiring.as_storage()))
+    envelope = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "govee_auth",
+        "data": expiring.as_storage(),
+    }
+    storage_file.write_text(json.dumps(envelope))
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"message": "expired"})
