@@ -5,64 +5,26 @@ from __future__ import annotations
 import asyncio
 from typing import Any, TypedDict
 
+import homeassistant.helpers.config_validation as cv  # type: ignore# type: ignore[assignment]
+import homeassistant.helpers.device_registry as dr  # type: ignore
+import homeassistant.helpers.entity_registry as er  # type: ignore
 import httpx
-
-from custom_components.govee.const import (
-    _SERVICES_KEY,
-    SERVICE_REAUTHENTICATE,
-    TOKEN_REFRESH_INTERVAL,
-)
-
-try:
-    import homeassistant.helpers.config_validation as cv  # type: ignore
-except Exception:  # pragma: no cover - guard for test stubs
-    cv = None  # type: ignore[assignment]
-
-try:
-    import homeassistant.helpers.device_registry as dr  # type: ignore
-except Exception:  # pragma: no cover - guard for test stubs
-    dr = None  # type: ignore[assignment]
-
-try:
-    import homeassistant.helpers.entity_registry as er  # type: ignore
-except Exception:  # pragma: no cover - guard for test stubs
-    er = None  # type: ignore[assignment]
-from typing import Any as _Any
-
-try:  # pragma: no cover - Home Assistant runtime imports
-    from homeassistant.config_entries import ConfigEntry
-except Exception:  # pragma: no cover - test stub fallback
-    ConfigEntry = _Any
-
-try:  # pragma: no cover - Home Assistant runtime imports
-    from homeassistant.core import CALLBACK_TYPE, HomeAssistant
-except Exception:  # pragma: no cover - test stub fallback
-    CALLBACK_TYPE = _Any
-    HomeAssistant = _Any
-
-try:  # pragma: no cover - Home Assistant runtime imports
-    from homeassistant.helpers.device_registry import DeviceRegistry
-except Exception:  # pragma: no cover - test stub fallback
-    DeviceRegistry = _Any
-
-try:  # pragma: no cover - Home Assistant runtime imports
-    from homeassistant.helpers.entity_registry import EntityRegistry
-except Exception:  # pragma: no cover - test stub fallback
-    EntityRegistry = _Any
-
-try:  # pragma: no cover - Home Assistant runtime imports
-    from homeassistant.helpers.event import async_track_time_interval
-except Exception:  # pragma: no cover - test stub fallback
-    async_track_time_interval = None
-
-try:  # pragma: no cover - Home Assistant runtime imports
-    from homeassistant.helpers.typing import ConfigType
-except Exception:  # pragma: no cover - test stub fallback
-    ConfigType = _Any
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.helpers.device_registry import DeviceRegistry
+from homeassistant.helpers.entity_registry import EntityRegistry
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.typing import ConfigType
 
 from . import api as _api
 from .auth import AccountAuthDetails, GoveeAuthManager
-from .const import CONFIG_SCHEMA, DOMAIN
+from .const import (
+    _SERVICES_KEY,
+    CONFIG_SCHEMA,
+    DOMAIN,
+    SERVICE_REAUTHENTICATE,
+    TOKEN_REFRESH_INTERVAL,
+)
 from .coordinator import GoveeDataUpdateCoordinator
 
 
@@ -157,12 +119,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry for the integration."""
 
     _ensure_services_registered(hass)
-    # Let the API facade own HTTP client creation; pass only hass and auth and
-    # allow the API client to lazily construct the http client when required.
-    # Allow tests to override the auth implementation by monkeypatching
-    # `_get_auth_class` on the integration module.
-    auth_cls = _get_auth_class()
-    auth = auth_cls(hass, None)
+    auth = GoveeAuthManager(hass, None)
     # Import the API client lazily to avoid circular import at module import time
     from .api import GoveeAPIClient  # local import
 

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import DOMAIN
@@ -141,7 +142,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
     def __init__(
         self,
         *,
-        hass: Any,
+        hass: HomeAssistant,
         api_client: Any,
         device_registry: Any,
         entity_registry: Any,

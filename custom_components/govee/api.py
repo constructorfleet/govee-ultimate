@@ -17,11 +17,9 @@ from collections.abc import Awaitable
 from typing import Any
 
 import httpx
+from homeassistant.helpers.httpx_client import get_async_client
 
-from homeassistant.core import HomeAssistant
-import homeassistant.helpers.httpx_client as httpx_client
-
-from . import device_client
+from .device_client import DeviceListClient
 
 API_BASE_URL = "https://app2.govee.com"
 
@@ -73,26 +71,6 @@ class _BaseUrlAsyncClient(httpx.AsyncClient):
         return getattr(self._client, name)
 
 
-async def _async_get_http_client(hass: HomeAssistant) -> _BaseUrlAsyncClient:
-    """Return an HTTP client, preferring the Home Assistant helper when available."""
-
-    if httpx_client is not None:
-        getter = getattr(httpx_client, "get_async_client", None)
-        if callable(getter):
-            client = getter(hass, verify_ssl=True)
-            if asyncio.iscoroutine(client):
-                client = await client
-            if isinstance(client, _BaseUrlAsyncClient):
-                return client
-            if httpx is not None:
-                base_url = getattr(client, "base_url", None)
-                if not base_url or str(base_url) in {"", "/"}:
-                    return _BaseUrlAsyncClient(client, API_BASE_URL)
-            return client
-
-    return _create_http_client()
-
-
 class GoveeAPIClient:
     """Facade for API operations used by the integration.
 
@@ -113,10 +91,10 @@ class GoveeAPIClient:
         self._hass = hass
         self._auth = auth
         self._device_client: Any | None = None
-        self._http_client: Any | None = None
+        self._http_client: httpx.AsyncClient | None = None
 
     @property
-    def http_client(self) -> Any | None:
+    def http_client(self) -> httpx.AsyncClient | None:
         """Expose the underlying HTTP client when available (tests expect this)."""
 
         return self._http_client
@@ -126,21 +104,10 @@ class GoveeAPIClient:
 
         if self._device_client is not None:
             return
-        # Acquire an http client using the integration-level helper so the
-        # logic for preference (Home Assistant helper vs direct httpx) lives
-        # in one place.
-        self._http_client = await _async_get_http_client(self._hass)
-        # Resolve DeviceListClient from the device_client module so tests can
-        # monkeypatch `device_client.DeviceListClient` before creating the
-        # facade. This mirrors how callers import the module in tests.
-        # Allow tests to override which device client class is used by
-        # monkeypatching `_get_device_client_class` in the integration
-        # module. This mirrors test usage in the suite.
-        device_client_cls = (
-            getattr(__import__("custom_components.govee"), "_get_device_client_class", None)
-            or getattr(device_client, "DeviceListClient")
+        self._http_client = get_async_client(self._hass)
+        self._device_client = DeviceListClient(
+            self._hass, self._http_client, self._auth
         )
-        self._device_client = device_client_cls(self._hass, self._http_client, self._auth)
 
     async def async_get_devices(self) -> list[dict[str, Any]]:
         """Return the device metadata payloads expected by the coordinator.

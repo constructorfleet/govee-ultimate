@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 import httpx
-
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .auth import GoveeAuthManager
@@ -138,7 +138,7 @@ class DeviceListClient:
 
     def __init__(
         self,
-        hass: Any,
+        hass: HomeAssistant,
         client: httpx.AsyncClient,
         auth: GoveeAuthManager,
     ) -> None:

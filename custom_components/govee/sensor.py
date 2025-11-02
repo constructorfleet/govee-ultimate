@@ -6,9 +6,9 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import voluptuous as vol
-
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_platform
 
 from .entity import (
@@ -23,7 +23,6 @@ from .state.states import (
     PurifierCustomModeState,
     SceneModeState,
 )
-
 
 _ICE_MAKER_SCHEDULE_SERVICE_SCHEMA = vol.Schema(
     {
@@ -374,7 +373,9 @@ def _sensor_entity_factory(coordinator: Any, device_id: str, entity: Any) -> Any
     return GoveeSensorEntity(coordinator, device_id, entity)
 
 
-async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: Any, async_add_entities: Any
+) -> None:
     """Set up sensor entities for a config entry."""
 
     coordinator = resolve_coordinator(hass, entry)

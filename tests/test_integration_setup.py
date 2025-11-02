@@ -923,6 +923,7 @@ async def test_async_setup_entry_skips_credentials_when_tokens_attr_missing(
             self.hass = hass_param
             self.client = client
             self.login_calls: list[tuple[str, str]] = []
+            self.tokens = None
 
         async def async_initialize(self) -> None:
             pass
@@ -1331,6 +1332,9 @@ async def test_async_prepare_iot_runtime_uses_iot_bundle(
     )
 
     class FakeAuth:
+        def __init__(self, hass: Any, client: Any) -> None:
+            self.tokens = None
+
         async def async_get_iot_bundle(self) -> Any | None:
             return bundle
 

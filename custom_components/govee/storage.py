@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+
+from homeassistant.core import HomeAssistant
 
 
-async def async_migrate_storage_file(hass: Any, legacy_key: str, new_key: str) -> None:
+async def async_migrate_storage_file(
+    hass: HomeAssistant, legacy_key: str, new_key: str
+) -> None:
     """Copy a legacy `.storage` file to a new key and remove the original."""
 
     storage_dir = Path(hass.config.config_dir) / ".storage"

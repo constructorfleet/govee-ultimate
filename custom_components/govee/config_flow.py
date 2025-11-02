@@ -2,27 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from typing import Any
 
 import httpx
 import voluptuous as vol
-
 from homeassistant.config_entries import ConfigFlow as HAConfigFlow
-
-# OptionsFlow is expected to be provided by Home Assistant's test stub. Import
-# defensively to avoid import-time failures during test collection in CI or
-# minimal test environments where the stub may not expose the symbol yet.
-try:  # pragma: no cover - defensive import for test environments
-    from homeassistant.config_entries import OptionsFlow
-except Exception:  # pragma: no cover - fallback for test stubs
-
-    class OptionsFlow(HAConfigFlow):
-        """Fallback OptionsFlow used when HA stub is incomplete."""
-
-
-from homeassistant.data_entry_flow import ConfigFlowResult
+from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .auth import GoveeAuthManager
@@ -79,13 +66,9 @@ def _build_reauth_schema(default_email: str) -> Any:
 
 
 async def _async_validate_credentials(
-    hass: Any | None, email: str, password: str
+    hass: HomeAssistant, email: str, password: str
 ) -> None:
     """Validate credentials by performing a login request."""
-
-    if hass is None:
-        raise CannotConnect("Missing Home Assistant instance")
-
     auth = GoveeAuthManager(hass)
 
     try:
@@ -103,18 +86,12 @@ async def _async_validate_credentials(
 
 
 async def _async_update_reauth_entry(
-    hass: Any, entry: Any, data: dict[str, Any]
+    hass: HomeAssistant, entry: Any, data: dict[str, Any]
 ) -> None:
     """Update credentials on the entry and trigger a reload."""
+    hass.config_entries.async_update_entry(entry, data=data)
 
-    if hasattr(hass.config_entries, "async_update_entry"):
-        result = hass.config_entries.async_update_entry(entry, data=data)
-        if asyncio.iscoroutine(result):
-            await result
-
-    if hasattr(hass.config_entries, "async_reload"):
-        entry_id = entry.entry_id if hasattr(entry, "entry_id") else None
-        await hass.config_entries.async_reload(entry_id)
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 class GoveeUltimateConfigFlow(HAConfigFlow, domain=DOMAIN):
@@ -145,7 +122,7 @@ class GoveeUltimateConfigFlow(HAConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         try:
             await _async_validate_credentials(
-                self.hass if hasattr(self, "hass") else None,
+                self.hass,
                 data["email"],
                 data["password"],
             )
@@ -174,8 +151,7 @@ class GoveeUltimateConfigFlow(HAConfigFlow, domain=DOMAIN):
         if entry is None:
             with contextlib.suppress(Exception):
                 entry_id = kwargs.get("entry_id")
-                if entry_id and hasattr(self.hass.config_entries, "async_get_entry"):
-                    entry = self.hass.config_entries.async_get_entry(entry_id)
+                entry = self.hass.config_entries.async_get_entry(entry_id)
 
         if entry is not None:
             self._reauth_entry = entry
@@ -197,7 +173,7 @@ class GoveeUltimateConfigFlow(HAConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         try:
             await _async_validate_credentials(
-                self.hass if hasattr(self, "hass") else None,
+                self.hass,
                 submission["email"],
                 submission["password"],
             )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.core import HomeAssistant
 
 from .entity import (
     GoveeStateEntity,
@@ -37,7 +38,9 @@ class GoveeSwitchEntity(GoveeStateEntity, SwitchEntity):
         await self._async_publish_state(False)
 
 
-async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: Any, async_add_entities: Any
+) -> None:
     """Set up switch entities for a config entry."""
 
     coordinator = resolve_coordinator(hass, entry)

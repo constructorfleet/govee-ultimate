@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.light import LightEntity
+from homeassistant.core import HomeAssistant
 
+from .coordinator import GoveeDataUpdateCoordinator
 from .entity import (
     GoveeStateEntity,
     async_add_platform_entities,
@@ -19,7 +21,9 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
 
     _BRIGHTNESS_STATE = "brightness"
 
-    def __init__(self, coordinator: Any, device_id: str, entity: Any) -> None:
+    def __init__(
+        self, coordinator: GoveeDataUpdateCoordinator, device_id: str, entity: Any
+    ) -> None:
         """Initialize the light entity and track brightness history."""
 
         super().__init__(coordinator, device_id, entity)
@@ -129,7 +133,9 @@ class GoveeLightEntity(GoveeStateEntity, LightEntity):
         await self._async_publish_state(False)
 
 
-async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: Any, async_add_entities: Any
+) -> None:
     """Set up the light platform for a config entry."""
 
     coordinator = resolve_coordinator(hass, entry)

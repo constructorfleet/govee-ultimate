@@ -6,27 +6,10 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, Generic, TypeVar
 
-try:
-    from homeassistant.helpers.update_coordinator import CoordinatorEntity
-except ImportError:  # pragma: no cover - stubbed in unit tests
-
-    class CoordinatorEntity:  # type: ignore[declare]
-        """Fallback coordinator entity for test environments."""
-
-        def __init__(self, coordinator: Any) -> None:
-            """Store the provided coordinator stub."""
-            self.coordinator = coordinator
-
-        async def async_added_to_hass(self) -> None:  # pragma: no cover - stub
-            """Handle entity addition within Home Assistant."""
-            return None
-
-        async def async_will_remove_from_hass(self) -> None:  # pragma: no cover - stub
-            """Handle entity removal from Home Assistant."""
-            return None
-
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .coordinator import GoveeDataUpdateCoordinator
 from .device_types.base import HomeAssistantEntity
 from .state.device_state import DeviceState
 
@@ -42,7 +25,7 @@ class GoveeStateEntity(CoordinatorEntity, Generic[StateT]):
 
     def __init__(
         self,
-        coordinator: Any,
+        coordinator: GoveeDataUpdateCoordinator,
         device_id: str,
         entity: HomeAssistantEntity,
     ) -> None:

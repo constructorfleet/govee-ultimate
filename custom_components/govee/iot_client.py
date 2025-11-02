@@ -9,19 +9,14 @@ import ssl
 import tempfile
 import time
 import uuid
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from collections.abc import Callable, Sequence
 from typing import Any
 from urllib.parse import urlparse
 
-
-try:  # pragma: no cover - prefer real MQTT client when available
-    import paho.mqtt.client as _paho
-except ImportError:  # pragma: no cover - patched in unit tests
-    _paho = None  # type: ignore[assignment]
-
+import paho.mqtt.client as _paho
 
 _AMAZON_CA_PATH = (
     Path(__file__).resolve().parents[2] / "lib" / "data" / "iot" / "iot.config.ts"
@@ -88,7 +83,7 @@ def _create_paho_client(client_id: str) -> Any:
 
     if _paho is None:  # pragma: no cover - dependency is optional in tests
         raise RuntimeError("paho-mqtt is required for IoT connectivity")
-    return _paho.Client(client_id=client_id, protocol=getattr(_paho, "MQTTv311", 4))
+    return _paho.Client(client_id=client_id, protocol=_paho.MQTTv311, 4)
 
 
 def _parse_endpoint(endpoint: str) -> tuple[str, int]:

@@ -37,7 +37,9 @@ class GoveeFanEntity(GoveeStateEntity, FanEntity):
         await self._async_publish_state(False)
 
 
-async def async_setup_entry(hass: Any, entry: Any, async_add_entities: Any) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: Any, async_add_entities: Any
+) -> None:
     """Set up fan entities for a config entry."""
 
     coordinator = resolve_coordinator(hass, entry)

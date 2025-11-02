@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.serialization import (
 from cryptography.hazmat.primitives.serialization.pkcs12 import (
     load_key_and_certificates,
 )
-
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .storage import async_migrate_storage_file
@@ -240,7 +240,11 @@ async def _extract_response_payload(response: object) -> dict[str, Any]:
             result = json_attr()
         except TypeError:
             # Some test doubles implement async json() signature
-            result = await json_attr() if asyncio.iscoroutinefunction(json_attr) else json_attr()
+            result = (
+                await json_attr()
+                if asyncio.iscoroutinefunction(json_attr)
+                else json_attr()
+            )
         if asyncio.iscoroutine(result):
             result = await result
         return result if isinstance(result, dict) else {}
@@ -279,7 +283,9 @@ async def _extract_response_payload(response: object) -> dict[str, Any]:
 class GoveeAuthManager:
     """Manage authentication lifecycle for the Govee Ultimate integration."""
 
-    def __init__(self, hass: Any, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self, hass: HomeAssistant, client: httpx.AsyncClient | None = None
+    ) -> None:
         """Initialize the auth manager with Home Assistant and optional HTTP client.
 
         When `client` is None the manager will lazily obtain the helper client
