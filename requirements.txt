@@ -5,3 +5,5 @@ paho-mqtt==2.1.0
 pytest==8.4.2
 ruff==0.14.3
 homeassistant==2025.10.2
+pydantic==2.12.2
+voluptuous==0.15.2
