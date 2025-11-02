@@ -30,7 +30,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     new_version = bump_version(args.manifest, args.level)
-    print(new_version)
 
     # Commit and push changes. Caller should ensure git is configured and
     # that credentials are available (for example via GITHUB_TOKEN).
