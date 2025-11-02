@@ -4,12 +4,33 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import httpx
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow as HAConfigFlow
-from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
+
+# Import types used only for typing under TYPE_CHECKING to avoid
+# depending on full Home Assistant runtime types at import time in CI
+# where the test harness stubs may not expose every symbol.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
+else:
+    # Provide lightweight runtime fallbacks so the module can be
+    # imported in environments where Home Assistant does not expose the
+    # full config_entries API (tests often inject minimal stubs).
+    try:  # OptionsFlow is a base class used at runtime; prefer real one
+        from homeassistant.config_entries import OptionsFlow  # type: ignore
+    except Exception:  # pragma: no cover - fallback for tests
+
+        class OptionsFlow:  # minimal fallback
+            """Minimal fallback OptionsFlow used when Home Assistant types are missing."""
+
+            pass
+
+    # For return-type annotations we only need a structural alias; a
+    # plain dict-type is sufficient when the real type is missing.
+    ConfigFlowResult = dict[str, Any]  # type: ignore
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
