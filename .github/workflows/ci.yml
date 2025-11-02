@@ -1,10 +1,14 @@
 name: CI
 
-'on':
+on:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches:
-      - main
+      - '**'
+  workflow_run:
+    workflows: ['bump-version-on-label']
+    types: [completed]
 
 permissions:
   contents: write

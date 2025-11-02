@@ -94,7 +94,20 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
+def _ordered_manifest(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a new mapping with 'domain' first, 'name' second, then alpha."""
+    preferred = ["domain", "name"]
+    ordered: dict[str, Any] = {}
+    # Place preferred keys in order if present
+    for key in preferred:
+        if key in payload:
+            ordered[key] = payload[key]
+    # Append remaining keys alphabetically
+    for key in sorted(k for k in payload if k not in preferred):
+        ordered[key] = payload[key]
+    return ordered
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     """Persist JSON payload to disk with canonical formatting."""
-
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    ordered = _ordered_manifest(payload)
+    path.write_text(json.dumps(ordered, indent=2) + "\n")
