@@ -116,10 +116,11 @@ class AccountAuthDetails:
             iot_private_key=data.get("iot_private_key"),
             bff_access_token=data.get("bff_access_token"),
             bff_client_id=data.get("bff_client_id"),
-            bff_expires_at=
-            datetime.fromisoformat(data["bff_expires_at"])
-            if data.get("bff_expires_at")
-            else None,
+            bff_expires_at=(
+                datetime.fromisoformat(data["bff_expires_at"])
+                if data.get("bff_expires_at")
+                else None
+            ),
         )
 
     def as_storage(self) -> dict[str, Any]:
@@ -138,9 +139,11 @@ class AccountAuthDetails:
             "iot_private_key": self.iot_private_key,
             "bff_access_token": self.bff_access_token,
             "bff_client_id": self.bff_client_id,
-            "bff_expires_at": self.bff_expires_at.isoformat()
-            if self.bff_expires_at is not None
-            else None,
+            "bff_expires_at": (
+                self.bff_expires_at.isoformat()
+                if self.bff_expires_at is not None
+                else None
+            ),
         }
 
     def should_refresh(self, now: datetime | None = None) -> bool:

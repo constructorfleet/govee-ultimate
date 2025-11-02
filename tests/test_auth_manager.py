@@ -198,9 +198,7 @@ async def test_auth_manager_login_fetches_iot_bundle(
                     },
                 },
             )
-        if request.url == httpx.URL(
-            "https://community-api.govee.com/os/v1/login"
-        ):
+        if request.url == httpx.URL("https://community-api.govee.com/os/v1/login"):
             payload = json.loads(request.content.decode())
             assert payload == {
                 "email": "user@example.com",
@@ -347,9 +345,7 @@ async def test_auth_manager_login_bff_failure_falls_back(
                     },
                 },
             )
-        if request.url == httpx.URL(
-            "https://community-api.govee.com/os/v1/login"
-        ):
+        if request.url == httpx.URL("https://community-api.govee.com/os/v1/login"):
             return httpx.Response(500, json={"message": "server error"})
         if request.url == httpx.URL("https://app2.govee.com/app/v1/account/iot/key"):
             return httpx.Response(
