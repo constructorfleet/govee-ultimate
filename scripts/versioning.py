@@ -103,7 +103,7 @@ def _ordered_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         if key in payload:
             ordered[key] = payload[key]
     # Append remaining keys alphabetically
-    for key in sorted(k for k in payload.keys() if k not in preferred):
+    for key in sorted(k for k in payload if k not in preferred):
         ordered[key] = payload[key]
     return ordered
 
