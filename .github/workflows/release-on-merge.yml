@@ -67,6 +67,11 @@ jobs:
           print(f"::notice title=release_version::version={version}")
           PY
 
+      - name: "Configure git user for tagging"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: "Create tag"
         run: |
           VERSION=$(python -c "import json;print(json.load(open('custom_components/govee/manifest.json'))['version'])")
