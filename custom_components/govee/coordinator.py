@@ -478,9 +478,13 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                 cmd_name = cmd_name or self._infer_command_from_template(command_spec)
                 data_payload = self._data_from_template(command_spec)
             else:
-                cmd_version_override = command_spec.get("cmdVersion", command_spec.get("cmd_version"))
+                cmd_version_override = command_spec.get(
+                    "cmdVersion", command_spec.get("cmd_version")
+                )
                 if cmd_version_override is not None:
-                    payload["cmdVersion"] = self._coerce_int(cmd_version_override, default=0)
+                    payload["cmdVersion"] = self._coerce_int(
+                        cmd_version_override, default=0
+                    )
                 type_override = command_spec.get("type")
                 if type_override is not None:
                     payload["type"] = self._coerce_int(type_override, default=1)
@@ -497,7 +501,15 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                     residual = {
                         key: value
                         for key, value in command_spec.items()
-                        if key not in {"command", "cmd", "cmdVersion", "cmd_version", "type", "data"}
+                        if key
+                        not in {
+                            "command",
+                            "cmd",
+                            "cmdVersion",
+                            "cmd_version",
+                            "type",
+                            "data",
+                        }
                     }
                     if residual:
                         data_payload = self._normalise_iot_command_data(residual)
