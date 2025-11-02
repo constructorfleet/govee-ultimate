@@ -11,7 +11,6 @@ from custom_components.govee.const import (
     _SERVICES_KEY,
     SERVICE_REAUTHENTICATE,
     TOKEN_REFRESH_INTERVAL,
-    _empty_schema,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE
@@ -63,7 +62,7 @@ try:  # pragma: no cover - Home Assistant runtime imports
 except Exception:  # pragma: no cover - test stub fallback
     ConfigType = _Any
 
-from .auth import GoveeAuthManager
+from .auth import AccountAuthDetails, GoveeAuthManager
 from .const import DOMAIN
 from .coordinator import GoveeDataUpdateCoordinator
 from .iot_client import IoTClient, IoTClientConfig

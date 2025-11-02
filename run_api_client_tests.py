@@ -12,36 +12,47 @@ from custom_components.govee.api import GoveeAPIClient
 
 
 class DummyDeviceClient:
+    """A device client implementing sync and async publish methods for testing."""
+
     def __init__(self) -> None:
+        """Initialise storage for captured calls."""
         self.iot_called = []
         self.ble_called = []
 
     async def async_get_devices(self) -> list[dict[str, Any]]:
+        """Return a single mocked device payload asynchronously."""
         await asyncio.sleep(0)
         return [{"device_id": "d1", "model": "H7141", "channels": {}}]
 
     async def async_fetch_devices(self) -> list[Any]:
+        """Return a mocked fetch result asynchronously."""
         await asyncio.sleep(0)
         return [object()]
 
     async def async_publish_iot_command(
         self, device_id: str, channel_info: dict, command: dict
     ) -> None:
+        """Capture IoT publish calls for assertions."""
         self.iot_called.append((device_id, dict(channel_info), dict(command)))
 
     def async_publish_ble_command(
         self, device_id: str, channel_info: dict, command: dict
     ) -> None:
+        """Publish BLE command synchronously."""
         self.ble_called.append((device_id, dict(channel_info), dict(command)))
 
 
 class MinimalDeviceClient:
+    """A device client that only supports discovery, no publish methods."""
+
     async def async_get_devices(self) -> list[dict[str, Any]]:
+        """Return an empty list of devices for minimal client tests."""
         await asyncio.sleep(0)
         return []
 
 
 async def run_tests() -> int:
+    """Run the GoveeAPIClient tests, returning number of failures."""
     failures = 0
 
     # Test 1: proxying get/fetch
@@ -58,7 +69,7 @@ async def run_tests() -> int:
         fetched = await client.async_fetch_devices()
         assert isinstance(fetched, list), "async_fetch_devices did not return a list"
 
-    except Exception as exc:  # pragma: no cover - expose failures
+    except Exception:  # pragma: no cover - expose failures
         failures += 1
 
     # Test 2: publish delegation
@@ -80,7 +91,7 @@ async def run_tests() -> int:
             ("d1", {"mac": "m"}, {"cmd": "v2"})
         ], f"ble_called unexpected: {dummy.ble_called}"
 
-    except Exception as exc:
+    except Exception:
         failures += 1
 
     # Test 3: missing publish raises
@@ -98,7 +109,7 @@ async def run_tests() -> int:
             pass
         else:
             raise AssertionError("Expected NotImplementedError for missing iot publish")
-    except Exception as exc:
+    except Exception:
         failures += 1
 
     return failures
