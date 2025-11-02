@@ -12,14 +12,12 @@ jobs:
     if: "github.event.issue.pull_request != null && startsWith(github.event.comment.body, 'bump version')"
     runs-on: ubuntu-latest
     steps:
-      - name: "Checkout PR head ref/repo"
+      - name: "Checkout trusted repository code (base)"
         uses: actions/checkout@v5
         with:
-          # Check out the PR head repository and ref so we run on the actual
-          # pull request branch (important for forks where the head repo
-          # differs from the base repository).
-          repository: ${{ github.event.issue.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.issue.pull_request.head.ref }}
+          # Checkout the base repository (trusted code). We must NOT execute
+          # code from the untrusted PR head. Instead, use the trusted bump
+          # script here and update the PR branch via the GitHub API.
           fetch-depth: 0
 
       - name: "Debug PR head info"
@@ -58,9 +56,54 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: "Run bump script"
+      - name: "Run trusted bump script and prepare payload"
+        id: bump
+        env:
+          LEVEL: ${{ steps.parse.outputs.level }}
+        run: |
+          set -euo pipefail
+          echo "Running trusted bump script on base repository"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m scripts.bump_version --manifest custom_components/govee/manifest.json --level "$LEVEL"
+          NEW_VERSION=$(python -c "import json;print(json.load(open('custom_components/govee/manifest.json'))['version'])")
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          # Prepare base64 content for API upload
+          CONTENT=$(python -c "import base64,sys;print(base64.b64encode(open('custom_components/govee/manifest.json','rb').read()).decode())")
+          echo "CONTENT=$CONTENT" >> "$GITHUB_OUTPUT"
+
+      - name: "Push bump to PR branch via GitHub API (safe)"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LEVEL=${{ steps.parse.outputs.level }}
-          python -m scripts.bump_version --manifest custom_components/govee/manifest.json --level "$LEVEL"
+          set -euo pipefail
+          OWNER_REPO='${{ github.event.issue.pull_request.head.repo.full_name }}'
+          HEAD_REF='${{ github.event.issue.pull_request.head.ref }}'
+          PATH_TO_MANIFEST='custom_components/govee/manifest.json'
+          NEW_VERSION='${{ steps.bump.outputs.NEW_VERSION }}'
+          CONTENT='${{ steps.bump.outputs.CONTENT }}'
+
+          echo "Attempting to update $PATH_TO_MANIFEST on $OWNER_REPO@$HEAD_REF"
+
+          # Get current file SHA on the target branch
+          FILE_API_URL="https://api.github.com/repos/${OWNER_REPO}/contents/${PATH_TO_MANIFEST}?ref=${HEAD_REF}"
+          FILE_RESP=$(curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" "$FILE_API_URL")
+
+          FILE_SHA=$(echo "$FILE_RESP" | python -c "import sys,json;print(json.load(sys.stdin).get('sha',''))") || true
+
+          if [ -z "$FILE_SHA" ]; then
+            echo "Could not find file sha or lack permission to read file in target repo. Likely a fork or permission issue."
+            echo "Will not attempt to write to fork. Posting comment to PR with instructions."
+            COMMENT_PAYLOAD=$(jq -n --arg body "Unable to push bump to branch $HEAD_REF in $OWNER_REPO. Please run 'bump version ${LEVEL}' locally or ask a maintainer to apply the version bump." '{body:$body}')
+            COMMENTS_URL="${{ github.event.issue.url }}/comments"
+            curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" -d "$COMMENT_PAYLOAD" "$COMMENTS_URL"
+            exit 0
+          fi
+
+          # Construct commit message and payload
+          COMMIT_MSG="chore(release): bump version to ${NEW_VERSION}"
+          UPDATE_PAYLOAD=$(jq -n --arg message "$COMMIT_MSG" --arg content "$CONTENT" --arg sha "$FILE_SHA" --arg branch "$HEAD_REF" '{message:$message,content:$content,sha:$sha,branch:$branch}')
+
+          UPDATE_URL="https://api.github.com/repos/${OWNER_REPO}/contents/${PATH_TO_MANIFEST}"
+          RESP=$(curl -sS -X PUT -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" -d "$UPDATE_PAYLOAD" "$UPDATE_URL")
+          echo "$RESP" | jq -r '.commit.html_url // .message' || true
