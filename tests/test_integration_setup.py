@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 import custom_components.govee.const
+from custom_components.govee import opcodes
 
 if "httpx" not in sys.modules:
     httpx_module = ModuleType("httpx")
@@ -1583,10 +1584,28 @@ async def test_mqtt_flow_updates_state_and_publishes_commands(
     assert iot_client.config.account_topic == "accounts/123"
 
     publisher = coordinator.get_command_publisher("device-iot")
-    await publisher({"opcode": "0x20"})
+    command_payload = {
+        "command": {
+            "name": "set_power",
+            "opcode": "0x01",
+            "payload_hex": "0101",
+            "ble_base64": opcodes.hex_to_base64("0101"),
+            "iot_base64": opcodes.hex_to_base64("0101"),
+        },
+        "command_id": "cmd-initial",
+    }
+    await publisher(command_payload)
     assert iot_client.commands
     command_topic, payload = iot_client.commands[0]
     assert command_topic == "accounts/123/devices/device-iot"
+    expected_b64 = opcodes.hex_to_base64("0101")
+    assert payload == {
+        "cmd": "ptReal",
+        "cmdVersion": 0,
+        "type": 1,
+        "data": {"command": [expected_b64]},
+        "command_id": "cmd-initial",
+    }
 
     callback = iot_client.update_callback
     callback(("device-iot", {"power": {"isOn": True}}))
@@ -1595,12 +1614,25 @@ async def test_mqtt_flow_updates_state_and_publishes_commands(
     assert device.states["power"].value is True
 
     publisher = coordinator.get_command_publisher("device-iot", channel="iot")
-    await publisher({"command_id": "cmd-1", "payload": "value"})
+    frame = [0x33, 0x01, 0x00, 0x01]
+    await publisher(
+        {
+            "command": "multi_sync",
+            "command_id": "cmd-1",
+            "data": {"command": [frame]},
+        }
+    )
 
     assert len(iot_client.commands) == 2
     command_topic, payload = iot_client.commands[1]
     assert command_topic == "accounts/123/devices/device-iot"
-    assert payload["command_id"] == "cmd-1"
+    assert payload == {
+        "cmd": "multiSync",
+        "cmdVersion": 0,
+        "type": 1,
+        "data": {"command": [opcodes.iot_payload_to_base64(frame)]},
+        "command_id": "cmd-1",
+    }
 
 
 @pytest.mark.asyncio

@@ -78,6 +78,7 @@ if "homeassistant.helpers.update_coordinator" not in __import__("sys").modules:
     sys.modules.setdefault("homeassistant.helpers.storage", storage)
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from custom_components.govee import opcodes
 from custom_components.govee.coordinator import (
     DeviceMetadata,
     GoveeDataUpdateCoordinator,
@@ -331,10 +332,28 @@ async def test_command_publisher_uses_device_list_iot_topic() -> None:
 
     publisher = coordinator.get_command_publisher("iot-device-1", channel="iot")
 
-    await publisher({"command": "value"})
+    frame = [0x33, 0x0A, 0x00, 0x01]
+    await publisher(
+        {
+            "command": "multi_sync",
+            "command_id": "test-command",
+            "data": {"command": [frame]},
+        }
+    )
+
+    expected_b64 = opcodes.iot_payload_to_base64(frame)
 
     assert iot_client.published == [
-        ("accounts/abc/device/iot-device-1", {"command": "value"})
+        (
+            "accounts/abc/device/iot-device-1",
+            {
+                "cmd": "multiSync",
+                "cmdVersion": 0,
+                "type": 1,
+                "data": {"command": [expected_b64]},
+                "command_id": "test-command",
+            },
+        )
     ]
     assert api_client.iot_commands == []
 
@@ -1144,12 +1163,93 @@ async def test_iot_commands_use_mqtt_client_when_enabled() -> None:
     await coordinator.async_discover_devices()
 
     publisher = coordinator.get_command_publisher("device-iot", channel="iot")
-    await publisher({"opcode": "0x20"})
+    command_payload = {
+        "command": {
+            "name": "set_power",
+            "opcode": "0x01",
+            "payload_hex": "0101",
+            "ble_base64": opcodes.hex_to_base64("0101"),
+            "iot_base64": opcodes.hex_to_base64("0101"),
+        },
+        "command_id": "cmd-42",
+    }
+    await publisher(command_payload)
+
+    expected_b64 = opcodes.hex_to_base64("0101")
 
     assert iot_client.commands == [
-        ("accounts/123/devices/device-iot", {"opcode": "0x20"})
+        (
+            "accounts/123/devices/device-iot",
+            {
+                "cmd": "ptReal",
+                "cmdVersion": 0,
+                "type": 1,
+                "data": {"command": [expected_b64]},
+                "command_id": "cmd-42",
+            },
+        )
     ]
     assert api_client.iot_commands == []
+
+
+@pytest.mark.asyncio
+async def test_iot_publisher_preserves_embedded_command_dict() -> None:
+    """Pre-assembled IoT command dicts should be forwarded without losing payloads."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-iot",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Humidifier",
+                "channels": {"iot": {"topic": "accounts/123/devices/device-iot"}},
+            }
+        ]
+    )
+    iot_client = FakeIoTClient()
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+        iot_client=iot_client,
+        iot_state_enabled=True,
+        iot_command_enabled=True,
+    )
+
+    await coordinator.async_discover_devices()
+
+    publisher = coordinator.get_command_publisher("device-iot", channel="iot")
+    frame = [0x05, 0x01, 0x00]
+    command_payload = {
+        "command": {
+            "command": "multi_sync",
+            "cmdVersion": 2,
+            "type": 7,
+            "data": {"command": [frame]},
+        },
+        "command_id": "embedded-cmd",
+    }
+    await publisher(command_payload)
+
+    expected_b64 = opcodes.iot_payload_to_base64(frame)
+
+    assert iot_client.commands == [
+        (
+            "accounts/123/devices/device-iot",
+            {
+                "cmd": "multiSync",
+                "cmdVersion": 2,
+                "type": 7,
+                "data": {"command": [expected_b64]},
+                "command_id": "embedded-cmd",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

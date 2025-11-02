@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -14,6 +14,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from . import opcodes
 from .const import DOMAIN
 from .device_types.air_quality import AirQualityDevice
 from .device_types.base import BaseDevice
@@ -440,7 +441,8 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         if channel_name == "iot":
             if self._iot_client and self._iot_command_enabled:
                 topic = self._resolve_iot_topic(metadata, channel_info, device_id)
-                await self._iot_client.async_publish_command(topic, command)
+                payload = self._prepare_iot_command_payload(command)
+                await self._iot_client.async_publish_command(topic, payload)
                 self._schedule_command_expiry()
             else:
                 await self._api_client.async_publish_iot_command(
@@ -452,6 +454,195 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             )
         else:
             raise ValueError(f"Unsupported channel {channel_name}")
+
+    def _prepare_iot_command_payload(self, command: dict[str, Any]) -> dict[str, Any]:
+        """Normalise state command payloads for the IoT client."""
+
+        payload: dict[str, Any] = {}
+        command_id = command.get("command_id")
+        if isinstance(command_id, str):
+            payload["command_id"] = command_id
+
+        cmd_version = command.get("cmdVersion", command.get("cmd_version"))
+        payload["cmdVersion"] = self._coerce_int(cmd_version, default=0)
+
+        payload["type"] = self._coerce_int(command.get("type"), default=1)
+
+        # Determine command verb and payload content.
+        cmd_name: str | None = command.get("cmd")
+        data_payload: dict[str, Any] | None = None
+        command_spec = command.get("command")
+
+        if isinstance(command_spec, dict):
+            if self._is_catalog_template(command_spec):
+                cmd_name = cmd_name or self._infer_command_from_template(command_spec)
+                data_payload = self._data_from_template(command_spec)
+            else:
+                cmd_version_override = command_spec.get(
+                    "cmdVersion", command_spec.get("cmd_version")
+                )
+                if cmd_version_override is not None:
+                    payload["cmdVersion"] = self._coerce_int(
+                        cmd_version_override, default=0
+                    )
+                type_override = command_spec.get("type")
+                if type_override is not None:
+                    payload["type"] = self._coerce_int(type_override, default=1)
+                inner_command = command_spec.get("command")
+                if isinstance(inner_command, str):
+                    cmd_name = cmd_name or self._format_command_name(inner_command)
+                data_value = command_spec.get("data")
+                if isinstance(data_value, dict):
+                    data_payload = self._normalise_iot_command_data(data_value)
+                elif data_value is not None:
+                    data_payload = {"value": data_value}
+                if data_payload is None and command_spec:
+                    # Preserve remaining fields as fallback payload when no explicit data provided.
+                    residual = {
+                        key: value
+                        for key, value in command_spec.items()
+                        if key
+                        not in {
+                            "command",
+                            "cmd",
+                            "cmdVersion",
+                            "cmd_version",
+                            "type",
+                            "data",
+                        }
+                    }
+                    if residual:
+                        data_payload = self._normalise_iot_command_data(residual)
+        elif isinstance(command_spec, str):
+            cmd_name = cmd_name or self._format_command_name(command_spec)
+
+        if cmd_name is None:
+            cmd_name = "ptReal"
+        payload["cmd"] = cmd_name
+
+        if data_payload is None:
+            raw_data = command.get("data")
+            if isinstance(raw_data, dict):
+                data_payload = self._normalise_iot_command_data(raw_data)
+            else:
+                data_payload = {}
+
+        payload["data"] = data_payload
+
+        if "debug" in command:
+            payload["debug"] = command["debug"]
+
+        return payload
+
+    def _infer_command_from_template(self, template: dict[str, Any]) -> str:
+        """Return the IoT command verb for catalogue-based commands."""
+
+        steps = template.get("multi_step")
+        if isinstance(steps, Sequence):
+            for entry in steps:
+                if isinstance(entry, str) and entry.strip().lower() == "multi_sync":
+                    return "multiSync"
+        return "ptReal"
+
+    def _data_from_template(self, template: dict[str, Any]) -> dict[str, Any]:
+        """Build IoT data payloads from catalogue command metadata."""
+
+        data: dict[str, Any] = {}
+        command_vectors: list[str] = []
+        iot_base64 = template.get("iot_base64")
+        if isinstance(iot_base64, str) and iot_base64:
+            command_vectors.append(iot_base64)
+        else:
+            payload_hex = template.get("payload_hex")
+            if isinstance(payload_hex, str) and payload_hex:
+                try:
+                    command_vectors.append(opcodes.hex_to_base64(payload_hex))
+                except Exception:
+                    self.logger.warning(
+                        "Failed to convert payload_hex to base64: %s", payload_hex
+                    )
+        if command_vectors:
+            data["command"] = command_vectors
+        extra_payload = template.get("extra_payload_hex")
+        if isinstance(extra_payload, str) and extra_payload:
+            try:
+                data["extraPayload"] = opcodes.hex_to_base64(extra_payload)
+            except Exception:
+                data["extraPayload"] = extra_payload
+        return data
+
+    def _normalise_iot_command_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Convert command data dictionaries into IoT-friendly payloads."""
+
+        normalised: dict[str, Any] = {}
+        for key, value in data.items():
+            if key == "command":
+                commands = value
+                if not isinstance(commands, Sequence) or isinstance(
+                    commands, (bytes, bytearray, str)
+                ):
+                    commands = [commands]
+                encoded = [
+                    self._encode_iot_command_frame(entry)
+                    for entry in commands
+                    if entry is not None
+                ]
+                normalised[key] = encoded
+            else:
+                normalised[key] = value
+        return normalised
+
+    def _encode_iot_command_frame(self, entry: Any) -> Any:
+        """Encode opcode frames into base64 strings for IoT transport."""
+
+        if isinstance(entry, (bytes, bytearray)):
+            return opcodes.iot_payload_to_base64(entry)
+        if isinstance(entry, Sequence) and not isinstance(entry, str):
+            try:
+                return opcodes.iot_payload_to_base64(list(entry))
+            except Exception:
+                return list(entry)
+        if isinstance(entry, str):
+            text = entry.strip()
+            if not text:
+                return text
+            try:
+                return opcodes.hex_to_base64(text)
+            except Exception:
+                return text
+        return entry
+
+    @staticmethod
+    def _format_command_name(name: str) -> str:
+        """Convert snake_case command names to camelCase."""
+
+        if "_" not in name:
+            return name
+        parts = [part for part in name.split("_") if part]
+        if not parts:
+            return name
+        head, *tail = parts
+        return head + "".join(segment.capitalize() for segment in tail)
+
+    @staticmethod
+    def _coerce_int(value: Any, *, default: int) -> int:
+        """Attempt to coerce ``value`` to int, returning ``default`` on failure."""
+
+        if isinstance(value, int):
+            return value
+        if isinstance(value, (float, str)):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+        return default
+
+    @staticmethod
+    def _is_catalog_template(command_spec: dict[str, Any]) -> bool:
+        """Return True when ``command_spec`` looks like a state catalogue template."""
+
+        template_keys = {"opcode", "payload_hex", "iot_base64", "multi_step", "name"}
+        return any(key in command_spec for key in template_keys)
 
     def _iot_device_ids(self) -> list[str]:
         """Return identifiers for devices that expose an IoT channel."""
