@@ -13,19 +13,17 @@ from typing import Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from . import DOMAIN
-
+from .const import DOMAIN
 from .device_types.air_quality import AirQualityDevice
 from .device_types.base import BaseDevice
 from .device_types.humidifier import HumidifierDevice
+from .device_types.hygrometer import HygrometerDevice
 from .device_types.ice_maker import IceMakerDevice
+from .device_types.meat_thermometer import MeatThermometerDevice
 from .device_types.presence import PresenceDevice
 from .device_types.purifier import PurifierDevice
 from .device_types.rgb_light import RGBLightDevice
 from .device_types.rgbic_light import RGBICLightDevice
-from .device_types.meat_thermometer import MeatThermometerDevice
-from .device_types.hygrometer import HygrometerDevice
-
 
 _DEFAULT_REFRESH_INTERVAL = timedelta(minutes=5)
 
@@ -269,7 +267,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 
     def async_schedule_refresh(
         self, callback: Callable[[], Awaitable[Any] | None]
-    ) -> asyncio.TimerHandle:
+    ) -> asyncio.TimerHandle | None:
         """Schedule recurring refresh callbacks."""
 
         def _wrapper() -> None:
@@ -489,15 +487,11 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _apply_state_update(self, name: str, state: Any, value: Any) -> list[str]:
         """Apply ``value`` to ``state`` using any custom hooks available."""
-
-        update_handler = getattr(state, "apply_channel_update", None)
-        if callable(update_handler):
-            return update_handler(value)
+        if hasattr(state, "apply_channel_update"):
+            return state.apply_channel_update(value)
         if isinstance(value, dict) and self._invoke_state_parse(state, value):
             return [name]
-        update_method = getattr(state, "_update_state", None)
-        if callable(update_method):
-            update_method(value)
+        if hasattr(state, "_update_state"):
             return [name]
         return []
 

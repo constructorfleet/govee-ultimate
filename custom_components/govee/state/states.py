@@ -7,16 +7,14 @@ import datetime as dt
 import itertools
 import json
 import logging
-from uuid import uuid4
-
+from asyncio import QueueEmpty
 from collections.abc import Callable, Mapping, Sequence
 from enum import Enum, IntEnum
 from functools import cache
-from asyncio import QueueEmpty
 from typing import Any
+from uuid import uuid4
 
 from .. import opcodes
-
 from ..state_catalog import CommandTemplate, StateEntry, load_state_catalog
 from .device_state import (
     DeviceOpState,
@@ -24,7 +22,6 @@ from .device_state import (
     ParseOption,
     StateCommandAndStatus,
 )
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -3223,7 +3220,12 @@ class DetectionSettingsState(DeviceOpState[dict[str, Any]]):
         distance = self._resolve_distance(next_state)
         absence = self._resolve_duration(next_state, "absenceDuration")
         report = self._resolve_duration(next_state, "reportDetection")
-        if None in (distance, absence, report):
+        if (
+            distance is None
+            or absence is None
+            or report is None
+            or self._identifier is None
+        ):
             return None
         distance_bytes = _int_to_bytes(distance)
         absence_bytes = _int_to_bytes(absence)
@@ -3251,7 +3253,7 @@ class DetectionSettingsState(DeviceOpState[dict[str, Any]]):
         candidate = self._select_field(next_state, "detectionDistance")
         if candidate is None:
             return None
-        value = candidate.get("value")
+        value = candidate.get("value") or ""
         try:
             return int(value)
         except (TypeError, ValueError):
@@ -3615,7 +3617,7 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
         red = _int_from_value(channels.get("red"))
         green = _int_from_value(channels.get("green"))
         blue = _int_from_value(channels.get("blue"))
-        if None in (red, green, blue):
+        if red is None or green is None or blue is None:
             return None
         if not all(0 <= channel <= 255 for channel in (red, green, blue)):
             return None
@@ -3638,7 +3640,7 @@ class ColorRGBState(DeviceOpState[dict[str, int] | None]):
         if validated is not None:
             self._update_state(validated)
 
-    def _state_to_command(self, next_state: Mapping[str, Any] | None):
+    def _state_to_command(self, next_state: dict[str, Any] | None):
         """Convert RGB mappings into command payloads."""
         channels = self._validate_channels(
             next_state if isinstance(next_state, Mapping) else None
@@ -3905,7 +3907,7 @@ class SegmentColorState(DeviceOpState[list[dict[str, Any]]]):
                 red = _int_from_value(color.get("red"))
                 green = _int_from_value(color.get("green"))
                 blue = _int_from_value(color.get("blue"))
-                if None in (red, green, blue):
+                if red is None or green is None or blue is None:
                     return None
                 if not all(0 <= value <= 0xFF for value in (red, green, blue)):
                     return None
@@ -3982,8 +3984,9 @@ class SegmentColorState(DeviceOpState[list[dict[str, Any]]]):
             red = _int_from_value(color.get("red"))
             green = _int_from_value(color.get("green"))
             blue = _int_from_value(color.get("blue"))
-            if None not in (red, green, blue):
-                entry["color"] = {"red": red, "green": green, "blue": blue}
+            if red is None or green is None or blue is None:
+                return
+            entry["color"] = {"red": red, "green": green, "blue": blue}
         target[segment_id] = entry
 
     def _state_to_command(self, next_state: Any) -> StateCommandAndStatus | None:
@@ -4336,7 +4339,7 @@ class MicModeState(DeviceOpState[dict[str, Any]]):
             return None
         next_state = resolved_next
 
-        current = self.value if isinstance(self.value, Mapping) else {}
+        current = (self.value if isinstance(self.value, Mapping) else {}) or {}
 
         def _pick_int(*candidates: Any, default: int) -> int:
             for candidate in candidates:

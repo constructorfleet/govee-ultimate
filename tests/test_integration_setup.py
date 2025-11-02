@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 import sys
+from collections.abc import Awaitable, Callable
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+
+import custom_components.govee.const
 
 if "httpx" not in sys.modules:
     httpx_module = ModuleType("httpx")
@@ -103,7 +105,7 @@ if "homeassistant.helpers.update_coordinator" not in sys.modules:
     )
 
 import custom_components.govee as integration
-from custom_components.govee import DOMAIN
+from custom_components.govee.const import DOMAIN
 
 
 class FakeHass:
@@ -774,7 +776,7 @@ async def test_async_setup_entry_schedules_token_refresh(
     assert callable(cancel_refresh)
     assert recorded
     refresh_action, interval = recorded[-1]
-    assert interval == integration.TOKEN_REFRESH_INTERVAL
+    assert interval == custom_components.govee.const.TOKEN_REFRESH_INTERVAL
 
     await refresh_action(None)
     assert stored["auth"].access_calls == 1
@@ -1097,7 +1099,7 @@ async def test_token_refresh_http_error_triggers_reauth(
 
     assert recorded
     refresh_action, interval = recorded[-1]
-    assert interval == integration.TOKEN_REFRESH_INTERVAL
+    assert interval == custom_components.govee.const.TOKEN_REFRESH_INTERVAL
 
     with pytest.raises(FakeHTTPError):
         await refresh_action(None)

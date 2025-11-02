@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - stubbed in unit tests
             return None
 
 
-from . import DOMAIN
+from .const import DOMAIN
 from .device_types.base import HomeAssistantEntity
 from .state.device_state import DeviceState
 
@@ -143,8 +143,8 @@ def iter_platform_entities(
     """Iterate over coordinator devices yielding entities for ``platform``."""
 
     matches: list[tuple[str, HomeAssistantEntity]] = []
-    for device_id, device in getattr(coordinator, "devices", {}).items():
-        entities = getattr(device, "home_assistant_entities", {})
+    for device_id, device in coordinator.devices.items():
+        entities = device.home_assistant_entities
         for entity in entities.values():
             if entity.platform == platform:
                 matches.append((device_id, entity))
@@ -154,7 +154,8 @@ def iter_platform_entities(
 def resolve_coordinator(hass: Any, entry: Any) -> Any | None:
     """Return the coordinator for ``entry`` when available."""
 
-    entry_data = hass.data.get(DOMAIN, {}).get(getattr(entry, "entry_id", None))
+    entry_id = entry.entry_id if hasattr(entry, "entry_id") else None
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
     if isinstance(entry_data, dict):
         return entry_data.get("coordinator")
     return None

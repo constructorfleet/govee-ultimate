@@ -16,7 +16,8 @@ from homeassistant.config_entries import (
 )
 from homeassistant.exceptions import HomeAssistantError
 
-from . import DOMAIN
+from .auth import GoveeAuthManager
+from .const import DOMAIN
 
 REAUTH_CONFIRM_STEP = "reauth_confirm"
 
@@ -36,10 +37,10 @@ _USER_SCHEMA = vol.Schema(
     {
         vol.Required("email"): str,
         vol.Required("password"): str,
-        vol.Optional("enable_iot", default=False): bool,
-        vol.Optional("enable_iot_state_updates", default=True): bool,
-        vol.Optional("enable_iot_commands", default=False): bool,
-        vol.Optional("enable_iot_refresh", default=False): bool,
+        vol.Optional("enable_iot", default=False): bool,  # type: ignore
+        vol.Optional("enable_iot_state_updates", default=True): bool,  # type: ignore
+        vol.Optional("enable_iot_commands", default=False): bool,  # type: ignore
+        vol.Optional("enable_iot_refresh", default=False): bool,  # type: ignore
     }
 )
 
@@ -62,7 +63,7 @@ def _build_reauth_schema(default_email: str) -> Any:
 
     return vol.Schema(
         {
-            vol.Optional("email", default=default_email): str,
+            vol.Optional("email", default=default_email): str,  # type: ignore
             vol.Required("password"): str,
         }
     )
@@ -76,17 +77,17 @@ async def _async_validate_credentials(
     if hass is None:
         raise CannotConnect("Missing Home Assistant instance")
 
-    import . as integration  # pragma: no cover - thin wrapper
-    from .auth import GoveeAuthManager
-
-    http_client = await integration._async_get_http_client(hass)
-    auth = GoveeAuthManager(hass, http_client)
+    auth = GoveeAuthManager(hass)
 
     try:
         await auth.async_login(email, password)
     except httpx.HTTPError as exc:
         status = getattr(exc, "response", None)
-        status_code = getattr(status, "status_code", None)
+        status_code = (
+            status.status_code
+            if status is not None and hasattr(status, "status_code")
+            else None
+        )
         if status_code in {401, 403}:
             raise InvalidAuth from exc
         raise CannotConnect from exc
@@ -97,15 +98,14 @@ async def _async_update_reauth_entry(
 ) -> None:
     """Update credentials on the entry and trigger a reload."""
 
-    updater = getattr(hass.config_entries, "async_update_entry", None)
-    if updater is not None:
-        result = updater(entry, data=data)
+    if hasattr(hass.config_entries, "async_update_entry"):
+        result = hass.config_entries.async_update_entry(entry, data=data)
         if asyncio.iscoroutine(result):
             await result
 
-    reloader = getattr(hass.config_entries, "async_reload", None)
-    if reloader is not None:
-        await reloader(getattr(entry, "entry_id", None))
+    if hasattr(hass.config_entries, "async_reload"):
+        entry_id = entry.entry_id if hasattr(entry, "entry_id") else None
+        await hass.config_entries.async_reload(entry_id)
 
 
 class GoveeUltimateConfigFlow(HAConfigFlow, domain=DOMAIN):
@@ -136,7 +136,9 @@ class GoveeUltimateConfigFlow(HAConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         try:
             await _async_validate_credentials(
-                getattr(self, "hass", None), data["email"], data["password"]
+                self.hass if hasattr(self, "hass") else None,
+                data["email"],
+                data["password"],
             )
         except InvalidAuth:
             errors["base"] = "invalid_auth"
@@ -186,7 +188,9 @@ class GoveeUltimateConfigFlow(HAConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         try:
             await _async_validate_credentials(
-                getattr(self, "hass", None), submission["email"], submission["password"]
+                self.hass if hasattr(self, "hass") else None,
+                submission["email"],
+                submission["password"],
             )
         except InvalidAuth:
             errors["base"] = "invalid_auth"
@@ -219,9 +223,9 @@ def _options_defaults(entry: Any) -> dict[str, Any]:
     """Return IoT option defaults using entry options or fallback values."""
 
     options = dict(_DEFAULT_IOT_OPTIONS)
-    options.update(getattr(entry, "options", {}) or {})
+    options.update(dict(getattr(entry, "options", {}) or {}))
 
-    data = getattr(entry, "data", {})
+    data = dict(getattr(entry, "data", {}) or {})
     if data.get("enable_iot"):
         options.setdefault(
             "iot_state_enabled",

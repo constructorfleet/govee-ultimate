@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.serialization import (
 from cryptography.hazmat.primitives.serialization.pkcs12 import (
     load_key_and_certificates,
 )
+
 from homeassistant.helpers.storage import Store
 
 from .storage import async_migrate_storage_file
@@ -222,14 +223,30 @@ def _decode_p12_bundle(certificate_b64: str, password: str) -> tuple[str, str]:
 class GoveeAuthManager:
     """Manage authentication lifecycle for the Govee Ultimate integration."""
 
-    def __init__(self, hass: Any, client: httpx.AsyncClient) -> None:
-        """Initialize the auth manager with Home Assistant and HTTP client dependencies."""
+    def __init__(self, hass: Any, client: httpx.AsyncClient | None = None) -> None:
+        """Initialize the auth manager with Home Assistant and optional HTTP client.
+
+        When `client` is None the manager will lazily obtain the helper client
+        from `custom_components.govee.api._async_get_http_client` when a network
+        operation is first performed. This keeps HTTP client creation logic in
+        the API module while allowing tests to inject mock clients.
+        """
 
         self._hass = hass
         self._client = client
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY, private=True)
         self._tokens: AccountAuthDetails | None = None
         self._store_lock = asyncio.Lock()
+
+    async def _ensure_client(self) -> None:
+        """Lazily obtain the HTTP client if not already provided."""
+
+        if self._client is not None:
+            return
+        # Import locally to avoid circular imports at module import time.
+        from .api import _async_get_http_client
+
+        self._client = await _async_get_http_client(self._hass)
 
     @property
     def tokens(self) -> AccountAuthDetails | None:
@@ -249,6 +266,8 @@ class GoveeAuthManager:
     async def async_login(self, email: str, password: str) -> AccountAuthDetails:
         """Login with the provided credentials and persist the resulting tokens."""
 
+        await self._ensure_client()
+        assert self._client is not None
         client_id = _generate_client_id()
         try:
             response = await self._client.post(
@@ -293,6 +312,8 @@ class GoveeAuthManager:
 
         if self._tokens is None:
             raise RuntimeError("No credentials to refresh")
+        await self._ensure_client()
+        assert self._client is not None
         try:
             response = await self._client.post(
                 REFRESH_ENDPOINT,
@@ -320,7 +341,8 @@ class GoveeAuthManager:
         self, tokens: AccountAuthDetails
     ) -> AccountAuthDetails:
         """Retrieve and decode IoT credentials for the account."""
-
+        await self._ensure_client()
+        assert self._client is not None
         response = await self._client.get(
             IOT_KEY_ENDPOINT,
             headers=self._headers_for_tokens(tokens),
