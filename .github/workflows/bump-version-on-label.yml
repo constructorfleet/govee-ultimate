@@ -80,9 +80,10 @@ jobs:
         working-directory: pr
         env:
           LEVEL: ${{ github.event.label.name }}
+          PYTHONPATH: ../base
         run: |
           set -euo pipefail
-          python ../base/scripts/bump_version.py \
+          python -m scripts.bump_version \
             --manifest custom_components/govee/manifest.json \
             --level "$LEVEL"
 
