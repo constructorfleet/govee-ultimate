@@ -86,7 +86,8 @@ jobs:
 
       - name: "Set VERSION env"
         run: |
-          echo "VERSION=$(python -c \"import json;print(json.load(open('custom_components/govee/manifest.json'))['version'])\")" >> "$GITHUB_ENV"
+          VERSION="$(python -c 'import json; print(json.load(open(\"custom_components/govee/manifest.json\"))[\"version\"])')"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: "Publish release"
         uses: "actions/create-release@v1"
