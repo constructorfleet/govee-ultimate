@@ -25,6 +25,7 @@ from custom_components.govee.state.device_state import DeviceState
 
 @pytest.mark.asyncio
 async def test_async_add_platform_entities_handles_sync_and_async() -> None:
+    """Test that both sync and async adders are supported."""
     called: dict[str, Any] = {"sync": False, "async": False}
 
     def sync_adder(entities: list[Any]) -> None:
@@ -49,12 +50,14 @@ async def test_async_add_platform_entities_handles_sync_and_async() -> None:
 
 
 def _make_ha_entity(name: str, platform: str = "light") -> HomeAssistantEntity:
+    """Create a HomeAssistantEntity for testing purposes."""
     # DeviceState is simple enough to instantiate for tests
     state = DeviceState(device=None, name=name, initial_value=None)
     return HomeAssistantEntity(platform=platform, state=state)
 
 
 def test_iter_and_build_platform_entities_work_together() -> None:
+    """Test that iter_platform_entities and build_platform_entities work as expected."""
     # Create two devices with entities on different platforms
     ent_a = _make_ha_entity("power", platform="humidifier")
     ent_b = _make_ha_entity("active", platform="binary_sensor")
@@ -77,6 +80,7 @@ def test_iter_and_build_platform_entities_work_together() -> None:
 
 
 def test_resolve_coordinator_reads_hass_data() -> None:
+    """Test that resolve_coordinator reads the coordinator from hass data."""
     hass = SimpleNamespace(data={DOMAIN: {"entry-1": {"coordinator": "co1"}}})
     entry = SimpleNamespace(entry_id="entry-1")
 

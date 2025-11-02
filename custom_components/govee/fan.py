@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.fan import FanEntity
+from homeassistant.core import HomeAssistant
 
 from .entity import (
     GoveeStateEntity,

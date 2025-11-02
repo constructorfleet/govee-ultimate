@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any, TypedDict
 
-import homeassistant.helpers.config_validation as cv  # type: ignore# type: ignore[assignment]
 import homeassistant.helpers.device_registry as dr  # type: ignore
 import homeassistant.helpers.entity_registry as er  # type: ignore
 import httpx

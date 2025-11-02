@@ -83,7 +83,7 @@ def _create_paho_client(client_id: str) -> Any:
 
     if _paho is None:  # pragma: no cover - dependency is optional in tests
         raise RuntimeError("paho-mqtt is required for IoT connectivity")
-    return _paho.Client(client_id=client_id, protocol=_paho.MQTTv311, 4)
+    return _paho.Client(client_id=client_id, protocol=_paho.MQTTv311)
 
 
 def _parse_endpoint(endpoint: str) -> tuple[str, int]:
