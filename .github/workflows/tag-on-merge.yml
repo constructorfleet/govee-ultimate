@@ -1,4 +1,4 @@
-name: "Release on Merge"
+name: "Tag on Merge"
 
 on:
   push:
@@ -73,8 +73,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: "Create tag"
+        env:
+          VERSION: ${{ steps.release_version.outputs.RELEASE_VERSION }}
         run: |
-          VERSION=$(python -c "import json;print(json.load(open('custom_components/govee/manifest.json'))['version'])")
+          set -euo pipefail
+          if [ -z "${VERSION:-}" ]; then
+            echo "VERSION not set from release_version output" >&2
+            exit 2
+          fi
           git tag -a "v${VERSION}" -m "Release v${VERSION}"
           git push origin "v${VERSION}"
 
