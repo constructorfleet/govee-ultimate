@@ -44,7 +44,7 @@ jobs:
           ref: ${{ steps.pr.outputs.head_ref }}
           path: pr
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Verify same-repo PR (fail if fork)
         run: |
@@ -66,26 +66,17 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run bump script against PR tree
+        working-directory: pr
         env:
           LEVEL: ${{ steps.parse.outputs.level }}
         run: |
           set -euo pipefail
-          # Run the trusted script from base/, targeting files inside pr/
-          python -m base.scripts.bump_version \
-            --manifest pr/custom_components/govee/manifest.json \
+          python ../base/scripts/bump_version.py \
+            --manifest custom_components/govee/manifest.json \
             --level "$LEVEL"
 
-      - name: Commit the change on PR branch
+      - name: Debug current branch and remote (post-bump)
         working-directory: pr
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add custom_components/govee/manifest.json
-          git commit -m "chore: bump version (${LEVEL}) from comment"
-
-      - name: Push back to PR head branch
-        uses: actions-js/push@master
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          directory: pr
-          branch: ${{ steps.pr.outputs.head_ref }}
+          git rev-parse --abbrev-ref HEAD
+          git remote -v
