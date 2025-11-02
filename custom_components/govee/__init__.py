@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import Any, TypedDict, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import httpx
 
@@ -20,7 +20,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from homeassistant.helpers.entity_registry import EntityRegistry
     from homeassistant.helpers.event import async_track_time_interval
     from homeassistant.helpers.typing import ConfigType
-
 
 from . import api as _api
 from .api import (  # re-export for tests that assert on the wrapper type
