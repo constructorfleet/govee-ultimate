@@ -1,0 +1,99 @@
+name: "Tag on Merge"
+
+on:
+  push:
+    branches:
+      - "main"
+    # Only run this workflow when the manifest (which contains the version)
+    # has changed on the merge. This ensures releases only happen when the
+    # version field was explicitly updated.
+    paths:
+      - custom_components/govee/manifest.json
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: "Run tests and publish release"
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: "Checkout repository"
+        uses: "actions/checkout@v5"
+        with:
+          fetch-depth: 0
+
+      - name: "Set up Python"
+        uses: "actions/setup-python@v5"
+        with:
+          python-version: "3.12"
+
+      - name: "Install dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff
+
+      - name: "Run linters"
+        run: "scripts/lint"
+
+      - name: "Run tests"
+        run: "pytest"
+
+      - name: "Read release version"
+        id: release_version
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from os import environ
+
+          manifest = Path('custom_components/govee/manifest.json')
+          data = json.loads(manifest.read_text())
+          version = data.get('version')
+          if not version:
+              raise SystemExit('manifest.json has no version field')
+
+          # emit for log visibility
+          print(f"version={version}")
+
+          # write to GitHub Actions environment file to set step output
+          gh_out = environ.get('GITHUB_OUTPUT') or environ.get('GITHUB_ENV')
+          if gh_out:
+              with open(gh_out, 'a') as f:
+                  f.write(f"RELEASE_VERSION={version}\n")
+
+          # also print a machine readable output line for actions
+          print(f"::notice title=release_version::version={version}")
+          PY
+
+      - name: "Configure git user for tagging"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: "Create tag"
+        env:
+          VERSION: ${{ steps.release_version.outputs.RELEASE_VERSION }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERSION:-}" ]; then
+            echo "VERSION not set from release_version output" >&2
+            exit 2
+          fi
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin "v${VERSION}"
+
+      - name: "Set VERSION env"
+        run: |
+          echo "VERSION=$(python -c \"import json;print(json.load(open('custom_components/govee/manifest.json'))['version'])\")" >> "$GITHUB_ENV"
+
+      - name: "Publish release"
+        uses: "actions/create-release@v1"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: "v${{ env.VERSION }}"
+          release_name: "v${{ env.VERSION }}"
+          draft: false
+          prerelease: false
