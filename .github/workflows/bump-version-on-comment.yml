@@ -1,8 +1,13 @@
+on:
+  pull_request:
+    types:
+      - labeled
 jobs:
   bump:
     if: >-
-      github.event.issue.pull_request != null &&
-      startsWith(github.event.comment.body, 'bump version')
+      github.event.label.name == 'major' ||
+      github.event.label.name == 'minor' ||
+      github.event.label.name == 'patch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -74,7 +79,7 @@ jobs:
       - name: Run bump script against PR tree
         working-directory: pr
         env:
-          LEVEL: ${{ steps.parse.outputs.level }}
+          LEVEL: ${{ github.event.label.name }}
         run: |
           set -euo pipefail
           python ../base/scripts/bump_version.py \
