@@ -1,0 +1,47 @@
+on:
+  pull_request:
+    types:
+      - labeled
+jobs:
+  bump:
+    if: >-
+      github.event.label.name == 'major' ||
+      github.event.label.name == 'minor' ||
+      github.event.label.name == 'patch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      # 1) Trusted base repo (for the bump script)
+      - uses: actions/checkout@master
+        with:
+          persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN, instead of your personal token
+          fetch-depth: 0             # otherwise, you will fail to push refs to dest repo
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+
+      - name: Install bump deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run bump script against PR tree
+        env:
+          LEVEL: ${{ github.event.label.name }}
+          PYTHONPATH: ../base
+        run: |
+          set -euo pipefail
+          python -m scripts.bump_version \
+            --manifest custom_components/govee/manifest.json \
+            --level "$LEVEL"
+
+      - name: Commit & Push changes
+        uses: actions-js/push@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.event.pull_request.head.ref }}
