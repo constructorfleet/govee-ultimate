@@ -49,6 +49,39 @@
       "description": "Brightness command targeting 75%."
     },
     {
+      "name": "dreamview_ambiant_segment_on",
+      "opcode": "0x33",
+      "identifiers": [
+        51,
+        5,
+        7,
+        8
+      ],
+      "payload_hex": "050708010140",
+      "extra_payload_hex": "",
+      "vectors": {
+        "ble": "MwUHCAEBQAAAAAAAAAAAAAAAAHk=",
+        "iot": "BQcIAQFA"
+      },
+      "description": "Example DreamView ambient command enabling segment mode at 0x40 brightness."
+    },
+    {
+      "name": "dreamview_video_brightness",
+      "opcode": "0x33",
+      "identifiers": [
+        51,
+        5,
+        0
+      ],
+      "payload_hex": "05000140",
+      "extra_payload_hex": "",
+      "vectors": {
+        "ble": "MwUAAUAAAAAAAAAAAAAAAAAAAHc=",
+        "iot": "BQABQA=="
+      },
+      "description": "Example DreamView video brightness command targeting level 0x40."
+    },
+    {
       "name": "ice_maker_nugget_large",
       "opcode": "0x33",
       "identifiers": [

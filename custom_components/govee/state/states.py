@@ -341,9 +341,7 @@ _DONE_LEVEL_MAP: dict[str, dict[int, str]] = {
 class PresetState(DeviceOpState[dict[str, Any] | None]):
     """Represent preset alarm and doneness configuration per probe."""
 
-    options: tuple[str, ...] = tuple(
-        _FOOD_MAP[key] for key in _FOOD_MAP  # type: ignore[index]
-    )
+    options: tuple[str, ...] = tuple(_FOOD_MAP.values())
 
     def __init__(
         self,
@@ -4207,6 +4205,282 @@ class LightEffectState(_IdentifierStringState):
         self._update_state(option)
 
 
+class AmbiantBrightnessMode(str, Enum):
+    """Enumerate the available ambient brightness modes."""
+
+    CONSISTENT = "CONSISTENT"
+    SEGMENT = "SEGMENT"
+
+
+class AmbiantState(DeviceOpState[dict[str, Any]]):
+    """Expose DreamView ambiant lighting configuration."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the ambiant state handler."""
+
+        entry = _state_entry("ambiant")
+        identifiers = list(identifier) if identifier is not None else [0x07, 0x08]
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": identifiers},
+            device=device,
+            name="ambiant",
+            initial_value={},
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+        self._command_template = entry.command_templates[0]
+        self._status_identifier = list(identifiers)
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Decode opcode payloads into structured ambiant settings."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if len(payload) < 3:
+            return
+        on_flag = payload[0] == 0x01
+        mode_flag = payload[1]
+        brightness = payload[2]
+        mode = (
+            AmbiantBrightnessMode.SEGMENT
+            if mode_flag == 0x01
+            else AmbiantBrightnessMode.CONSISTENT
+        )
+        self._update_state(
+            {
+                "on": on_flag,
+                "brightnessMode": mode,
+                "brightness": brightness,
+            }
+        )
+
+    def _state_to_command(self, next_state: Any):
+        """Translate desired ambiant configuration into catalogued commands."""
+
+        context = self._normalise_state(next_state)
+        if context is None:
+            return None
+        command, _ = _command_payload(self._command_template, context)
+        mode_enum = AmbiantBrightnessMode(context["mode"])
+        on_flag = 0x01 if context["on"] else 0x00
+        mode_flag = 0x01 if mode_enum is AmbiantBrightnessMode.SEGMENT else 0x00
+        brightness = context["brightness"]
+        status_sequence = [
+            _REPORT_OPCODE,
+            *self._status_identifier,
+            on_flag,
+            mode_flag,
+            brightness,
+        ]
+        status_payload = [
+            {
+                "state": {
+                    self.name: {
+                        "on": context["on"],
+                        "brightnessMode": mode_enum,
+                        "brightness": brightness,
+                    }
+                }
+            },
+            {"op": {"command": [status_sequence]}},
+        ]
+        return {
+            "command": command,
+            "status": status_payload,
+        }
+
+    def _normalise_state(self, candidate: Any) -> dict[str, Any] | None:
+        """Coerce the provided candidate into a command context."""
+
+        if not isinstance(candidate, Mapping):
+            return None
+        current = self.value if isinstance(self.value, Mapping) else {}
+        on_value = candidate.get("on")
+        if not isinstance(on_value, bool):
+            on_value = current.get("on")
+        if not isinstance(on_value, bool):
+            return None
+        mode_value = candidate.get("brightnessMode")
+        if mode_value is None:
+            mode_value = current.get("brightnessMode")
+        mode_enum = self._coerce_mode(mode_value)
+        if mode_enum is None:
+            return None
+        brightness_value = candidate.get("brightness")
+        if not isinstance(brightness_value, int):
+            brightness_value = current.get("brightness")
+        if not isinstance(brightness_value, int) or not (0 <= brightness_value <= 100):
+            return None
+        return {
+            "on": on_value,
+            "mode": mode_enum.value,
+            "mode_flag": mode_enum is AmbiantBrightnessMode.SEGMENT,
+            "brightness": brightness_value,
+        }
+
+    def _coerce_mode(self, value: Any) -> AmbiantBrightnessMode | None:
+        if isinstance(value, AmbiantBrightnessMode):
+            return value
+        if isinstance(value, str):
+            token = value.strip().upper()
+            if not token:
+                return None
+            try:
+                return AmbiantBrightnessMode[token]
+            except KeyError:
+                pass
+            try:
+                return AmbiantBrightnessMode(value.strip().upper())
+            except ValueError:
+                return None
+        return None
+
+
+class VideoModeState(DeviceOpState[dict[str, Any]]):
+    """Track DreamView video mode brightness levels."""
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        identifier: Sequence[int] | None = None,
+    ) -> None:
+        """Initialise the video mode brightness tracker."""
+        entry = _state_entry("video_mode")
+        identifiers = list(identifier) if identifier is not None else [0x05, 0x00]
+        super().__init__(
+            op_identifier={"op_type": _REPORT_OPCODE, "identifier": identifiers},
+            device=device,
+            name="videoMode",
+            initial_value={},
+            parse_option=ParseOption.OP_CODE,
+            state_to_command=self._state_to_command,
+        )
+        self._command_template = entry.command_templates[0]
+        self._status_identifier = list(identifiers)
+
+    def parse_op_command(self, op_command: list[int]) -> None:
+        """Decode report payloads to capture brightness readings."""
+
+        payload = _strip_op_header(op_command, self._op_type, self._identifier)
+        if not payload:
+            return
+        brightness = payload[0]
+        self._update_state({"brightness": brightness})
+
+    def _state_to_command(self, next_state: Any):
+        """Render catalog-driven brightness updates."""
+
+        brightness = self._resolve_brightness(next_state)
+        if brightness is None:
+            return None
+        command, _ = _command_payload(
+            self._command_template, {"brightness": brightness}
+        )
+        status_sequence = [
+            _REPORT_OPCODE,
+            *self._status_identifier,
+            brightness,
+        ]
+        status_payload = [
+            {"state": {self.name: {"brightness": brightness}}},
+            {"op": {"command": [status_sequence]}},
+        ]
+        return {"command": command, "status": status_payload}
+
+    def _resolve_brightness(self, candidate: Any) -> int | None:
+        value: Any
+        if isinstance(candidate, Mapping):
+            value = candidate.get("brightness")
+        else:
+            value = candidate
+        if value is None:
+            current = (
+                self.value.get("brightness")
+                if isinstance(self.value, Mapping)
+                else None
+            )
+            if isinstance(current, int):
+                value = current
+        if isinstance(value, str):
+            token = value.strip()
+            if not token:
+                return None
+            try:
+                value = int(token, 0)
+            except ValueError:
+                return None
+        if isinstance(value, int | float):
+            brightness = int(value)
+            if 0 <= brightness <= 100:
+                return brightness
+        return None
+
+
+class _SyncBoxMode(IntEnum):
+    VIDEO = 0
+    MUSIC = 19
+    SCENE = 1
+    COLOR = 21
+    DIY = 10
+
+
+class SyncBoxActiveState(ModeState):
+    """Expose the currently active Sync Box sub-mode."""
+
+    _NAME_BY_CODE: dict[int, str] = {
+        _SyncBoxMode.MUSIC.value: "micMode",
+        _SyncBoxMode.COLOR.value: "segmentColorMode",
+        _SyncBoxMode.VIDEO.value: "videoMode",
+        _SyncBoxMode.SCENE.value: "lightEffect",
+        _SyncBoxMode.DIY.value: "diyMode",
+    }
+
+    def __init__(
+        self,
+        *,
+        device: object,
+        states: Sequence[DeviceState[str] | None],
+    ) -> None:
+        """Initialise the Sync Box active mode wrapper."""
+        modes = [mode for mode in states if mode is not None]
+        super().__init__(
+            device=device,
+            modes=modes,
+            op_type=_REPORT_OPCODE,
+            identifier=[0x05],
+            inline=True,
+            identifier_map=self._mode_for_identifier,
+        )
+        self._modes_by_name: dict[str, DeviceState[str]] = {
+            getattr(mode, "name"): mode
+            for mode in modes
+            if isinstance(mode, DeviceState)
+        }
+
+    def _mode_for_identifier(self, _: ModeState) -> DeviceState[str] | None:
+        identifier = self.active_identifier
+        if not identifier:
+            return None
+        name = self._NAME_BY_CODE.get(identifier[-1])
+        if name is None:
+            return None
+        return self._modes_by_name.get(name)
+
+    def set_state(self, next_state: Any) -> list[str]:  # type: ignore[override]
+        """Delegate commands to the targeted sub-state when provided."""
+        if not isinstance(next_state, DeviceState):
+            return []
+        return next_state.set_state(getattr(next_state, "value", None))
+
+    def _state_to_command(self, next_state: Any):  # type: ignore[override]
+        return None
+
+
 _RGBIC_MIC_IDENTIFIER = [0x05, 0x13]
 _DEFAULT_MIC_SENSITIVITY = 50
 
@@ -4331,9 +4605,7 @@ class MicModeState(DeviceOpState[dict[str, Any]]):
                     pairs[key] = entry[1]
         return pairs
 
-    def _state_to_command(
-        self, next_state: Any
-    ) -> StateCommandAndStatus | None:  # type: ignore[override]
+    def _state_to_command(self, next_state: Any) -> StateCommandAndStatus | None:  # type: ignore[override]
         resolved_next = self._coerce_next_state(next_state)
         if resolved_next is None:
             return None

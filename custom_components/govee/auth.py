@@ -264,7 +264,7 @@ async def _extract_response_payload(response: object) -> dict[str, Any]:
         if asyncio.iscoroutine(content):
             content = await content
         try:
-            if isinstance(content, (bytes, bytearray)):
+            if isinstance(content, bytes | bytearray):
                 import json as _json
 
                 return _json.loads(content.decode())
