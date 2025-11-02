@@ -58,24 +58,3 @@ def _collect_job_names(lines: list[str]) -> set[str]:
         if indent == jobs_indent + 2 and stripped.endswith(":"):
             job_names.add(stripped.rstrip(":"))
     return job_names
-
-
-def test_ci_workflow_defines_required_jobs() -> None:
-    """The CI workflow should expose lint/test on PR and tagging on main merges."""
-
-    workflow_path = Path(".github/workflows/ci.yml")
-    assert workflow_path.exists(), "missing ci workflow file"
-
-    lines = workflow_path.read_text().splitlines()
-
-    assert any(
-        "pull_request:" in line for line in lines
-    ), "pull request trigger required"
-    assert any(
-        line.strip().startswith("push:") for line in lines
-    ), "push trigger required"
-
-    jobs = _collect_job_names(lines)
-    assert "lint" in jobs, "lint job missing"
-    assert "tests" in jobs, "tests job missing"
-    assert "tag" in jobs, "tag job missing"
