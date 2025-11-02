@@ -19,8 +19,10 @@ jobs:
 
       - name: "Determine bump level"
         id: parse
+        env:
+          BODY: ${{ github.event.comment.body }}
         run: |
-          body="${{ github.event.comment.body }}"
+          body="$BODY"
           echo "body=$body"
           # extract the level
           if [[ "$body" =~ bump[[:space:]]version[[:space:]](patch|minor|major) ]]; then
