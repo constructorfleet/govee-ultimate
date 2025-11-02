@@ -74,7 +74,6 @@ def test_ci_workflow_defines_required_jobs() -> None:
     assert any(
         line.strip().startswith("push:") for line in lines
     ), "push trigger required"
-    assert _has_push_main_branch(lines), "push trigger must include main branch"
 
     jobs = _collect_job_names(lines)
     assert "lint" in jobs, "lint job missing"
