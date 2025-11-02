@@ -13,7 +13,6 @@ import voluptuous as vol
 # depending on full Home Assistant runtime types at import time in CI
 # where the test harness stubs may not expose every symbol.
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from homeassistant.config_entries import ConfigFlow as HAConfigFlow
     from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
 else:
     # Provide lightweight runtime fallbacks so the module can be
@@ -126,7 +125,7 @@ async def _async_update_reauth_entry(
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-class GoveeUltimateConfigFlow(HAConfigFlow, domain=DOMAIN):
+class GoveeUltimateConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the configuration workflow for the integration."""
 
     VERSION = 1
