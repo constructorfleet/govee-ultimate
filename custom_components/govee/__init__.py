@@ -4,17 +4,23 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import Any, TypedDict
+from typing import Any, TypedDict, TYPE_CHECKING
 
-import homeassistant.helpers.device_registry as dr  # type: ignore
-import homeassistant.helpers.entity_registry as er  # type: ignore
 import httpx
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
-from homeassistant.helpers.device_registry import DeviceRegistry
-from homeassistant.helpers.entity_registry import EntityRegistry
-from homeassistant.helpers.event import async_track_time_interval
-from homeassistant.helpers.typing import ConfigType
+
+# Defer importing Home Assistant internals at module import time. Tests run
+# in environments where the HA helpers may be partially stubbed; importing
+# them at import time triggers Home Assistant's package initialisation and
+# can raise (see pytest collection errors). Use TYPE_CHECKING for type
+# annotations and import modules locally where needed.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+    from homeassistant.helpers.device_registry import DeviceRegistry
+    from homeassistant.helpers.entity_registry import EntityRegistry
+    from homeassistant.helpers.event import async_track_time_interval
+    from homeassistant.helpers.typing import ConfigType
+
 
 from . import api as _api
 from .api import (  # re-export for tests that assert on the wrapper type
@@ -28,7 +34,24 @@ from .const import (
     SERVICE_REAUTHENTICATE,
     TOKEN_REFRESH_INTERVAL,
 )
-from .coordinator import GoveeDataUpdateCoordinator
+
+# Module-level stubs for helpers that may be unavailable in test environments.
+# Tests expect the integration to import cleanly even when Home Assistant
+# helper modules are not present; initialise these globals and lazily set
+# them when the corresponding helpers are available.
+dr: Any | None = None
+er: Any | None = None
+
+# Attempt to import the time interval helper used for scheduling token
+# refresh. If unavailable (for example in lightweight test doubles), set
+# a module-global to None and guard callers accordingly.
+try:
+    from homeassistant.helpers.event import async_track_time_interval  # type: ignore
+except Exception:
+    async_track_time_interval = None
+
+# Import coordinator lazily where used to avoid pulling Home Assistant
+# internals during module import in unit tests.
 
 
 # Package-level factory getters used by tests to override implementation
@@ -55,10 +78,13 @@ def _get_device_client_class() -> type:
 def _get_coordinator_class() -> type:
     """Return the coordinator class used during entry setup.
 
-    Tests may override this to inject a FakeCoordinator.
+    Import the coordinator lazily so tests that import the integration
+    package for inspection do not trigger Home Assistant imports.
     """
 
-    return GoveeDataUpdateCoordinator
+    from .coordinator import GoveeDataUpdateCoordinator as _G
+
+    return _G
 
 
 # Re-export HTTP helper functions implemented in the API module so tests
@@ -426,6 +452,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 def _get_device_registry(hass: HomeAssistant) -> DeviceRegistry:
     """Return the Home Assistant device registry or a stub for tests."""
 
+    # Import the device registry helper locally to avoid importing HA at
+    # module import time which can trigger package initialisation in the
+    # test environment.
+    global dr
+    if dr is None:
+        try:
+            import homeassistant.helpers.device_registry as _dr
+
+            dr = _dr
+        except Exception:
+            dr = None
+
     if dr is not None and hasattr(dr, "async_get"):
         return dr.async_get(hass)
     return _REGISTRY_STUB  # type: ignore
@@ -438,6 +476,15 @@ def _get_entity_registry(hass: HomeAssistant) -> EntityRegistry:
     # implement a full EventBus; guard against calling into the real
     # registry when the expected API is not present.
     try:
+        global er
+        if er is None:
+            try:
+                import homeassistant.helpers.entity_registry as _er
+
+                er = _er
+            except Exception:
+                er = None
+
         if (
             er is not None
             and hasattr(er, "async_get")
@@ -726,7 +773,7 @@ def _schedule_token_refresh(
     return async_track_time_interval(hass, _async_refresh, TOKEN_REFRESH_INTERVAL)
 
 
-def _schedule_coordinator_refresh(coordinator: GoveeDataUpdateCoordinator) -> None:
+def _schedule_coordinator_refresh(coordinator: Any) -> None:
     """Schedule metadata refresh callbacks on the coordinator."""
     # Some tests inject a minimal FakeCoordinator that does not implement
     # async_schedule_refresh. Only call the method when present so setup
