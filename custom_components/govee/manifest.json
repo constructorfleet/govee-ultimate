@@ -1,20 +1,20 @@
 {
-  "domain": "govee",
-  "name": "Govee Ultimate",
-  "codeowners": [
-    "@constructorfleet"
-  ],
-  "config_flow": true,
-  "dependencies": [
-    "mqtt"
-  ],
-  "documentation": "https://github.com/constructorfleet/govee-ultimate",
-  "integration_type": "hub",
-  "iot_class": "cloud_push",
-  "issue_tracker": "https://github.com/constructorfleet/govee-ultimate/issues",
-  "requirements": [
-    "httpx",
-    "pydantic"
-  ],
-  "version": "0.0.6"
+    "domain": "govee",
+    "name": "Govee Ultimate",
+    "codeowners": [
+        "@constructorfleet"
+    ],
+    "config_flow": true,
+    "dependencies": [
+        "mqtt"
+    ],
+    "documentation": "https://github.com/constructorfleet/govee-ultimate",
+    "integration_type": "hub",
+    "iot_class": "cloud_push",
+    "issue_tracker": "https://github.com/constructorfleet/govee-ultimate/issues",
+    "requirements": [
+        "httpx",
+        "pydantic"
+    ],
+    "version": "0.0.9"
 }
