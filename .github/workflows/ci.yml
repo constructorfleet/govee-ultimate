@@ -3,9 +3,6 @@ name: CI
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
-  workflow_run:
-    workflows: ['bump-version-on-label']
-    types: [completed]
 
 permissions:
   contents: read
