@@ -28,6 +28,45 @@ def prepare_release(manifest_path: Path) -> str:
     return next_version
 
 
+def bump_version(manifest_path: Path, level: str) -> str:
+    """Bump the version at the given level: patch, minor, or major.
+
+    Returns the new version string.
+    """
+    manifest_data = _load_json(manifest_path)
+    current = str(manifest_data.get("version", "0.0.0"))
+    level = level.lower()
+    if level == "patch":
+        new = bump_patch_version(current)
+    elif level == "minor":
+        new = bump_minor_version(current)
+    elif level == "major":
+        new = bump_major_version(current)
+    else:
+        raise ValueError("level must be one of: patch, minor, major")
+    update_manifest_version(manifest_path, new)
+    return new
+
+
+def bump_minor_version(version: str) -> str:
+    """Increment the minor component and reset patch to 0."""
+
+    major, minor, patch = _split_version(version)
+    minor += 1
+    patch = 0
+    return f"{major}.{minor}.{patch}"
+
+
+def bump_major_version(version: str) -> str:
+    """Increment the major component and reset minor and patch to 0."""
+
+    major, minor, patch = _split_version(version)
+    major += 1
+    minor = 0
+    patch = 0
+    return f"{major}.{minor}.{patch}"
+
+
 def bump_patch_version(version: str) -> str:
     """Increment the patch component of a semantic version string."""
 

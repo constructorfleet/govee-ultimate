@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - "main"
+    # Only run this workflow when the manifest (which contains the version)
+    # has changed on the merge. This ensures releases only happen when the
+    # version field was explicitly updated.
+    paths:
+      - custom_components/govee/manifest.json
 
 permissions:
   contents: write
@@ -35,37 +40,49 @@ jobs:
       - name: "Run tests"
         run: "pytest"
 
-      - name: "Prepare release"
-        id: prepare
+      - name: "Read release version"
+        id: release_version
         run: |
-          python -m scripts.prepare_release \
-            --manifest custom_components/govee/manifest.json \
-            --github-output "$GITHUB_OUTPUT"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from os import environ
 
-      - name: "Commit version bump"
-        run: |
-          if git diff --quiet; then
-            echo "No version changes detected"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "chore(release): v${{ steps.prepare.outputs.version }}"
+          manifest = Path('custom_components/govee/manifest.json')
+          data = json.loads(manifest.read_text())
+          version = data.get('version')
+          if not version:
+              raise SystemExit('manifest.json has no version field')
 
-      - name: "Push changes"
-        run: "git push"
+          # emit for log visibility
+          print(f"version={version}")
+
+          # write to GitHub Actions environment file to set step output
+          gh_out = environ.get('GITHUB_OUTPUT') or environ.get('GITHUB_ENV')
+          if gh_out:
+              with open(gh_out, 'a') as f:
+                  f.write(f"RELEASE_VERSION={version}\n")
+
+          # also print a machine readable output line for actions
+          print(f"::notice title=release_version::version={version}")
+          PY
 
       - name: "Create tag"
         run: |
-          git tag -a "v${{ steps.prepare.outputs.version }}" -m "Release v${{ steps.prepare.outputs.version }}"
-          git push origin "v${{ steps.prepare.outputs.version }}"
+          VERSION=$(python -c "import json;print(json.load(open('custom_components/govee/manifest.json'))['version'])")
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin "v${VERSION}"
+
+      - name: "Set VERSION env"
+        run: |
+          echo "VERSION=$(python -c \"import json;print(json.load(open('custom_components/govee/manifest.json'))['version'])\")" >> "$GITHUB_ENV"
 
       - name: "Publish release"
         uses: "actions/create-release@v1"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: "v${{ steps.prepare.outputs.version }}"
-          release_name: "v${{ steps.prepare.outputs.version }}"
+          tag_name: "v${{ env.VERSION }}"
+          release_name: "v${{ env.VERSION }}"
           draft: false
           prerelease: false
