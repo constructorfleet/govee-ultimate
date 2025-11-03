@@ -114,8 +114,12 @@ class DeviceMetadata:
         goods_type = _resolve_payload_value(
             payload, "goods_type", "goodsType", default=None
         )
-        pact_type = _resolve_payload_value(payload, "pact_type", "pactType", default=None)
-        pact_code = _resolve_payload_value(payload, "pact_code", "pactCode", default=None)
+        pact_type = _resolve_payload_value(
+            payload, "pact_type", "pactType", default=None
+        )
+        pact_code = _resolve_payload_value(
+            payload, "pact_code", "pactCode", default=None
+        )
         group_id = _resolve_payload_value(payload, "group_id", "groupId", default=None)
 
         channels: dict[str, dict[str, Any]] = {
@@ -311,6 +315,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         payloads = await self._api_client.async_get_devices()
         discovered_devices: dict[str, BaseDevice] = {}
         discovered_metadata: dict[str, DeviceMetadata] = {}
+        rest_tasks: list[asyncio.Task[Any]] = []
         for payload in payloads:
             metadata = DeviceMetadata.from_dict(payload)
             factory = self._resolve_factory(metadata)
@@ -338,6 +343,10 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             )
             self._pending_tasks.add(task)
             task.add_done_callback(self._pending_tasks.discard)
+            rest_tasks.append(task)
+
+        if rest_tasks:
+            await asyncio.gather(*rest_tasks, return_exceptions=True)
 
         if self._iot_client and self._iot_state_enabled:
             iot_devices = self._iot_device_ids()
@@ -462,7 +471,9 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             raise KeyError(device_id)
 
         if channel_name in {"iot", "rest"}:
-            payload = self._prepare_iot_command_payload(command)
+            payload = self._prepare_iot_command_payload(
+                command, encode=channel_name != "rest"
+            )
             if channel_name == "iot":
                 if self._iot_client and self._iot_command_enabled:
                     topic = self._resolve_iot_topic(metadata, channel_info, device_id)
@@ -514,7 +525,9 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as err:  # pragma: no cover - defensive logging
                 _LOGGER.debug("Failed to update DIY effects for %s: %s", device_id, err)
 
-    def _prepare_iot_command_payload(self, command: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_iot_command_payload(
+        self, command: dict[str, Any], *, encode: bool = True
+    ) -> dict[str, Any]:
         """Normalise state command payloads for the IoT client."""
 
         payload: dict[str, Any] = {}
@@ -552,7 +565,9 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                     cmd_name = cmd_name or self._format_command_name(inner_command)
                 data_value = command_spec.get("data")
                 if isinstance(data_value, dict):
-                    data_payload = self._normalise_iot_command_data(data_value)
+                    data_payload = self._normalise_iot_command_data(
+                        data_value, encode=encode
+                    )
                 elif data_value is not None:
                     data_payload = {"value": data_value}
                 if data_payload is None and command_spec:
@@ -571,7 +586,9 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                         }
                     }
                     if residual:
-                        data_payload = self._normalise_iot_command_data(residual)
+                        data_payload = self._normalise_iot_command_data(
+                            residual, encode=encode
+                        )
         elif isinstance(command_spec, str):
             cmd_name = cmd_name or self._format_command_name(command_spec)
 
@@ -582,7 +599,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         if data_payload is None:
             raw_data = command.get("data")
             if isinstance(raw_data, dict):
-                data_payload = self._normalise_iot_command_data(raw_data)
+                data_payload = self._normalise_iot_command_data(raw_data, encode=encode)
             else:
                 data_payload = {}
 
@@ -630,7 +647,9 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                 data["extraPayload"] = extra_payload
         return data
 
-    def _normalise_iot_command_data(self, data: dict[str, Any]) -> dict[str, Any]:
+    def _normalise_iot_command_data(
+        self, data: dict[str, Any], *, encode: bool = True
+    ) -> dict[str, Any]:
         """Convert command data dictionaries into IoT-friendly payloads."""
 
         normalised: dict[str, Any] = {}
@@ -641,11 +660,18 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                     commands, (bytes, bytearray, str)
                 ):
                     commands = [commands]
-                encoded = [
-                    self._encode_iot_command_frame(entry)
-                    for entry in commands
-                    if entry is not None
-                ]
+                if encode:
+                    encoded = [
+                        self._encode_iot_command_frame(entry)
+                        for entry in commands
+                        if entry is not None
+                    ]
+                else:
+                    encoded = [
+                        self._coerce_command_frame(entry)
+                        for entry in commands
+                        if entry is not None
+                    ]
                 normalised[key] = encoded
             else:
                 normalised[key] = value
@@ -669,6 +695,15 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                 return opcodes.hex_to_base64(text)
             except Exception:
                 return text
+        return entry
+
+    def _coerce_command_frame(self, entry: Any) -> Any:
+        """Coerce command frames into list representations without encoding."""
+
+        if isinstance(entry, (bytes, bytearray)):
+            return list(entry)
+        if isinstance(entry, Sequence) and not isinstance(entry, str):
+            return [int(value) for value in entry]
         return entry
 
     @staticmethod

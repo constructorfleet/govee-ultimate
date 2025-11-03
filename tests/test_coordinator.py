@@ -1165,14 +1165,12 @@ async def test_rest_commands_use_api_client() -> None:
         [
             {
                 "device_id": "device-rest",
-                "model": "H7100",
-                "sku": "H7100",
+                "model": "H7142",
+                "sku": "H7142",
                 "category": "Home Appliances",
                 "category_group": "Air Treatment",
                 "device_name": "Rest Device",
-                "channels": {
-                    "rest": {"topic": "accounts/rest/device/device-rest"}
-                },
+                "channels": {"rest": {"topic": "accounts/rest/device/device-rest"}},
             }
         ]
     )
@@ -1379,10 +1377,10 @@ async def test_diy_effects_populate_select_options() -> None:
         [
             {
                 "device_id": "device-rest",
-                "model": "H7150",
-                "sku": "H7150",
-                "category": "Home Appliances",
-                "category_group": "Lighting",
+                "model": "H6199",
+                "sku": "H6199",
+                "category": "LED Strip Light",
+                "category_group": "RGBIC",
                 "device_name": "RGBIC Light",
                 "goodsType": 7,
                 "channels": {"rest": {}},

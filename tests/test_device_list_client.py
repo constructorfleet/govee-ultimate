@@ -204,7 +204,16 @@ async def test_device_list_client_serializes_device_metadata(tmp_path_factory, r
             "channels": {
                 "iot": {"topic": "accounts/abc/device/AA:BB:CC"},
                 "ble": {"mac": "AA:BB:CC:DD", "name": "BLE Device"},
+                "rest": {"device_id": "AA:BB:CC"},
             },
+            "goods_type": 0,
+            "goodsType": 0,
+            "pact_type": 0,
+            "pactType": 0,
+            "pact_code": 0,
+            "pactCode": 0,
+            "group_id": 4,
+            "groupId": 4,
         }
     ]
 

@@ -93,7 +93,9 @@ class GoveeRestClient:
         headers = await self._account_headers()
         params = {"sku": model, "goodsType": goods_type, "device": device_id}
         try:
-            effects_resp = await client.get(_EFFECTS_URL, params=params, headers=headers)
+            effects_resp = await client.get(
+                _EFFECTS_URL, params=params, headers=headers
+            )
             effects_resp.raise_for_status()
             scenes_resp = await client.get(_SCENES_URL, params=params, headers=headers)
             scenes_resp.raise_for_status()
@@ -104,9 +106,7 @@ class GoveeRestClient:
         effects = self._extract_effects(
             effects_resp.json() if effects_resp.content else {}
         )
-        scenes = self._extract_scenes(
-            scenes_resp.json() if scenes_resp.content else {}
-        )
+        scenes = self._extract_scenes(scenes_resp.json() if scenes_resp.content else {})
         combined = self._merge_effects_and_scenes(model, effects, scenes)
         await self._store_effects(cache_key, combined)
         return combined
@@ -254,9 +254,7 @@ class GoveeRestClient:
             {"updated_at": timestamp.isoformat(), "data": effects},
         )
 
-    async def _load_diy_from_cache(
-        self, cache_key: str
-    ) -> list[dict[str, Any]] | None:
+    async def _load_diy_from_cache(self, cache_key: str) -> list[dict[str, Any]] | None:
         entry = self._diy_cache.get(cache_key)
         if entry and not self._is_expired(entry[0]):
             return entry[1]
@@ -272,9 +270,7 @@ class GoveeRestClient:
         self._diy_cache[cache_key] = (timestamp, diy)
         return diy
 
-    async def _store_diy(
-        self, cache_key: str, diy: list[dict[str, Any]]
-    ) -> None:
+    async def _store_diy(self, cache_key: str, diy: list[dict[str, Any]]) -> None:
         timestamp = datetime.now(timezone.utc)
         self._diy_cache[cache_key] = (timestamp, diy)
         await self._save_to_store(
@@ -356,9 +352,13 @@ class GoveeRestClient:
                         or effect.get("name")
                         or ""
                     )
-                    name = " ".join(
-                        part for part in (scene_name, effect_name) if part
-                    ).strip() or effect_name or scene_name
+                    name = (
+                        " ".join(
+                            part for part in (scene_name, effect_name) if part
+                        ).strip()
+                        or effect_name
+                        or scene_name
+                    )
                     code = effect.get("sceneCode") or effect.get("code") or scene_code
                     try:
                         code = int(code)

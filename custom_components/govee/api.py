@@ -215,10 +215,7 @@ class GoveeAPIClient:
             device_cls = DeviceListClient
 
         self._device_client = device_cls(self._hass, self._http_client, self._auth)
-        if (
-            self._rest_client is None
-            and hasattr(self._auth, "async_get_access_token")
-        ):
+        if self._rest_client is None and hasattr(self._auth, "async_get_access_token"):
             self._rest_client = GoveeRestClient(
                 self._hass,
                 self._auth,
