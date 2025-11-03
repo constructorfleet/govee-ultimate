@@ -470,7 +470,7 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
         if metadata is None:
             raise KeyError(device_id)
 
-        if channel_name in {"iot", "rest"}:
+        if channel_name in {"iot", "rest", "openapi"}:
             payload = self._prepare_iot_command_payload(
                 command, encode=channel_name != "rest"
             )
@@ -484,9 +484,18 @@ class GoveeDataUpdateCoordinator(DataUpdateCoordinator):
                         device_id, channel_info, command
                     )
                 return
-            await self._api_client.async_publish_rest_command(
-                device_id, channel_info, payload
-            )
+            if channel_name == "rest":
+                await self._api_client.async_publish_rest_command(
+                    device_id, channel_info, payload
+                )
+            else:  # openapi
+                topic = channel_info.get("topic")
+                if not isinstance(topic, str):
+                    raise KeyError("openapi topic")
+                api_key = channel_info.get("api_key") or channel_info.get("apiKey")
+                if isinstance(api_key, str):
+                    await self._api_client.async_connect_openapi(api_key)
+                await self._api_client.async_publish_openapi_command(topic, payload)
         elif channel_name == "ble":
             await self._api_client.async_publish_ble_command(
                 device_id, channel_info, command

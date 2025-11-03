@@ -20,6 +20,7 @@ import httpx
 from homeassistant.helpers.httpx_client import get_async_client
 
 from .device_client import DeviceListClient
+from .openapi_client import GoveeOpenAPIClient
 from .rest_client import GoveeRestClient
 
 API_BASE_URL = "https://app2.govee.com"
@@ -184,6 +185,7 @@ class GoveeAPIClient:
         self._device_client: Any | None = None
         self._http_client: httpx.AsyncClient | None = None
         self._rest_client: GoveeRestClient | None = None
+        self._openapi_client: GoveeOpenAPIClient | None = None
 
     @property
     def http_client(self) -> httpx.AsyncClient | None:
@@ -221,6 +223,8 @@ class GoveeAPIClient:
                 self._auth,
                 lambda: self._http_client,
             )
+        if self._openapi_client is None:
+            self._openapi_client = GoveeOpenAPIClient()
 
     async def async_get_devices(self) -> list[dict[str, Any]]:
         """Return the device metadata payloads expected by the coordinator.
@@ -351,6 +355,29 @@ class GoveeAPIClient:
         return await self._rest_client.async_get_diy_effects(
             model=model, goods_type=goods_type, device_id=device_id
         )
+
+    async def async_connect_openapi(self, api_key: str) -> None:
+        """Ensure the OpenAPI client is connected using ``api_key``."""
+
+        await self._ensure_client()
+        if self._openapi_client is None:
+            self._openapi_client = GoveeOpenAPIClient()
+        await self._openapi_client.async_connect(api_key)
+
+    async def async_publish_openapi_command(
+        self, topic: str, payload: dict[str, Any]
+    ) -> None:
+        """Publish a command through the OpenAPI channel."""
+
+        await self._ensure_client()
+        if self._openapi_client is None:
+            raise NotImplementedError("OpenAPI publish not implemented for this client")
+        await self._openapi_client.async_publish(topic, payload)
+
+    def get_openapi_client(self) -> GoveeOpenAPIClient | None:
+        """Expose the OpenAPI client instance for tests."""
+
+        return self._openapi_client
 
     async def async_close(self) -> None:
         """Close any owned resources such as the HTTP client."""

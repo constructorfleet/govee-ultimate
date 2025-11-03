@@ -112,6 +112,8 @@ class FakeAPIClient:
         self.rest_commands: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         self.diy_effects: list[dict[str, Any]] = []
         self.light_effects: list[dict[str, Any]] = []
+        self.openapi_published: list[tuple[str, dict[str, Any]]] = []
+        self.openapi_connected: list[str] = []
 
     async def async_get_devices(self) -> list[dict[str, str]]:
         """Return static metadata for coordinator discovery."""
@@ -159,6 +161,18 @@ class FakeAPIClient:
 
         await asyncio.sleep(0)
         return list(self.light_effects)
+
+    async def async_connect_openapi(self, api_key: str) -> None:
+        """Record OpenAPI connections for assertions."""
+
+        self.openapi_connected.append(api_key)
+
+    async def async_publish_openapi_command(
+        self, topic: str, payload: dict[str, Any]
+    ) -> None:
+        """Capture OpenAPI publications for assertions."""
+
+        self.openapi_published.append((topic, dict(payload)))
 
 
 class RecordingIoTClient:
@@ -1404,6 +1418,50 @@ async def test_diy_effects_populate_select_options() -> None:
 
     diy_state = coordinator.devices["device-rest"].states["diyMode"]
     assert sorted(diy_state.options) == ["Effect One", "Effect Two"]
+
+
+@pytest.mark.asyncio
+async def test_openapi_commands_use_api_client() -> None:
+    """OpenAPI channel commands should be routed through the API client."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-openapi",
+                "model": "H6199",
+                "sku": "H6199",
+                "category": "LED Strip Light",
+                "category_group": "RGBIC",
+                "device_name": "RGBIC Light",
+                "channels": {"openapi": {"topic": "openapi/topic", "api_key": "key"}},
+            }
+        ]
+    )
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    await coordinator.async_discover_devices()
+
+    publisher = coordinator.get_command_publisher("device-openapi", channel="openapi")
+    await publisher({"command": {"command": "turn", "data": {"value": 1}}})
+
+    assert api_client.openapi_connected == ["key"]
+    assert api_client.openapi_published == [
+        (
+            "openapi/topic",
+            {
+                "cmd": "turn",
+                "cmdVersion": 0,
+                "type": 1,
+                "data": {"value": 1},
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
