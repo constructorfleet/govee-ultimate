@@ -20,6 +20,7 @@ import httpx
 from homeassistant.helpers.httpx_client import get_async_client
 
 from .device_client import DeviceListClient
+from .rest_client import GoveeRestClient
 
 API_BASE_URL = "https://app2.govee.com"
 
@@ -182,6 +183,7 @@ class GoveeAPIClient:
         self._auth = auth
         self._device_client: Any | None = None
         self._http_client: httpx.AsyncClient | None = None
+        self._rest_client: GoveeRestClient | None = None
 
     @property
     def http_client(self) -> httpx.AsyncClient | None:
@@ -213,6 +215,15 @@ class GoveeAPIClient:
             device_cls = DeviceListClient
 
         self._device_client = device_cls(self._hass, self._http_client, self._auth)
+        if (
+            self._rest_client is None
+            and hasattr(self._auth, "async_get_access_token")
+        ):
+            self._rest_client = GoveeRestClient(
+                self._hass,
+                self._auth,
+                lambda: self._http_client,
+            )
 
     async def async_get_devices(self) -> list[dict[str, Any]]:
         """Return the device metadata payloads expected by the coordinator.
@@ -302,6 +313,47 @@ class GoveeAPIClient:
                 await result  # type: ignore[arg-type]
             return None
         raise NotImplementedError("BLE publish not implemented for this client")
+
+    async def async_publish_rest_command(
+        self,
+        device_id: str,
+        channel_info: dict[str, Any],
+        message: dict[str, Any],
+    ) -> None:
+        """Publish a command through the REST transport."""
+
+        await self._ensure_client()
+        if self._rest_client is None:
+            raise NotImplementedError("REST publish not implemented for this client")
+        await self._rest_client.async_publish_command(
+            device_id=device_id,
+            channel_info=channel_info,
+            message=message,
+        )
+
+    async def async_fetch_light_effects(
+        self, *, model: str, goods_type: int, device_id: str
+    ) -> list[dict[str, Any]]:
+        """Return light effect metadata for the specified device."""
+
+        await self._ensure_client()
+        if self._rest_client is None:
+            return []
+        return await self._rest_client.async_get_light_effects(
+            model=model, goods_type=goods_type, device_id=device_id
+        )
+
+    async def async_fetch_diy_effects(
+        self, *, model: str, goods_type: int, device_id: str
+    ) -> list[dict[str, Any]]:
+        """Return DIY effect metadata for the specified device."""
+
+        await self._ensure_client()
+        if self._rest_client is None:
+            return []
+        return await self._rest_client.async_get_diy_effects(
+            model=model, goods_type=goods_type, device_id=device_id
+        )
 
     async def async_close(self) -> None:
         """Close any owned resources such as the HTTP client."""

@@ -4741,6 +4741,7 @@ class DiyModeState(DeviceOpState[dict[str, Any]]):
         self._effects: dict[int, dict[str, Any]] = {}
         self._effects_by_name: dict[str, dict[str, Any]] = {}
         self._active_effect_code: int | None = None
+        self._options: list[str] = []
 
     @property
     def active_effect_code(self) -> int | None:
@@ -4789,6 +4790,18 @@ class DiyModeState(DeviceOpState[dict[str, Any]]):
             active = self._effects.get(self._active_effect_code)
             if active is not None:
                 self._update_state(dict(active))
+        if changed:
+            self._options = [
+                effect.get("name")
+                for _, effect in sorted(self._effects.items())
+                if isinstance(effect.get("name"), str)
+            ]
+
+    @property
+    def options(self) -> list[str]:
+        """Expose available DIY effect names for select entities."""
+
+        return list(self._options)
 
     def parse_op_command(self, op_command: list[int]) -> None:
         """Decode opcode payloads to update the active DIY effect."""

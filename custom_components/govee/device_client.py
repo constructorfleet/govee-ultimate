@@ -326,6 +326,8 @@ class DeviceListClient:
             if device.bluetooth.name:
                 ble_channel["name"] = device.bluetooth.name
             channels["ble"] = ble_channel
+        # Always expose a REST channel for command capability parity.
+        channels.setdefault("rest", {"device_id": device.id})
 
         name = device.name or device.model
 
@@ -338,6 +340,10 @@ class DeviceListClient:
             "device_name": name,
             "manufacturer": "Govee",
             "channels": channels,
+            "goods_type": device.goods_type,
+            "pact_type": device.pact_type,
+            "pact_code": device.pact_code,
+            "group_id": device.group_id,
         }
 
         for alias, key in (
@@ -347,6 +353,10 @@ class DeviceListClient:
             ("categoryGroup", "category_group"),
             ("category_group_name", "category_group"),
             ("deviceName", "device_name"),
+            ("goodsType", "goods_type"),
+            ("pactType", "pact_type"),
+            ("pactCode", "pact_code"),
+            ("groupId", "group_id"),
         ):
             payload[alias] = payload[key]
 
