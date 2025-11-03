@@ -109,6 +109,9 @@ class FakeAPIClient:
         self.request_count = 0
         self.iot_commands: list[tuple[str, dict[str, str], dict[str, str]]] = []
         self.ble_commands: list[tuple[str, dict[str, str], dict[str, str]]] = []
+        self.rest_commands: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        self.diy_effects: list[dict[str, Any]] = []
+        self.light_effects: list[dict[str, Any]] = []
 
     async def async_get_devices(self) -> list[dict[str, str]]:
         """Return static metadata for coordinator discovery."""
@@ -130,6 +133,32 @@ class FakeAPIClient:
         """Record BLE commands issued by the coordinator."""
 
         self.ble_commands.append((device_id, dict(command), dict(channel_info)))
+
+    async def async_publish_rest_command(
+        self,
+        device_id: str,
+        channel_info: dict[str, Any],
+        message: dict[str, Any],
+    ) -> None:
+        """Capture REST commands routed through the coordinator."""
+
+        self.rest_commands.append((device_id, dict(channel_info), dict(message)))
+
+    async def async_fetch_diy_effects(
+        self, *, model: str, goods_type: int, device_id: str
+    ) -> list[dict[str, Any]]:
+        """Return pre-seeded DIY effect metadata."""
+
+        await asyncio.sleep(0)
+        return list(self.diy_effects)
+
+    async def async_fetch_light_effects(
+        self, *, model: str, goods_type: int, device_id: str
+    ) -> list[dict[str, Any]]:
+        """Return pre-seeded light effect metadata."""
+
+        await asyncio.sleep(0)
+        return list(self.light_effects)
 
 
 class RecordingIoTClient:
@@ -1129,6 +1158,58 @@ async def test_command_dispatch_supports_explicit_ble_channel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rest_commands_use_api_client() -> None:
+    """REST channel commands should route through the API client."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-rest",
+                "model": "H7142",
+                "sku": "H7142",
+                "category": "Home Appliances",
+                "category_group": "Air Treatment",
+                "device_name": "Rest Device",
+                "channels": {"rest": {"topic": "accounts/rest/device/device-rest"}},
+            }
+        ]
+    )
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    await coordinator.async_discover_devices()
+
+    publisher = coordinator.get_command_publisher("device-rest", channel="rest")
+    await publisher(
+        {
+            "command": {
+                "command": "multi_sync",
+                "data": {"command": [[0x33, 0x01, 0x00, 0x01]]},
+            },
+            "command_id": "rest-1",
+        }
+    )
+
+    assert api_client.rest_commands == [
+        (
+            "device-rest",
+            {"topic": "accounts/rest/device/device-rest"},
+            {
+                "cmd": "multiSync",
+                "cmdVersion": 0,
+                "type": 1,
+                "data": {"command": [[0x33, 0x01, 0x00, 0x01]]},
+                "command_id": "rest-1",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_iot_commands_use_mqtt_client_when_enabled() -> None:
     """When configured the coordinator should send commands via the IoT client."""
 
@@ -1286,6 +1367,43 @@ async def test_iot_refresh_requests_use_mqtt_client() -> None:
     await coordinator.async_request_device_refresh("device-iot")
 
     assert iot_client.refreshes == ["accounts/123/devices/device-iot"]
+
+
+@pytest.mark.asyncio
+async def test_diy_effects_populate_select_options() -> None:
+    """REST-fetched DIY effects should populate diyMode select options."""
+
+    api_client = FakeAPIClient(
+        [
+            {
+                "device_id": "device-rest",
+                "model": "H6199",
+                "sku": "H6199",
+                "category": "LED Strip Light",
+                "category_group": "RGBIC",
+                "device_name": "RGBIC Light",
+                "goodsType": 7,
+                "channels": {"rest": {}},
+            }
+        ]
+    )
+    api_client.diy_effects = [
+        {"code": 1, "name": "Effect One", "diyOpCodeBase64": "AA=="},
+        {"code": 2, "name": "Effect Two", "diyOpCodeBase64": "AQ=="},
+    ]
+
+    coordinator = GoveeDataUpdateCoordinator(
+        hass=None,
+        api_client=api_client,
+        device_registry=FakeDeviceRegistry(),
+        entity_registry=FakeEntityRegistry(),
+    )
+
+    await coordinator.async_discover_devices()
+    await asyncio.sleep(0)
+
+    diy_state = coordinator.devices["device-rest"].states["diyMode"]
+    assert sorted(diy_state.options) == ["Effect One", "Effect Two"]
 
 
 @pytest.mark.asyncio
