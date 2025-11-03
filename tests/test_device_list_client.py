@@ -205,6 +205,7 @@ async def test_device_list_client_serializes_device_metadata(tmp_path_factory, r
                 "iot": {"topic": "accounts/abc/device/AA:BB:CC"},
                 "ble": {"mac": "AA:BB:CC:DD", "name": "BLE Device"},
                 "rest": {"device_id": "AA:BB:CC"},
+                "openapi": {"device_id": "AA:BB:CC"},
             },
             "goods_type": 0,
             "goodsType": 0,

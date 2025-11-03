@@ -326,6 +326,7 @@ class DeviceListClient:
             if device.bluetooth.name:
                 ble_channel["name"] = device.bluetooth.name
             channels["ble"] = ble_channel
+        channels.setdefault("openapi", {"device_id": device.id})
         # Always expose a REST channel for command capability parity.
         channels.setdefault("rest", {"device_id": device.id})
 
