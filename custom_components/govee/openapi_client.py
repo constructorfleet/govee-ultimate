@@ -23,8 +23,6 @@ class GoveeOpenAPIClient:
 
     async def async_connect(self, api_key: str) -> None:
         """Connect to the OpenAPI backend using the provided API key."""
-
-        _LOGGER.debug("Connecting to OpenAPI with key %s", api_key)
         async with self._lock:
             self._connected = True
 
